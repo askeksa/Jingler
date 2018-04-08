@@ -6,37 +6,43 @@ global DecodeMain
 first_msvcrt_function equ __imp____libm_sse2_sin
 SAMPLES_PER_TICK equ 2362
 
+LOWEST_IMPLICIT_INSTRUCTION equ 0x14
+
 ;; Snip macros
 
 section snips text align=1
 	_snips:
 section snipsize data align=1
 	_snipsizes:
-%xdefine _snip_prev 0
-%xdefine _snip_code 0
+%define _snip_prev _snips
+%define _snip_code 0
 %define _snip_notfirst 0
 %define _snip_prev_number 0
-%xdefine _inout_string ""
+%define _snip_prev_id 256
+%define _inout_string ""
 
-%macro basesnip 1
+%macro _snip_flush 2 ; kind, name
 	section snips
 	%if _snip_code
 		ret
 	%endif
-	%xdefine _snip_code 0
+	_%1_%2:
 	section snipsize
-	_snip_off_%1 equ _snip_%1-_snips
 	%if _snip_notfirst
-		db _snip_off_%1-_snip_prev
+		db _%1_%2-_snip_prev
 		%if _snip_prev_number
 			db _snip_prev_number
 		%endif
 	%endif
 	%define _snip_notfirst 1
-	_snip_size_%1:
-	%xdefine _snip_prev _snip_off_%1
+	%define _snip_prev _%1_%2
+	_%1_size_%2:
+%endmacro
+
+%macro basesnip 1
+	_snip_flush snip, %1
+	%define _snip_code 0
 	section snips
-	_snip_%1:
 %endmacro
 
 %macro snip 3
@@ -44,28 +50,24 @@ section snipsize data align=1
 	%rep %3
 		%strcat _inout_string _inout_%1 _inout_string
 	%endrep
-	%define _snip_prev_number %3
 	basesnip %1
+	%xdefine _snip_id_%1 _snip_prev_id-%3
+	%xdefine _snip_number_%1 %3
+	%define _snip_prev_number _snip_number_%1
+	%define _snip_prev_id _snip_id_%1
 %endmacro
 
 %macro snipcode 1
-	section snips
-	%if _snip_code
-		ret
-	%endif
-	%xdefine _snip_code 1
-	_snipcode_%1:
-	section snipsize
-	_snipcode_off_%1 equ _snipcode_%1-_snips
-	db _snipcode_off_%1-_snip_prev
-	%if _snip_prev_number
-		db _snip_prev_number
-	%endif
+	_snip_flush snipcode, %1
 	db -1
-	_snipcode_size_%1:
-	%xdefine _snip_prev _snipcode_off_%1
+	%define _snip_code 1
 	%define _snip_prev_number 0
 	section snips
+%endmacro
+
+%macro snipend 0
+	%xdefine _snip_prev_number _snip_prev_id - 1 + LOWEST_IMPLICIT_INSTRUCTION
+	_snip_flush end_of, snips
 %endmacro
 
 
@@ -372,7 +374,8 @@ DecodeMain:
 
 	basesnip	implicit
 	movapd		xmm0, [ebx] ; <op>pd xmm0, [ebx]
-	; TODO: Count and inout for implicit instructions
+
+	snipend
 
 
 ;; In/out
@@ -389,6 +392,8 @@ OUT_S	equ	0x30
 section inout rdata align=1
 
 InoutCodes:
+	; TODO: Inout for implicit instructions
+
 	%strlen _inout_length _inout_string
 	%define _n_instructions (_inout_length / 2)
 	%rep 256 - _n_instructions
