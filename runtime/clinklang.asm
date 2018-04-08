@@ -92,32 +92,30 @@ DecodeMain:
 .not:
 	cmp			[ebx], byte -1
 	jne			.inout_loop
-	inc			ebx
 
-.decode:
-	add			esi, ecx
-	mov			cl, [ebx]
-	inc			ebx
-	add			al, [ebx]
-	inc			ebx
-	jc			.emit
+.decodeloop:
 	cmp			[ebx], byte -1
 	jne			.decode
 	inc			ebx
 	add			esi, ecx
 	mov			cl, [ebx]
 	inc			ebx
-	mov			ebp, ebx
-	jmp			.decode
+	mov			ebp, esi
+.decode:
+	add			esi, ecx
+	mov			cl, [ebx]
+	inc			ebx
+	add			al, [ebx]
+	inc			ebx
+	jnc			.decodeloop
 
 .emit:
 	rep movsb
 	call		ebp
 
-.next:
-; TODO: Add termination condition
-	jmp			.mainloop
-
+	cmp			[esi], byte 0
+	jne			.mainloop
+	ret
 
 ;; Snips
 
@@ -149,33 +147,33 @@ DecodeMain:
 	add			edi, byte 16
 
 	snip		output, rs, 1
-	cvtpd2ps	xmm0, xmm0
+	; Assumes xmm0 is already converted to ps
 	cvtsd2si	eax, [ebx]
 	movq		[MusicBuffer + eax*8], xmm0
 
 	snip		buffer_alloc, ts, 1
 	mov			eax, [BufferAllocPtr]
-	mov			[ebx], eax
-	cvtsd2si	eax, xmm0
 	mov			[ebx + 4], eax
+	cvtsd2si	eax, xmm0
+	mov			[ebx], eax
 	add			[BufferAllocPtr], eax
 
 	snip		buffer_load, sr, 1
 	xor			edx, edx
 	cvtsd2si	eax, [ebx]
 	add			ebx, byte 16
-	div			dword [ebx + 4]
+	div			dword [ebx]
 	shl			edx, 4
-	add			edx, [ebx]
+	add			edx, [ebx + 4]
 	movapd		xmm0, [edx]
 
 	snip		buffer_store, rs, 1
 	xor			edx, edx
 	cvtsd2si	eax, [ebx]
 	add			ebx, byte 16
-	div			dword [ebx + 4]
+	div			dword [ebx]
 	shl			edx, 4
-	add			edx, [ebx]
+	add			edx, [ebx + 4]
 	movapd		[edx], xmm0
 
 	snip		random, rt, 1
@@ -448,9 +446,12 @@ InstrumentIndex:
 
 section procptrs bss align=4
 ProcPointers:
+	resd 256
 
 section music bss align=8
 MusicBuffer:
+	resq 1000000
 
 section constant rdata align=4
 ConstantPool:
+	times 256 dd 0
