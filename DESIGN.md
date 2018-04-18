@@ -69,10 +69,10 @@ of output depends on what inputs are given.
 
 Nodes                   | Type                         | Width   | Context | Scope
 :---                    | :---                         | :---    | :---    | :---
-add, mul, min, max      | number* &rarr; number        | generic | generic | generic
-sub, div                | number, number &rarr; number | generic | generic | generic
+add, max, min, mul      | number* &rarr; number        | generic | generic | generic
+div, sub                | number, number &rarr; number | generic | generic | generic
 addsub                  | number, number &rarr; number | stereo  | generic | generic
-sqrt                    | number &rarr; number         | generic | generic | generic
+ceil, floor, round, sqrt, trunc | number &rarr; number | generic | generic | generic
 acos, asin, atan, cos, exp, log, log10, sin, tan | number &rarr; number | mono | generic | generic
 atan2, pow              | number, number &rarr; number | mono | generic | generic
 
@@ -80,9 +80,8 @@ atan2, pow              | number, number &rarr; number | mono | generic | generi
 
 Nodes                   | Type                            | Width   | Context | Scope
 :---                    | :---                            | :---    | :---    | :---
-compare (various)       | number, number &rarr; bitmask   | generic | generic | generic
-and, andnot, or, xor    | number, bitmask &rarr; number   | generic | generic | generic
-and, andnot, or, xor    | bitmask, bitmask &rarr; bitmask | generic | generic | generic
+compare (eq, ge, gt, le, lt, ne) | number, number &rarr; bitmask | generic | generic | generic
+and, andnot, or, xor    | generic, bitmask &rarr; generic | generic | generic | generic
 
 #### Width operations
 
