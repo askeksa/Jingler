@@ -45,7 +45,7 @@ section snipsize data align=1
 	section snips
 %endmacro
 
-%macro snip 3
+%macro snip 3 ; name, inout, number
 	%defstr _inout_%1 %2
 	%rep %3
 		%strcat _inout_string _inout_%1 _inout_string
@@ -80,10 +80,11 @@ DecodeMain:
 .mainloop:
 	xor			eax, eax
 	lodsb
+	push		esi
 	or			dl, [InoutCodes + eax]
 	mov			ebx, _snipsizes
-	xor			ecx, ecx
 	mov			esi, _snips
+	xor			ecx, ecx
 .inout_loop:
 	add			esi, ecx
 	mov			cl, [ebx]
@@ -113,6 +114,7 @@ DecodeMain:
 
 .emit:
 	rep movsb
+	pop			esi
 	call		ebp
 
 	cmp			[esi], byte 0
@@ -389,43 +391,80 @@ OUT_T	equ	0x50
 OUT_B	equ	0x70
 OUT_S	equ	0x30
 
+%macro inout 1
+	%substr _in %1 1
+	%substr _out %1 2
+	%if _in == 'r'
+		%xdefine _inkind IN_R
+	%elif _in == 't'
+		%xdefine _inkind IN_T
+	%elif _in == 'b'
+		%xdefine _inkind IN_B
+	%elif _in == 's'
+		%xdefine _inkind IN_S
+	%else
+		%error "Invalid input kind" _in
+	%endif
+	%if _out == 'r'
+		%xdefine _outkind OUT_R
+	%elif _out == 't'
+		%xdefine _outkind OUT_T
+	%elif _out == 'b'
+		%xdefine _outkind OUT_B
+	%elif _out == 's'
+		%xdefine _outkind OUT_S
+	%else
+		%error "Invalid output kind" _out
+	%endif
+	db _inkind | _outkind
+%endmacro
+
+%define _implicit_index 0
+
+%macro iinstr 3 ; name, inout, repr
+	%xdefine _code ((%3) - LOWEST_IMPLICIT_INSTRUCTION + 1)
+	%rep _code - _implicit_index
+		db 0
+	%endrep
+	%defstr _inout_%1 %2
+	inout _inout_%1
+	%xdefine _implicit_index (_code + 1)
+%endmacro
+
 section inout rdata align=1
 
 InoutCodes:
-	; TODO: Inout for implicit instructions
+	; Inout for implicit instructions
+	iinstr	expand, bt, 0x14
+	iinstr	split_rl, sr, 0x15
+	iinstr	merge_lr, rt, 0x16
+	iinstr	split_lr, tr, 0x17
+	iinstr	pop, rs, 0x28
+	iinstr	popnext, rb, 0x29
+	iinstr	buffer_length, st, 0x2a
+	iinstr	cmp, rr, 0x2e
+	iinstr	sqrt, st, 0x51
+	iinstr	and, rt, 0x54
+	iinstr	andn, rt, 0x55
+	iinstr	or, rt, 0x56
+	iinstr	xor, rt, 0x57
+	iinstr	add, rt, 0x58
+	iinstr	mul, rt, 0x59
+	iinstr	cvtpd2ps, st, 0x5a
+	iinstr	sub, rt, 0x5c
+	iinstr	min, rt, 0x5d
+	iinstr	div, rt, 0x5e
+	iinstr	max, rt, 0x5f
 
 	%strlen _inout_length _inout_string
 	%define _n_instructions (_inout_length / 2)
-	%rep 256 - _n_instructions
+	%rep 256 - _n_instructions - _implicit_index
 		db 0
 	%endrep
 	%xdefine _index 0
 	%rep _n_instructions
-		%substr _in _inout_string (_index * 2 + 1)
-		%substr _out _inout_string (_index * 2 + 2)
-		%if _in == 'r'
-			%xdefine _inkind IN_R
-		%elif _in == 't'
-			%xdefine _inkind IN_T
-		%elif _in == 'b'
-			%xdefine _inkind IN_B
-		%elif _in == 's'
-			%xdefine _inkind IN_S
-		%else
-			%error "Invalid input kind" _in
-		%endif
-		%if _out == 'r'
-			%xdefine _outkind OUT_R
-		%elif _out == 't'
-			%xdefine _outkind OUT_T
-		%elif _out == 'b'
-			%xdefine _outkind OUT_B
-		%elif _out == 's'
-			%xdefine _outkind OUT_S
-		%else
-			%error "Invalid output kind" _out
-		%endif
-		db _inkind | _outkind
+		%substr _inout _inout_string (_index * 2 + 1), 2
+		inout _inout
 		%xdefine _index (_index + 1)
 	%endrep
 
