@@ -41,10 +41,10 @@ The whole nodegraph is traversed once per sample. The result is a single
 stereo sample value.
 
 MIDI note handling is inherently polyphonic. Each **Note On** results in the
-instantiation of a part of the graph with its own state, which persists until
-the note is done playing (which may be some time after the **Note Off** due to
-release). Monophonic behavior can easily be built on top of this mechanism if
-desired.
+instantiation of a part of the graph with its own voice state, which persists
+until the note is done playing (which may be some time after the **Note Off**
+due to release). Monophonic behavior can easily be built on top of this
+mechanism if desired.
 
 ### Signals
 The signals flowing between nodes can be characterized according to several
@@ -54,12 +54,12 @@ Property    | Values                  | Description
 :---        | :---                    | :---
 Type        | number, bitmask, buffer | Numbers are 64-bit floats.
 Width       | mono, stereo            | Mono signals are automatically converted to stereo as needed, but not vice versa.
-Context     | note-local, global      | A note-local signal has one instance for every currently playing note.
-Scope(?)    | static, dynamic         | A global signal is static if it is constant or only depends on constants. A note-local signal is static if it is available when the note is triggered. All other signals are dynamic, meaning their value (may) vary from one sample to the next.
+Context     | voice, global           | A voice signal has one instance for every currently playing note of the voice.
+Scope(?)    | static, dynamic         | A global signal is static if it is constant or only depends on constants. A voice signal is static if it is available when the note is triggered. All other signals are dynamic, meaning their value (may) vary from one sample to the next.
 
 ### Nodes
 
-Input and output connections to nodes are characterized according to the same
+Input and output connectors to nodes are characterized according to the same
 properties as signals, indicating what is expected on the inputs and produced
 at the outputs. Furthermore, inputs and outputs can be *generic*, meaning that
 (for that particular property) they accept any kind of value in, and the kind
@@ -93,14 +93,14 @@ merge                   | generic | mono, mono &rarr; stereo | generic | generic
 
 #### Implicit values
 
-Nodes                   | Type    | Width  | Context    | Scope
-:---                    | :---    | :---   | :---       | :---
-Sample rate             | number  | mono   | global     | static
-Global sample index     | number  | mono   | global     | dynamic
-Note sample index       | number  | mono   | note-local | dynamic
-Note tone               | number  | mono   | note-local | static
-Note velocity           | number  | mono   | note-local | static
-Note gate               | bitmask | mono   | note-local | dynamic
+Nodes                   | Type    | Width  | Context  | Scope
+:---                    | :---    | :---   | :---     | :---
+Sample rate             | number  | mono   | global   | static
+Global sample index     | number  | mono   | global   | dynamic
+Note sample index       | number  | mono   | voice    | dynamic
+Note tone               | number  | mono   | voice    | static
+Note velocity           | number  | mono   | voice    | static
+Note gate               | bitmask | mono   | voice    | dynamic
 
 #### Random numbers
 
@@ -137,9 +137,51 @@ indexed into dynamically. Buffer initialization is described in the
 
 Nodes          | Type                          | Width   | Context | Scope
 :---           | :---                          | :---    | :---    | :---
-index          | buffer, number &rarr; generic | mono, mono &rarr; generic | generic | static, dynamic &rarr; dynamic
-length         | buffer &rarr; number          | mono &rarr; mono | generic | static &rarr; static
+index          | buffer, number &rarr; generic | mono, mono &rarr; generic | generic | generic
+length         | buffer &rarr; number          | mono &rarr; mono | generic | generic
 
 ### Composite nodes
 
-To be continued...
+A composite node is a node which itself contains a graph of nodes inside. These are essential for the modularity of the synth.
+
+Composite nodes have input and output connectors like other nodes, where signals from the outside go in and resulting signals to the outside go out. These are called the *exterior* inputs and outputs. In addition, they have *interior* inputs and outputs, which are the connectors to which the contained graph is connected. Graphically, composite nodes could be shown as frames with the exterior connectors on the outside and the interior connectors on the inside.
+
+#### Block
+
+A **block** node simply groups together a subsection of the graph into a conceptual whole which can be used in multiple places in the graph as if it was an built-in node. It the basic mechanism of abstraction in the graph.
+
+A block can have any number of inputs and outputs. There will be one interior input/output directly corresponding to each exterior input/output. The block definition specifies the type, width, context and scope of each of its inputs and outputs. A property can be specified as *automatic*, in which case it will be inferred from the nodes within the block.
+
+If a property is specified (or inferred) as generic, the actual value is determined for each use, where input properties are inherited from the connected signal, and output properties are propagated through the block from the inputs.
+
+#### Voice
+
+A **voice** node is dynamically instantiated for every played note. Thus, the contents of the voice node are evaluated for every currently playing note.
+
+Static computations inside a voice node are performed once when the node is triggered. These can be used to initialize state nodes containing the state used to generate the sound. Dynamic computations are performed for every sample.
+
+A voice node has two interior outputs: the **sound** signal, a stereo number transmitting the generated sound, and the **kill** signal, a mono bitmask controlling when the note should stop playing and be removed from the list of active notes. The sound signal for all active notes are summed and output on the external sound output.
+
+It is possible to connect an output from a node outside the voice node directly to the input of a node inside the voice node. In this situation, it should be somehow specified whether this signal is to be regarded as static or dynamic inside the voice node, i.e. whether it is read once when the note is triggered or for every sample.
+
+#### Repeat
+
+A **repeat** node repeats its contents a number of times specified by a static input. An internal input contains the current iteration index. All state and delay nodes inside a repeat node are duplicated such that each iteration has its own state.
+
+Internal outputs from the repeat nodes are combined into the external outputs. Usually, the outputs from each iteration would be summed to compute the final output. But any of the associative operations (add, max, min, mul) could be selected. It could also have a more general mode where the output from the previous iteration is available as input to the next.
+
+Repeat nodes are useful for effects like chorus, where almost the same sound is added together many times with small variations e.g. in detuning. It could also be used to iterate through partials in an additive synth.
+
+#### Fill
+
+A **fill** node repeats its contents a number of times specified by a static input, just like a repeat node, but instead of summing the results, they are written to the entries of a buffer.
+
+Internal state is not duplicated, but instead carry over from one iteration to the next.
+
+A fill node has one external output which is a handle to the filled buffer.
+
+Fill nodes can be used to pre-calculate pieces of sound and other data.
+
+#### Stereo
+
+Often it is easiest to describe a computation using a mono signal, but the computation is to be applied to both sides of a stereo signal. A **stereo** node runs its content graph twice, for the left and right sides of the inputs. An extra interior input contains a number identifying the side (e.g. 0 for left, 1 for right).
