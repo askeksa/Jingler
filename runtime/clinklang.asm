@@ -1,9 +1,19 @@
 
+extern __imp____libm_sse2_acos
+extern __imp____libm_sse2_asin
+extern __imp____libm_sse2_atan
+extern __imp____libm_sse2_cos
+extern __imp____libm_sse2_exp
+extern __imp____libm_sse2_log
+extern __imp____libm_sse2_log10
 extern __imp____libm_sse2_sin
+extern __imp____libm_sse2_tan
+extern __imp____libm_sse2_atan2
+extern __imp____libm_sse2_pow
+
 global DecodeMain
 
 
-first_msvcrt_function equ __imp____libm_sse2_sin
 SAMPLES_PER_TICK equ 2362
 
 LOWEST_IMPLICIT_INSTRUCTION equ 0x14
@@ -150,6 +160,12 @@ DecodeMain:
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
+	snip		loop_enter, rr, 1
+	push		edi
+
+	snip		loop_leave, rr, 1
+	pop			edi
+
 	snip		output, rs, 1
 	; Assumes xmm0 is already converted to ps
 	cvtsd2si	eax, [ebx]
@@ -160,6 +176,7 @@ DecodeMain:
 	mov			[ebx + 4], eax
 	cvtsd2si	eax, xmm0
 	mov			[ebx], eax
+	shl			eax, 4
 	add			[BufferAllocPtr], eax
 
 	snip		buffer_load, sr, 1
@@ -293,6 +310,55 @@ DecodeMain:
 	snip		kill, rs, 1
 	pextrb		[ebp-1], xmm0, 7
 
+	snip		acos, rr, 1
+	call		[__imp____libm_sse2_acos]
+
+	snip		asin, rr, 1
+	call		[__imp____libm_sse2_asin]
+
+	snip		atan, rr, 1
+	call		[__imp____libm_sse2_atan]
+
+	snip		cos, rr, 1
+	call		[__imp____libm_sse2_cos]
+
+	snip		exp, rr, 1
+	call		[__imp____libm_sse2_exp]
+
+	snip		log, rr, 1
+	call		[__imp____libm_sse2_log]
+
+	snip		log10, rr, 1
+	call		[__imp____libm_sse2_log10]
+
+	snip		sin, rr, 1
+	call		[__imp____libm_sse2_sin]
+
+	snip		tan, rr, 1
+	call		[__imp____libm_sse2_tan]
+
+	snip		atan2, rr, 1
+	movapd		xmm1, [ebx]
+	call		[__imp____libm_sse2_atan2]
+
+	snip		pow, rr, 1
+	movapd		xmm1, [ebx]
+	call		[__imp____libm_sse2_pow]
+
+	; Pointer snips
+	snipcode	pointer
+	shl			eax, 2
+	add			[edi-4], eax
+
+	snip		constant_mono_f32, sr, 1
+	cvtss2sd	xmm0, dword [ConstantPool]
+
+	snip		proc_call, ss, 1
+	call		[ProcPointers]
+
+	snip		noteproperty, sr, 3
+	cvtsi2sd	xmm0, [dword ebp - 3*4]
+
 	; Proc snip
 	snipcode	proc
 	lea			eax, [edi-3]
@@ -330,45 +396,43 @@ DecodeMain:
 	snip		round, st, 4
 	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
 
-	; Label snip
+	; Label snips
 	snipcode	label
 	pop			ecx
 	push		edi
 	push		ecx
 
-	snip label, rr, 1
+	snip		label, rr, 1
 
-	; Jump snip
-	snipcode	jump
+	snip		if, rr, 1
+	db			0x0f, 0x82 ; jb label
+	dd			0
+
+	; Loopjump snip
+	snipcode	loopjump
 	pop			ecx
 	pop			eax
 	push		ecx
-	stosd
+	mov			[edi-4], eax
 	sub			[edi-4], edi
 
-	snip		jump, rr, 1
-	db			0x0f, 0x8c ; jl label
+	snip		loopjump, rr, 1
+	db			0x0f, 0x82 ; jb label
+	dd			0
 
-	; Pointer snips
-	snipcode	pointer
-	shl			eax, 2
-	add			[edi-4], eax
+	; Endif snips
+	snipcode	endif
+	pop			ecx
+	pop			eax
+	push		ecx
+	mov			[eax-4], edi
+	sub			[eax-4], eax
 
-	snip		constant_mono_f32, sr, 1
-	cvtss2sd	xmm0, dword [ConstantPool]
+	snip		endif, rr, 1
 
-	snip		proc_call, ss, 1
-	call		[ProcPointers]
-
-	snip		msvcrt_call_1_1, rr, 1
-	call		[first_msvcrt_function]
-
-	snip		msvcrt_call_2_1, rt, 1
-	movapd		xmm1, [ebx]
-	call		[first_msvcrt_function]
-
-	snip		noteproperty, sr, 3
-	cvtsi2sd	xmm0, [dword ebp - 3*4]
+	snip		else, rr, 1
+	db			0xe9 ; jmp label
+	dd			0
 
 	; Implicit snip
 	snipcode	implicit
@@ -435,14 +499,14 @@ section inout rdata align=1
 
 InoutCodes:
 	; Inout for implicit instructions
-	iinstr	expand, bt, 0x14
-	iinstr	split_rl, sr, 0x15
-	iinstr	merge_lr, rt, 0x16
-	iinstr	split_lr, tr, 0x17
-	iinstr	pop, rs, 0x28
-	iinstr	popnext, rb, 0x29
-	iinstr	buffer_length, st, 0x2a
-	iinstr	cmp, rr, 0x2e
+	iinstr	expand, bt, 0x14 ; unpcklpd
+	iinstr	split_rl, sr, 0x15 ; unpckhpd
+	iinstr	merge_lr, rt, 0x16 ; movhpd m -> r
+	iinstr	split_lr, tr, 0x17 ; movhpd r -> m
+	iinstr	pop, rb, 0x28 ; movapd m -> r
+	iinstr	popnext, rb, 0x29 ; movapd r -> m
+	iinstr	buffer_length, st, 0x2a ; cvtpi2pd
+	iinstr	cmp, rr, 0x2e ; ucomisd
 	iinstr	sqrt, st, 0x51
 	iinstr	and, rt, 0x54
 	iinstr	andn, rt, 0x55
