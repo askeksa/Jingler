@@ -73,7 +73,7 @@ add, max, min, mul      | number* &rarr; number        | generic | generic | gen
 div, sub                | number, number &rarr; number | generic | generic | generic
 addsub                  | number, number &rarr; number | stereo  | generic | generic
 ceil, floor, round, sqrt, trunc | number &rarr; number | generic | generic | generic
-acos, asin, atan, cos, exp, log, log10, sin, tan | number &rarr; number | mono | generic | generic
+acos, asin, atan, cos, exp2, log2, sin, tan | number &rarr; number | mono | generic | generic
 atan2, pow              | number, number &rarr; number | mono | generic | generic
 
 #### Logical operations

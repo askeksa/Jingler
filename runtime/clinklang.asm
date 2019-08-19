@@ -1,16 +1,4 @@
 
-extern __imp____libm_sse2_acos
-extern __imp____libm_sse2_asin
-extern __imp____libm_sse2_atan
-extern __imp____libm_sse2_cos
-extern __imp____libm_sse2_exp
-extern __imp____libm_sse2_log
-extern __imp____libm_sse2_log10
-extern __imp____libm_sse2_sin
-extern __imp____libm_sse2_tan
-extern __imp____libm_sse2_atan2
-extern __imp____libm_sse2_pow
-
 global DecodeMain
 
 
@@ -310,40 +298,26 @@ DecodeMain:
 	snip		kill, rs, 1
 	pextrb		[ebp-1], xmm0, 7
 
-	snip		acos, rr, 1
-	call		[__imp____libm_sse2_acos]
+	snip		exp2_body, ss, 1
+	; Assumes fop 0xFC (frndint) before.
+	fld			qword [ebx]
+	fsub		st0, st1
+	f2xm1
+	fld1
+	faddp		st1, st0
+	fscale
+	fstp		st1
 
-	snip		asin, rr, 1
-	call		[__imp____libm_sse2_asin]
+	snip		fdone, ss, 1
+	fstp		qword [ebx]
 
-	snip		atan, rr, 1
-	call		[__imp____libm_sse2_atan]
+	; Byte parameter snips
+	snipcode	byteparam
+	movsb
 
-	snip		cos, rr, 1
-	call		[__imp____libm_sse2_cos]
-
-	snip		exp, rr, 1
-	call		[__imp____libm_sse2_exp]
-
-	snip		log, rr, 1
-	call		[__imp____libm_sse2_log]
-
-	snip		log10, rr, 1
-	call		[__imp____libm_sse2_log10]
-
-	snip		sin, rr, 1
-	call		[__imp____libm_sse2_sin]
-
-	snip		tan, rr, 1
-	call		[__imp____libm_sse2_tan]
-
-	snip		atan2, rr, 1
-	movapd		xmm1, [ebx]
-	call		[__imp____libm_sse2_atan2]
-
-	snip		pow, rr, 1
-	movapd		xmm1, [ebx]
-	call		[__imp____libm_sse2_pow]
+	snip		fop, ss, 1
+	fld			qword [ebx]
+	db			0xd9 ; Various floating point ops
 
 	; Pointer snips
 	snipcode	pointer
