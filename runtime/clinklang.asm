@@ -2,7 +2,8 @@
 global DecodeMain
 
 
-SAMPLES_PER_TICK equ 2362
+MAX_TRACKS equ 255
+MAX_NOTE_COUNT equ 65536
 
 LOWEST_IMPLICIT_INSTRUCTION equ 0x14
 
@@ -78,6 +79,8 @@ DecodeMain:
 .mainloop:
 	xor			eax, eax
 	lodsb
+	cmp			al, 0
+	je			.decode_done
 	push		esi
 	or			dl, [InoutCodes + eax]
 	mov			ebx, _snipsizes
@@ -114,9 +117,49 @@ DecodeMain:
 	rep movsb
 	pop			esi
 	call		ebp
+	jmp			.mainloop
+.decode_done:
 
-	cmp			[esi], byte 0
-	jne			.mainloop
+UnpackNotes:
+	mov			edx, 3 ; Component
+	xor			eax, eax
+	lodsb
+	push		eax ; Number of tracks
+
+.componentloop:
+	lodsd
+	xchg		ebp, eax ; Value factor
+
+	mov			edi, TrackStarts
+	mov			ebx, NoteHeaders
+	pop			ecx
+	push		ecx
+.trackloop:
+	mov			[edi], ebx
+	scasd
+
+.noteloop:
+	; Load value
+	xor			eax, eax
+	lodsb
+	cmp			al, 0x80
+	je			.next_track
+	jb			.bytevalue
+	not			al
+	mov			ah, al
+	lodsb
+.bytevalue:
+	mul			ebp
+	mov			[ebx + edx*4], eax
+	add			ebx, byte 16
+	jmp			.noteloop
+
+.next_track:
+	loop		.trackloop
+
+	dec			edx
+	jns			.componentloop
+	pop			ecx
 	ret
 
 ;; Snips
@@ -198,79 +241,43 @@ DecodeMain:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
-	snip		trigger, rs, 1
+	snip		trigger, ss, 1
 	pusha
 
-	; Are we at a tick?
-	xor			edx, edx
-	cvtsd2si	eax, xmm0
-	mov			ecx, SAMPLES_PER_TICK
-	div			ecx
-	test		edx, edx
-	jne			.notrigger
-
-	; Loop through all notes for this instrument
-	mov			esi, [NoteDistancePtr]
-	xchg		eax, ebp
 .noteloop:
-	; Load note distance
-	xor			eax, eax
-	cmp			[esi], byte 0
-	jge			.bytedist
-	lodsb
-	not			al
-	mov			ah, al
-.bytedist:
-	lodsb
+	; Find note headers for track
+	mov			eax, [InstrumentIndex]
+	lea			ecx, [TrackStarts + eax*4] ; Note headers for track
+	mov			edx, [ecx]
 
-	sub			ebp, eax
-	jne			.notnow
-	; Triggered now
+	; Count down to note trigger
+	dec			dword [edx]
+	jns			.no_more_notes
 
 	; Allocate note object and chain it into note list
-	mov			eax, [NoteChainEndPtr]
 	mov			edi, [NoteAllocPtr]
-	mov			[NoteChainEndPtr], edi
-	mov			[eax], edi
-	scasd
+	mov			eax, [NoteChain]
+	mov			[edi], eax
+	mov			[NoteChain], edi
 
-	; Fetch length
-	mov			eax, [NoteLengthPtr]
-	movzx		eax, byte [eax]
-	mov			ecx, SAMPLES_PER_TICK
-	mul			ecx
-	stosd
-
-	; Fetch tone
-	mov			eax, [NoteTonePtr]
-	movzx		eax, byte [eax]
-	stosd
-
-	; Fetch velocity
-	mov			eax, [NoteVelocityPtr]
-	movzx		eax, byte [eax]
-	stosd
+	; Copy header
+	movapd		xmm0, [edx]
+	add			dword [ecx], byte 16
+	movapd		[edi], xmm0
 
 	; Call instrument init procedure
+	add			edi, byte 16
+	mov			ebp, edi
 	mov			eax, [InstrumentIndex]
 	call		[ProcPointers + eax*8]
 
-	; Bump alloc pointer to end of allocated object
+	; Bump alloc pointer to end of allocated note object
 	mov			[NoteAllocPtr], edi
-
-.notnow:
-	inc			dword [NoteLengthPtr]
-	inc			dword [NoteTonePtr]
-	inc			dword [NoteVelocityPtr]
-
-	cmp			[esi], byte 0x80
-	jne			.noteloop
-	lodsb
-	mov			[NoteDistancePtr], esi
-.notrigger:
+	jmp			.noteloop
+.no_more_notes:
 
 	; Process all active notes for this instrument
-	mov			eax, NoteChainStart
+	mov			eax, NoteChain
 .activeloop:
 	mov			edi, eax
 .killloop:
@@ -284,13 +291,13 @@ DecodeMain:
 
 	; Call instrument process procedure
 	add			edi, byte 16
+	mov			ebp, edi
 	mov			eax, [InstrumentIndex]
 	call		[ProcPointers + eax*8 + 4]
 
 	pop			eax
 	jmp			.activeloop
 .activedone:
-	mov			[NoteChainEndPtr], eax
 
 	inc			dword [InstrumentIndex]
 	popa
@@ -325,7 +332,7 @@ DecodeMain:
 	add			[edi-4], eax
 
 	snip		constant_mono_f32, sr, 1
-	cvtss2sd	xmm0, dword [ConstantPool]
+	cvtss2sd	xmm0, dword [dword esi + 0]
 
 	snip		proc_call, ss, 1
 	call		[ProcPointers]
@@ -511,20 +518,18 @@ NoteAllocPtr:
 	resd 1
 BufferAllocPtr:
 	resd 1
-NoteDistancePtr:
-	resd 1
-NoteLengthPtr:
-	resd 1
-NoteChainStart:
-	resd 1
-NoteChainEndPtr:
-	resd 1
-NoteTonePtr:
-	resd 1
-NoteVelocityPtr:
+NoteChain:
 	resd 1
 InstrumentIndex:
 	resd 1
+
+section tracks bss align=4
+TrackStarts:
+	resd MAX_TRACKS
+
+section notehdrs bss align=16
+NoteHeaders:
+	reso MAX_NOTE_COUNT
 
 section procptrs bss align=4
 ProcPointers:
@@ -533,7 +538,3 @@ ProcPointers:
 section music bss align=8
 MusicBuffer:
 	resq 1000000
-
-section constant rdata align=4
-ConstantPool:
-	times 256 dd 0
