@@ -2,6 +2,8 @@
 global ClinklangCompute
 
 
+%define COMPACT_IMPLICIT_OPCODES 1
+
 MAX_STACK equ 256
 STATE_SPACE equ 256
 NOTE_SPACE equ 65536
@@ -13,6 +15,13 @@ MAX_NOTE_COUNT equ 65536
 LOWEST_IMPLICIT_INSTRUCTION equ 0x14
 
 ;; Snip macros
+
+%if COMPACT_IMPLICIT_OPCODES
+	; Chop off the most significant 1 of an opcode starting with 101
+	%define IMPLICIT_CODE(opcode) ((opcode) & ((opcode >> 2) | (opcode >> 3) | 1))
+%else
+	%define IMPLICIT_CODE(opcode) (opcode)
+%endif
 
 section snips text align=1
 	_snips:
@@ -71,7 +80,7 @@ section snipsize data align=1
 %endmacro
 
 %macro snipend 0
-	%xdefine _snip_prev_number _snip_prev_id - 1 + LOWEST_IMPLICIT_INSTRUCTION
+	%xdefine _snip_prev_number _snip_prev_id - 1 + IMPLICIT_CODE(LOWEST_IMPLICIT_INSTRUCTION)
 	_snip_flush end_of, snips
 %endmacro
 
@@ -432,6 +441,11 @@ UnpackNotes:
 
 	; Implicit snip
 	snipcode	implicit
+%if COMPACT_IMPLICIT_OPCODES
+	bsr			ecx, eax
+	add			ecx, byte 2
+	bts			eax, ecx
+%endif
 	mov			[edi-2], al
 
 	basesnip	implicit
@@ -482,7 +496,12 @@ OUT_S	equ	0x30
 %define _implicit_index 0
 
 %macro iinstr 3 ; name, inout, repr
-	%xdefine _code ((%3) - LOWEST_IMPLICIT_INSTRUCTION + 1)
+	%if COMPACT_IMPLICIT_OPCODES
+		%if ((%3) & 0xfc != 0x14 && (%3) & 0xf8 != 0x28 && (%3) & 0xf0 != 0x50)
+			%error "Uncompactable implicit opcode"
+		%endif
+	%endif
+	%xdefine _code (IMPLICIT_CODE(%3) - IMPLICIT_CODE(LOWEST_IMPLICIT_INSTRUCTION) + 1)
 	%rep _code - _implicit_index
 		db 0
 	%endrep
