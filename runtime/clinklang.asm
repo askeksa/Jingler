@@ -1,7 +1,12 @@
 
-global DecodeMain
+global ClinklangCompute
 
 
+MAX_STACK equ 256
+STATE_SPACE equ 256
+NOTE_SPACE equ 65536
+BUFFER_SPACE equ 65536
+MUSIC_SPACE equ 1000000
 MAX_TRACKS equ 255
 MAX_NOTE_COUNT equ 65536
 
@@ -21,11 +26,6 @@ section snipsize data align=1
 %define _inout_string ""
 
 %macro _snip_flush 2 ; kind, name
-	section snips
-	%if _snip_code
-		ret
-	%endif
-	_%1_%2:
 	section snipsize
 	%if _snip_notfirst
 		db _%1_%2-_snip_prev
@@ -36,6 +36,11 @@ section snipsize data align=1
 	%define _snip_notfirst 1
 	%define _snip_prev _%1_%2
 	_%1_size_%2:
+	section snips
+	%if _snip_code
+		ret
+	%endif
+	_%1_%2:
 %endmacro
 
 %macro basesnip 1
@@ -58,6 +63,7 @@ section snipsize data align=1
 
 %macro snipcode 1
 	_snip_flush snipcode, %1
+	section snipsize
 	db -1
 	%define _snip_code 1
 	%define _snip_prev_number 0
@@ -70,12 +76,13 @@ section snipsize data align=1
 %endmacro
 
 
-section decoder text align=1
-;; Central decode loop
-; TODO: Add actual entry point
-DecodeMain:
-	mov			edx, OUT_S >> 4
+section ckmain text align=1
 
+ClinklangCompute:
+	mov			esi, [esp + 4]
+	mov			edi, GeneratedCode
+
+	mov			edx, OUT_S >> 4
 .mainloop:
 	xor			eax, eax
 	lodsb
@@ -160,7 +167,11 @@ UnpackNotes:
 	dec			edx
 	jns			.componentloop
 	pop			ecx
-	ret
+
+	; ESI = Constant pool
+	mov			edi, StateSpace
+	mov			ebx, edi
+	jmp			GeneratedCode+3
 
 ;; Snips
 
@@ -191,10 +202,10 @@ UnpackNotes:
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
-	snip		loop_enter, rr, 1
+	snip		state_enter, rr, 1
 	push		edi
 
-	snip		loop_leave, rr, 1
+	snip		state_leave, rr, 1
 	pop			edi
 
 	snip		output, rs, 1
@@ -241,6 +252,10 @@ UnpackNotes:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
+	snip		init_triggers, rr, 1
+	xor			eax, eax
+	mov			[InstrumentIndex], eax
+
 	snip		trigger, ss, 1
 	pusha
 
@@ -269,7 +284,7 @@ UnpackNotes:
 	add			edi, byte 16
 	mov			ebp, edi
 	mov			eax, [InstrumentIndex]
-	call		[ProcPointers + eax*8]
+	call		[ProcPointers + eax*8 + 4]
 
 	; Bump alloc pointer to end of allocated note object
 	mov			[NoteAllocPtr], edi
@@ -293,7 +308,7 @@ UnpackNotes:
 	add			edi, byte 16
 	mov			ebp, edi
 	mov			eax, [InstrumentIndex]
-	call		[ProcPointers + eax*8 + 4]
+	call		[ProcPointers + eax*8 + 8]
 
 	pop			eax
 	jmp			.activeloop
@@ -513,28 +528,59 @@ InoutCodes:
 		%xdefine _index (_index + 1)
 	%endrep
 
-section	ptrs bss align=4
+section	notept data align=4
 NoteAllocPtr:
-	resd 1
+	dd NoteSpace
+
+section	bufferpt data align=4
 BufferAllocPtr:
-	resd 1
+	dd BufferSpace
+
+section notech data align=4
 NoteChain:
-	resd 1
+	dd 0
+
+section instidx bss align=4
 InstrumentIndex:
 	resd 1
 
 section tracks bss align=4
 TrackStarts:
+.align16:
 	resd MAX_TRACKS
 
 section notehdrs bss align=16
 NoteHeaders:
+.align16:
 	reso MAX_NOTE_COUNT
 
 section procptrs bss align=4
 ProcPointers:
+.align16:
 	resd 256
+
+section ckcode bss align=1
+GeneratedCode:
+.align16:
+	resb 65536
+
+section ckstate bss align=16
+	reso MAX_STACK
+StateSpace:
+.align16:
+	reso STATE_SPACE
+
+section notesp bss align=16
+NoteSpace:
+.align16:
+	reso NOTE_SPACE
+
+section buffersp bss align=16
+BufferSpace:
+.align16:
+	reso BUFFER_SPACE
 
 section music bss align=8
 MusicBuffer:
-	resq 1000000
+.align24:
+	resq MUSIC_SPACE
