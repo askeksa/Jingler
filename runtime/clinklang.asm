@@ -2,8 +2,6 @@
 global ClinklangCompute
 
 
-%define COMPACT_IMPLICIT_OPCODES 1
-
 MAX_STACK equ 256
 STATE_SPACE equ 256
 NOTE_SPACE equ 65536
@@ -27,6 +25,8 @@ section snips text align=1
 	_snips:
 section snipsize data align=1
 	_snipsizes:
+section snipdead text align=1
+
 %define _snip_prev _snips
 %define _snip_code 0
 %define _snip_notfirst 0
@@ -59,24 +59,32 @@ section snipsize data align=1
 %endmacro
 
 %macro snip 3 ; name, inout, number
-	%defstr _inout_%1 %2
-	%rep %3
-		%strcat _inout_string _inout_%1 _inout_string
-	%endrep
-	basesnip %1
-	%xdefine _snip_id_%1 _snip_prev_id-%3
-	%xdefine _snip_number_%1 %3
-	%define _snip_prev_number _snip_number_%1
-	%define _snip_prev_id _snip_id_%1
+	%if %3
+		%defstr _inout_%1 %2
+		%rep %3
+			%strcat _inout_string _inout_%1 _inout_string
+		%endrep
+		basesnip %1
+		%xdefine _snip_id_%1 _snip_prev_id-%3
+		%xdefine _snip_number_%1 %3
+		%define _snip_prev_number _snip_number_%1
+		%define _snip_prev_id _snip_id_%1
+	%else
+		section snipdead
+	%endif
 %endmacro
 
-%macro snipcode 1
-	_snip_flush snipcode, %1
-	section snipsize
-	db -1
-	%define _snip_code 1
-	%define _snip_prev_number 0
-	section snips
+%macro snipcode 1-2 1
+	%if %2
+		_snip_flush snipcode, %1
+		section snipsize
+		db -1
+		%define _snip_code 1
+		%define _snip_prev_number 0
+		section snips
+	%else
+		section snipdead
+	%endif
 %endmacro
 
 %macro snipend 0
@@ -180,7 +188,7 @@ UnpackNotes:
 	; ESI = Constant pool
 	mov			edi, StateSpace
 	mov			ebx, edi
-	jmp			GeneratedCode+3
+	jmp			GeneratedCode+2
 
 ;; Snips
 
@@ -200,21 +208,21 @@ UnpackNotes:
 	; Plain snips
 	snipcode	plain
 
-	snip		addsub, rt, 1
+	snip		addsub, rt, I_ADDSUB
 	addsubpd	xmm0, [ebx]
 
-	snip		init_cell, rs, 1
+	snip		cell_init, rs, I_CELL_INIT
 	movapd		[edi], xmm0
 	add			edi, byte 16
 
-	snip		read_cell, sr, 1
+	snip		cell_read, sr, I_CELL_READ
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
-	snip		state_enter, rr, 1
+	snip		state_enter, rr, I_STATE_ENTER
 	push		edi
 
-	snip		state_leave, rr, 1
+	snip		state_leave, rr, I_STATE_LEAVE
 	pop			edi
 
 	snip		output, rs, 1
@@ -222,7 +230,7 @@ UnpackNotes:
 	cvtsd2si	eax, [ebx]
 	movq		[MusicBuffer + eax*8], xmm0
 
-	snip		buffer_alloc, ts, 1
+	snip		buffer_alloc, ts, I_BUFFER_ALLOC
 	mov			eax, [BufferAllocPtr]
 	mov			[ebx + 4], eax
 	cvtsd2si	eax, xmm0
@@ -230,7 +238,7 @@ UnpackNotes:
 	shl			eax, 4
 	add			[BufferAllocPtr], eax
 
-	snip		buffer_load, sr, 1
+	snip		buffer_load, sr, I_BUFFER_LOAD
 	xor			edx, edx
 	cvtsd2si	eax, [ebx]
 	add			ebx, byte 16
@@ -239,7 +247,7 @@ UnpackNotes:
 	add			edx, [ebx + 4]
 	movapd		xmm0, [edx]
 
-	snip		buffer_store, rs, 1
+	snip		buffer_store, rs, I_BUFFER_STORE
 	xor			edx, edx
 	cvtsd2si	eax, [ebx]
 	add			ebx, byte 16
@@ -248,7 +256,7 @@ UnpackNotes:
 	add			edx, [ebx + 4]
 	movapd		[edx], xmm0
 
-	snip		random, rt, 1
+	snip		random, rt, I_RANDOM
 	cvtsd2si	eax, xmm0
 	mov			ecx, 0xCD9E8D57
 	mul			ecx
@@ -261,11 +269,11 @@ UnpackNotes:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
-	snip		init_triggers, rr, 1
+	snip		init_triggers, rr, I_INIT_TRIGGERS
 	xor			eax, eax
 	mov			[InstrumentIndex], eax
 
-	snip		trigger, ss, 1
+	snip		trigger, ss, I_TRIGGER
 	pusha
 
 .noteloop:
@@ -326,10 +334,10 @@ UnpackNotes:
 	inc			dword [InstrumentIndex]
 	popa
 
-	snip		kill, rs, 1
+	snip		kill, rs, I_KILL
 	pextrb		[ebp-1], xmm0, 7
 
-	snip		exp2_body, ss, 1
+	snip		exp2_body, ss, I_EXP2_BODY
 	; Assumes fop 0xFC (frndint) before.
 	fld			qword [ebx]
 	fsub		st0, st1
@@ -339,29 +347,30 @@ UnpackNotes:
 	fscale
 	fstp		st1
 
-	snip		fdone, ss, 1
+	snip		fdone, ss, I_FDONE
 	fstp		qword [ebx]
 
 	; Byte parameter snips
-	snipcode	byteparam
-	movsb
+	snipcode	notbyte, I_FOP
+	not			al
+	stosb
 
-	snip		fop, ss, 1
+	snip		fop, ss, I_FOP
 	fld			qword [ebx]
 	db			0xd9 ; Various floating point ops
 
 	; Pointer snips
-	snipcode	pointer
+	snipcode	pointer, I_CONSTANT+I_PROC_CALL+I_NOTE_PROPERTY
 	shl			eax, 2
 	add			[edi-4], eax
 
-	snip		constant_mono_f32, sr, 1
+	snip		constant, sr, I_CONSTANT
 	cvtss2sd	xmm0, dword [dword esi + 0]
 
-	snip		proc_call, ss, 1
+	snip		proc_call, ss, I_PROC_CALL
 	call		[ProcPointers]
 
-	snip		noteproperty, sr, 3
+	snip		note_property, sr, I_NOTE_PROPERTY
 	cvtsi2sd	xmm0, [dword ebp - 3*4]
 
 	; Proc snip
@@ -378,27 +387,27 @@ UnpackNotes:
 	mov			ebp, edi
 
 	; Offset snips
-	snipcode	offset
+	snipcode	offset, I_STACK_LOAD+I_STACK_STORE+I_CELL_STORE
 	shl			eax, 4
 	stosd
 
-	snip		load_stack, sr, 1
+	snip		stack_load, sr, I_STACK_LOAD
 	db			0x66, 0x0f, 0x28, 0x83 ; movapd xmm0, [dword ebx + offset*16]
 
-	snip		store_stack, rs, 1
+	snip		stack_store, rs, I_STACK_STORE
 	db			0x66, 0x0f, 0x29, 0x83 ; movapd [dword ebx + offset*16], xmm0
 
-	snip		store_cell, rs, 1
+	snip		cell_store, rs, I_CELL_STORE
 	db			0x66, 0x0f, 0x29, 0x85 ; movapd [dword ebp + offset*16], xmm0
 
 	; Immediate snips
-	snipcode	immediate
+	snipcode	immediate, I_COMPARE+I_ROUND
 	stosb
 
-	snip		compare, rt, 7
+	snip		compare, rt, I_COMPARE
 	db			0x66, 0x0f, 0xc2, 0x03 ; cmppd xmm0, [ebx], mode
 
-	snip		round, st, 4
+	snip		round, st, I_ROUND
 	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
 
 	; Label snips
@@ -409,7 +418,7 @@ UnpackNotes:
 
 	snip		label, rr, 1
 
-	snip		if, rr, 1
+	snip		if, rr, I_IF
 	db			0x0f, 0x82 ; jb label
 	dd			0
 
@@ -426,18 +435,19 @@ UnpackNotes:
 	dd			0
 
 	; Endif snips
-	snipcode	endif
+	snipcode	endif, I_ENDIF+I_ELSE
 	pop			ecx
 	pop			eax
 	push		ecx
 	mov			[eax-4], edi
 	sub			[eax-4], eax
 
-	snip		endif, rr, 1
+	snip		endif, rr, I_ENDIF
 
-	snip		else, rr, 1
+	snip		else, rr, I_ELSE
 	db			0xe9 ; jmp label
 	dd			0
+	; Follow by label instruction
 
 	; Implicit snip
 	snipcode	implicit
@@ -502,6 +512,7 @@ OUT_S	equ	0x30
 		%endif
 	%endif
 	%xdefine _code (IMPLICIT_CODE(%3) - IMPLICIT_CODE(LOWEST_IMPLICIT_INSTRUCTION) + 1)
+	%xdefine _snip_id_%1 _code
 	%rep _code - _implicit_index
 		db 0
 	%endrep
