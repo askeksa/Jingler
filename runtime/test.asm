@@ -5,18 +5,16 @@
 %define I_CELL_READ 1
 %define I_STATE_ENTER 0
 %define I_STATE_LEAVE 0
-%define I_OUTPUT 1
 %define I_BUFFER_ALLOC 0
 %define I_BUFFER_LOAD 0
 %define I_BUFFER_STORE 0
 %define I_RANDOM 0
-%define I_INIT_TRIGGERS 1
 %define I_TRIGGER 1
 %define I_KILL 1
 %define I_EXP2_BODY 1
 %define I_FDONE 1
 %define I_FOP 4
-%define I_CONSTANT 7
+%define I_CONSTANT 6
 %define I_PROC_CALL 0
 %define I_NOTE_PROPERTY 3
 %define I_PROC 1
@@ -25,9 +23,9 @@
 %define I_CELL_STORE 4
 %define I_COMPARE 7
 %define I_ROUND 0
-%define I_LABEL 1
+%define I_LABEL 0
 %define I_IF 0
-%define I_LOOPJUMP 1
+%define I_LOOPJUMP 0
 %define I_ENDIF 0
 %define I_ELSE 0
 
@@ -43,7 +41,7 @@ extern __imp__fwrite
 extern __imp__fclose
 
 %define SAMPLE_RATE 44100
-%xdefine TOTAL_SAMPLES 1000000
+%xdefine TOTAL_SAMPLES MUSIC_SPACE
 
 section main text align=1
 
@@ -83,33 +81,36 @@ section musdat rdata align=1
 %define b(c) _snip_id_%+c
 
 MusicData:
-	; Bytecodes
+	; Global init
 	db b(proc)
-	db b(constant)+2, b(constant)+0
-	db b(label)
-	db b(init_triggers)
+
+	; Global update
+	db b(proc)
 	db b(constant)+0, b(trigger)
-	db b(cvtpd2ps), b(output)
-	db b(constant)+1, b(add)
-	db b(cmp), b(loopjump)
 
+	; Instrument 0 init
 	db b(proc)
 	db b(constant)+0, b(cell_init)
-	db b(constant)+3, b(note_property)+NOTE_TONE, b(div)
+	db b(constant)+2, b(note_property)+NOTE_TONE, b(div)
 	db b(fop)+(~0xfc), b(exp2_body), b(fdone) ; exp2
-	db b(constant)+4, b(mul), b(cell_init)
-	db b(constant)+6, b(cell_init)
+	db b(constant)+3, b(mul), b(cell_init)
+	db b(constant)+5, b(cell_init)
 	db b(constant)+0, b(cell_init)
 
+	; Instrument 0 update
 	db b(proc)
 	db b(cell_read), b(stack_load)+0, b(cell_read), b(add), b(cell_store)+0
 	db b(fop)+(~0xfe), b(fdone) ; sin
-	db b(cell_read), b(stack_load)+0, b(constant)+5, b(mul), b(cell_store)+2
+	db b(cell_read), b(stack_load)+0, b(constant)+4, b(mul), b(cell_store)+2
 	db b(mul), b(expand), b(add)
 	db b(cell_read), b(stack_load)+0, b(constant)+1, b(add), b(cell_store)+3
 	db b(note_property)+NOTE_LENGTH, b(compare)+COMPARE_EQ, b(kill)
 
 	db b(proc), 0
+
+
+	; Music length
+	dd MUSIC_SPACE
 
 	; Number of tracks
 	db 1
@@ -131,7 +132,6 @@ MusicData:
 	; Constant pool
 	dd 0.0
 	dd 1.0
-	dd TOTAL_SAMPLES%+.0
 	dd 12.0
 	dd 0.00116485395967 ; Radians/sample of C-0 at 44100Hz
 	dd 0.9999

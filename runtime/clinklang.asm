@@ -6,7 +6,7 @@ MAX_STACK equ 256
 STATE_SPACE equ 256
 NOTE_SPACE equ 65536
 BUFFER_SPACE equ 65536
-MUSIC_SPACE equ 1000000
+MUSIC_SPACE equ 0x100000
 MAX_TRACKS equ 255
 MAX_NOTE_COUNT equ 65536
 
@@ -164,19 +164,21 @@ ClinklangCompute:
 .decode_done:
 
 UnpackNotes:
+	lodsd
+	push		eax ; Music length
+
 	mov			edx, 3 ; Component
 	xor			eax, eax
 	lodsb
-	push		eax ; Number of tracks
+	xchg		ebp, eax ; Number of tracks
 
 .componentloop:
 	lodsd
-	xchg		ebp, eax ; Value factor
+	push		eax ; Value factor
 
 	mov			edi, TrackStarts
 	mov			ebx, NoteHeaders
-	pop			ecx
-	push		ecx
+	mov			ecx, ebp
 .trackloop:
 	mov			[edi], ebx
 	scasd
@@ -192,7 +194,7 @@ UnpackNotes:
 	mov			ah, al
 	lodsb
 .bytevalue:
-	imul		eax, ebp
+	imul		eax, [esp]
 	mov			[ebx + edx*4], eax
 	add			ebx, byte 16
 	jmp			.noteloop
@@ -201,15 +203,35 @@ UnpackNotes:
 	mov			dword [ebx], 0x80000000 ; Track terminator
 	add			ebx, byte 16
 	loop		.trackloop
+	pop			eax
 
 	dec			edx
 	jns			.componentloop
-	pop			ecx
 
 	; ESI = Constant pool
+RunGeneratedCode:
+	xor			ebp, ebp
+
 	mov			edi, StateSpace
 	mov			ebx, edi
-	jmp			[ProcPointers + 0*4]
+	call		[ProcPointers + 0*4]
+
+.sample:
+	xor			eax, eax
+	mov			[InstrumentIndex], eax
+
+	mov			edi, StateSpace
+	mov			ebx, edi
+	call		[ProcPointers + 1*4]
+
+	cvtpd2ps	xmm0, [ebx]
+	movq		[MusicBuffer + ebp*8], xmm0
+
+	inc			ebp
+	cmp			[esp], ebp
+	jne			.sample
+	pop			eax
+	ret
 
 ;; Snips
 
@@ -245,11 +267,6 @@ UnpackNotes:
 
 	snip		state_leave, rr, I_STATE_LEAVE
 	pop			edi
-
-	snip		output, rs, I_OUTPUT
-	; Assumes xmm0 is already converted to ps
-	cvtsd2si	eax, [ebx]
-	movq		[MusicBuffer + eax*8], xmm0
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
 	mov			eax, [BufferAllocPtr]
@@ -290,10 +307,6 @@ UnpackNotes:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
-	snip		init_triggers, rr, I_INIT_TRIGGERS
-	xor			eax, eax
-	mov			[InstrumentIndex], eax
-
 	snip		trigger, ss, I_TRIGGER
 	pusha
 	mov			ebp, [InstrumentIndex]
@@ -320,7 +333,7 @@ UnpackNotes:
 
 	; Call instrument init procedure
 	add			edi, byte 16
-	call		[ProcPointers + ebp*8 + 4]
+	call		[ProcPointers + ebp*8 + 2*4]
 
 	; Bump alloc pointer to end of allocated note object
 	mov			[NoteAllocPtr], edi
@@ -342,7 +355,7 @@ UnpackNotes:
 
 	; Call instrument process procedure
 	add			edi, byte 16
-	call		[ProcPointers + ebp*8 + 8]
+	call		[ProcPointers + ebp*8 + 3*4]
 
 	pop			eax
 	jmp			.activeloop
@@ -557,7 +570,6 @@ InoutCodes:
 	iinstr	xor, rt, 0x57
 	iinstr	add, rt, 0x58
 	iinstr	mul, rt, 0x59
-	iinstr	cvtpd2ps, st, 0x5a
 	iinstr	sub, rt, 0x5c
 	iinstr	min, rt, 0x5d
 	iinstr	div, rt, 0x5e
