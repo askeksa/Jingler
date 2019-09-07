@@ -12,6 +12,25 @@ MAX_NOTE_COUNT equ 65536
 
 LOWEST_IMPLICIT_INSTRUCTION equ 0x14
 
+; Constants for round instruction
+%define ROUND_NEAREST 0
+%define ROUND_FLOOR 1
+%define ROUND_CEIL 2
+%define ROUND_TRUNCATE 3
+
+; Constants for compare instruction
+%define COMPARE_EQ 0
+%define COMPARE_LT 1
+%define COMPARE_LE 2
+%define COMPARE_NE 4
+%define COMPARE_GE 5
+%define COMPARE_GT 6
+
+; Constants for note_property instruction
+%define NOTE_LENGTH 0
+%define NOTE_TONE 1
+%define NOTE_VELOCITY 2
+
 ;; Snip macros
 
 %if COMPACT_IMPLICIT_OPCODES
@@ -173,12 +192,14 @@ UnpackNotes:
 	mov			ah, al
 	lodsb
 .bytevalue:
-	mul			ebp
+	imul		eax, ebp
 	mov			[ebx + edx*4], eax
 	add			ebx, byte 16
 	jmp			.noteloop
 
 .next_track:
+	mov			dword [ebx], 0x80000000 ; Track terminator
+	add			ebx, byte 16
 	loop		.trackloop
 
 	dec			edx
@@ -188,7 +209,7 @@ UnpackNotes:
 	; ESI = Constant pool
 	mov			edi, StateSpace
 	mov			ebx, edi
-	jmp			GeneratedCode+2
+	jmp			[ProcPointers + 0*4]
 
 ;; Snips
 
@@ -225,7 +246,7 @@ UnpackNotes:
 	snip		state_leave, rr, I_STATE_LEAVE
 	pop			edi
 
-	snip		output, rs, 1
+	snip		output, rs, I_OUTPUT
 	; Assumes xmm0 is already converted to ps
 	cvtsd2si	eax, [ebx]
 	movq		[MusicBuffer + eax*8], xmm0
@@ -261,10 +282,10 @@ UnpackNotes:
 	mov			ecx, 0xCD9E8D57
 	mul			ecx
 	xor			eax, edx
-	xor			eax, dword [byte ebx+4]
+	xor			eax, [byte ebx+4]
 	mul			ecx
 	xor			eax, edx
-	xor			eax, dword [byte ebx+0]
+	xor			eax, [byte ebx+0]
 	mul			ecx
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
@@ -275,33 +296,31 @@ UnpackNotes:
 
 	snip		trigger, ss, I_TRIGGER
 	pusha
+	mov			ebp, [InstrumentIndex]
 
 .noteloop:
 	; Find note headers for track
-	mov			eax, [InstrumentIndex]
-	lea			ecx, [TrackStarts + eax*4] ; Note headers for track
+	lea			ecx, [TrackStarts + ebp*4] ; Note headers for track
 	mov			edx, [ecx]
 
 	; Count down to note trigger
 	dec			dword [edx]
 	jns			.no_more_notes
 
-	; Allocate note object and chain it into note list
+	; Allocate note object and copy header
 	mov			edi, [NoteAllocPtr]
-	mov			eax, [NoteChain]
-	mov			[edi], eax
-	mov			[NoteChain], edi
-
-	; Copy header
 	movapd		xmm0, [edx]
 	add			dword [ecx], byte 16
 	movapd		[edi], xmm0
 
+	; Chain note object into note list
+	mov			eax, [NoteChain]
+	mov			[edi], eax
+	mov			[NoteChain], edi
+
 	; Call instrument init procedure
 	add			edi, byte 16
-	mov			ebp, edi
-	mov			eax, [InstrumentIndex]
-	call		[ProcPointers + eax*8 + 4]
+	call		[ProcPointers + ebp*8 + 4]
 
 	; Bump alloc pointer to end of allocated note object
 	mov			[NoteAllocPtr], edi
@@ -323,9 +342,7 @@ UnpackNotes:
 
 	; Call instrument process procedure
 	add			edi, byte 16
-	mov			ebp, edi
-	mov			eax, [InstrumentIndex]
-	call		[ProcPointers + eax*8 + 8]
+	call		[ProcPointers + ebp*8 + 8]
 
 	pop			eax
 	jmp			.activeloop
@@ -365,7 +382,7 @@ UnpackNotes:
 	add			[edi-4], eax
 
 	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, dword [dword esi + 0]
+	cvtss2sd	xmm0, [dword esi + 0]
 
 	snip		proc_call, ss, I_PROC_CALL
 	call		[ProcPointers]
@@ -374,13 +391,13 @@ UnpackNotes:
 	cvtsi2sd	xmm0, [dword ebp - 3*4]
 
 	; Proc snip
-	snipcode	proc
+	snipcode	proc, I_PROC
 	lea			eax, [edi-3]
 	movzx		ecx, dh
 	inc			dh
 	mov			[ProcPointers + ecx*4], eax
 
-	snip		proc, ss, 1
+	snip		proc, ss, I_PROC
 	pop			ebp
 	ret
 	push		ebp
@@ -411,26 +428,26 @@ UnpackNotes:
 	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
 
 	; Label snips
-	snipcode	label
+	snipcode	label, I_LABEL+I_IF
 	pop			ecx
 	push		edi
 	push		ecx
 
-	snip		label, rr, 1
+	snip		label, rr, I_LABEL
 
 	snip		if, rr, I_IF
 	db			0x0f, 0x82 ; jb label
 	dd			0
 
 	; Loopjump snip
-	snipcode	loopjump
+	snipcode	loopjump, I_LOOPJUMP
 	pop			ecx
 	pop			eax
 	push		ecx
 	mov			[edi-4], eax
 	sub			[edi-4], edi
 
-	snip		loopjump, rr, 1
+	snip		loopjump, rr, I_LOOPJUMP
 	db			0x0f, 0x82 ; jb label
 	dd			0
 
