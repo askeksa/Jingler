@@ -251,8 +251,11 @@ RunGeneratedCode:
 	; Plain snips
 	snipcode	plain
 
-	snip		addsub, rt, I_ADDSUB
-	addsubpd	xmm0, [ebx]
+	snip		state_enter, rr, I_STATE_ENTER
+	push		edi
+
+	snip		state_leave, rr, I_STATE_LEAVE
+	pop			edi
 
 	snip		cell_init, rs, I_CELL_INIT
 	movapd		[edi], xmm0
@@ -262,11 +265,21 @@ RunGeneratedCode:
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
-	snip		state_enter, rr, I_STATE_ENTER
-	push		edi
+	snip		addsub, rt, I_ADDSUB
+	addsubpd	xmm0, [ebx]
 
-	snip		state_leave, rr, I_STATE_LEAVE
-	pop			edi
+	snip		random, rt, I_RANDOM
+	cvtsd2si	eax, xmm0
+	mov			ecx, 0xCD9E8D57
+	mul			ecx
+	xor			eax, edx
+	xor			eax, [byte ebx+4]
+	mul			ecx
+	xor			eax, edx
+	xor			eax, [byte ebx+0]
+	mul			ecx
+	xor			eax, edx
+	cvtsi2sd	xmm0, eax
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
 	mov			eax, [BufferAllocPtr]
@@ -294,18 +307,8 @@ RunGeneratedCode:
 	add			edx, [ebx + 4]
 	movapd		[edx], xmm0
 
-	snip		random, rt, I_RANDOM
-	cvtsd2si	eax, xmm0
-	mov			ecx, 0xCD9E8D57
-	mul			ecx
-	xor			eax, edx
-	xor			eax, [byte ebx+4]
-	mul			ecx
-	xor			eax, edx
-	xor			eax, [byte ebx+0]
-	mul			ecx
-	xor			eax, edx
-	cvtsi2sd	xmm0, eax
+	snip		kill, rs, I_KILL
+	pextrb		[ebp-1], xmm0, 7
 
 	snip		trigger, ss, I_TRIGGER
 	pusha
@@ -364,9 +367,6 @@ RunGeneratedCode:
 	inc			dword [InstrumentIndex]
 	popa
 
-	snip		kill, rs, I_KILL
-	pextrb		[ebp-1], xmm0, 7
-
 	snip		exp2_body, ss, I_EXP2_BODY
 	; Assumes fop 0xFC (frndint) before.
 	fld			qword [ebx]
@@ -389,20 +389,6 @@ RunGeneratedCode:
 	fld			qword [ebx]
 	db			0xd9 ; Various floating point ops
 
-	; Pointer snips
-	snipcode	pointer, I_CONSTANT+I_PROC_CALL+I_NOTE_PROPERTY
-	shl			eax, 2
-	add			[edi-4], eax
-
-	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, [dword esi + 0]
-
-	snip		proc_call, ss, I_PROC_CALL
-	call		[ProcPointers]
-
-	snip		note_property, sr, I_NOTE_PROPERTY
-	cvtsi2sd	xmm0, [dword ebp - 3*4]
-
 	; Proc snip
 	snipcode	proc, I_PROC
 	lea			eax, [edi-3]
@@ -415,6 +401,20 @@ RunGeneratedCode:
 	ret
 	push		ebp
 	mov			ebp, edi
+
+	; Pointer snips
+	snipcode	pointer, I_CONSTANT+I_PROC_CALL+I_NOTE_PROPERTY
+	shl			eax, 2
+	add			[edi-4], eax
+
+	snip		proc_call, ss, I_PROC_CALL
+	call		[ProcPointers]
+
+	snip		constant, sr, I_CONSTANT
+	cvtss2sd	xmm0, [dword esi + 0]
+
+	snip		note_property, sr, I_NOTE_PROPERTY
+	cvtsi2sd	xmm0, [dword ebp - 3*4]
 
 	; Offset snips
 	snipcode	offset, I_STACK_LOAD+I_STACK_STORE+I_CELL_STORE
@@ -429,16 +429,6 @@ RunGeneratedCode:
 
 	snip		cell_store, rs, I_CELL_STORE
 	db			0x66, 0x0f, 0x29, 0x85 ; movapd [dword ebp + offset*16], xmm0
-
-	; Immediate snips
-	snipcode	immediate, I_COMPARE+I_ROUND
-	stosb
-
-	snip		compare, rt, I_COMPARE
-	db			0x66, 0x0f, 0xc2, 0x03 ; cmppd xmm0, [ebx], mode
-
-	snip		round, st, I_ROUND
-	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
 
 	; Label snips
 	snipcode	label, I_LABEL+I_IF
@@ -479,6 +469,16 @@ RunGeneratedCode:
 	dd			0
 	; Follow by label instruction
 
+	; Immediate snips
+	snipcode	immediate, I_COMPARE+I_ROUND
+	stosb
+
+	snip		round, st, I_ROUND
+	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
+
+	snip		compare, rt, I_COMPARE
+	db			0x66, 0x0f, 0xc2, 0x03 ; cmppd xmm0, [ebx], mode
+
 	; Implicit snip
 	snipcode	implicit
 %if COMPACT_IMPLICIT_OPCODES
@@ -505,6 +505,8 @@ OUT_T	equ	0x50
 OUT_B	equ	0x70
 OUT_S	equ	0x30
 
+%define _last_inout 0
+
 %macro inout 1
 	%substr _in %1 1
 	%substr _out %1 2
@@ -530,7 +532,8 @@ OUT_S	equ	0x30
 	%else
 		%error "Invalid output kind" _out
 	%endif
-	db _inkind | _outkind
+	%xdefine _last_inout _inkind | _outkind
+	db _last_inout
 %endmacro
 
 %define _implicit_index 0
@@ -544,7 +547,7 @@ OUT_S	equ	0x30
 	%xdefine _code (IMPLICIT_CODE(%3) - IMPLICIT_CODE(LOWEST_IMPLICIT_INSTRUCTION) + 1)
 	%xdefine _snip_id_%1 _code
 	%rep _code - _implicit_index
-		db 0
+		db _last_inout
 	%endrep
 	%defstr _inout_%1 %2
 	inout _inout_%1
@@ -578,7 +581,7 @@ InoutCodes:
 	%strlen _inout_length _inout_string
 	%define _n_instructions (_inout_length / 2)
 	%rep 256 - _n_instructions - _implicit_index
-		db 0
+		db _last_inout
 	%endrep
 	%xdefine _index 0
 	%rep _n_instructions
