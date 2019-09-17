@@ -3,3 +3,11 @@ root = true
 [*.asm]
 indent_style = tab
 indent_size = 4
+
+[*.rs]
+indent_style = tab
+indent_size = 4
+
+[*.lalrpop]
+indent_style = tab
+indent_size = 4

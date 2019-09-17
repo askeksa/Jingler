@@ -1,0 +1,123 @@
+
+use std::str::FromStr;
+
+use crate::ast::*;
+
+grammar;
+
+pub Program: Program<'input> = {
+	<declarations:Declaration*> => Program {<>},
+};
+
+Declaration: Declaration<'input> = {
+	<kind:ProcedureKind> <name:Id> <params:Pattern> "->" <outputs:Pattern> <body:Statement*>
+		=> Declaration::Procedure {<>},
+};
+
+ProcedureKind: ProcedureKind = {
+	"function" => ProcedureKind::Function,
+	"instrument" => ProcedureKind::Instrument,
+}
+
+Pattern: Pattern<'input> = {
+	<name:Id> => Pattern::Variable {
+		name,
+		scope: Scope::Implicit,
+		width: Width::Implicit,
+	},
+	<name:Id> ":" <width:Width> => Pattern::Variable {
+		name,
+		scope: Scope::Implicit,
+		width,
+	},
+	<name:Id> ":" <scope:Scope> => Pattern::Variable {
+		name,
+		scope,
+		width: Width::Implicit,
+	},
+	<name:Id> ":" <scope:Scope> <width:Width> => Pattern::Variable {
+		name,
+		width,
+		scope,
+	},
+	"(" <elements:Comma<Pattern>> ")" => Pattern::Tuple {<>},
+	"[" <left:Box<Pattern>> "," <right:Box<Pattern>> "]" => Pattern::Split {<>},
+};
+
+Scope: Scope<'input> = {
+	"static" => Scope::Static,
+	"dynamic" => Scope::Dynamic,
+	"'" <name:Id> => Scope::Generic {<>},
+};
+
+Width: Width<'input> = {
+	"mono" => Width::Mono,
+	"stereo" => Width::Stereo,
+	"`" <name:Id> => Width::Generic {<>},
+};
+
+Statement: Statement<'input> = {
+	<node:Pattern> "=" <exp:Expression> ";" => Statement::Assign {<>},
+};
+
+Expression: Expression<'input> = {
+	LogicalExpression,
+};
+
+LogicalExpression = BinOpLevel<LogicalOp, CompareExpression>;
+
+LogicalOp: BinOpKind = {
+	"&" => BinOpKind::And,
+	"|" => BinOpKind::Or,
+	"^" => BinOpKind::Xor,
+};
+
+CompareExpression = BinOpLevel<CompareOp, AdditiveExpression>;
+
+CompareOp: BinOpKind = {
+	"==" => BinOpKind::Eq,
+	"!=" => BinOpKind::Neq,
+	"<" => BinOpKind::Less,
+	"<=" => BinOpKind::LessEq,
+	">" => BinOpKind::Greater,
+	">=" => BinOpKind::GreaterEq,
+};
+
+AdditiveExpression = BinOpLevel<AdditiveOp, MultiplicativeExpression>;
+
+AdditiveOp: BinOpKind = {
+	"+" => BinOpKind::Add,
+	"-" => BinOpKind::Sub,
+};
+
+MultiplicativeExpression = BinOpLevel<MultiplicativeOp, UnaryExpression>;
+
+MultiplicativeOp: BinOpKind = {
+	"*" => BinOpKind::Mul,
+	"/" => BinOpKind::Div,
+};
+
+UnaryExpression: Expression<'input> = {
+	<value:Num> => Expression::Number {<>},
+	<name:Id> => Expression::Variable {<>},
+	<name:Id> "(" <args:Comma<Expression>> ")" => Expression::Call {<>},
+	"(" <elements:Comma<Expression>> ")" => Expression::Tuple {<>},
+	"[" <left:Box<Expression>> "," <right:Box<Expression>> "]" => Expression::Merge {<>},
+	<exp:Box<UnaryExpression>> "." <name:Id> => Expression::Property {<>},
+};
+
+Id: Id<'input> = {
+	<pos:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id {<>},
+};
+
+Num: f64 = <s:r"[0-9]+"> => f64::from_str(s).unwrap();
+
+Comma<T>: Vec<T> = <v:(<T> ",")*> <e:T?> => v.into_iter().chain(e).collect();
+
+Box<T>: Box<T> = <data:T> => Box::new(data);
+
+BinOpLevel<Op, NextLevel>: Expression<'input> = {
+	<left:Box<BinOpLevel<Op, NextLevel>>> <op:Op> <right:Box<NextLevel>>
+		=> Expression::BinOp {<>},
+	NextLevel
+}
