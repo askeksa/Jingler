@@ -26,18 +26,26 @@ pub enum Statement<'input> {
 	Assign { node: Pattern<'input>, exp: Expression<'input> },
 }
 
+pub type Pattern<'input> = Vec<PatternItem<'input>>;
+
 #[derive(Debug)]
-pub enum Pattern<'input> {
-	Variable { name: Id<'input>, scope: Scope<'input>, width: Width<'input> },
-	Tuple { elements: Vec<Pattern<'input>> },
-	Split { left: Box<Pattern<'input>>, right: Box<Pattern<'input>> },
+pub struct PatternItem<'input> {
+	pub variable: PatternVariable<'input>,
+	pub scope: Option<Scope<'input>>,
+	pub width: Option<Width<'input>>,
+	pub value_type: Option<ValueType>,
+}
+
+#[derive(Debug)]
+pub enum PatternVariable<'input> {
+	Variable { name: Id<'input> },
+	Split { left: Id<'input>, right: Id<'input> },
 }
 
 #[derive(Debug)]
 pub enum Scope<'input> {
 	Static,
 	Dynamic,
-	Implicit,
 	Generic { name: Id<'input> },
 }
 
@@ -45,8 +53,14 @@ pub enum Scope<'input> {
 pub enum Width<'input> {
 	Mono,
 	Stereo,
-	Implicit,
 	Generic { name: Id<'input> },
+}
+
+#[derive(Debug)]
+pub enum ValueType {
+	Number,
+	Bool,
+	Buffer,
 }
 
 #[derive(Debug)]
@@ -59,6 +73,8 @@ pub enum Expression<'input> {
 	Tuple { elements: Vec<Expression<'input>> },
 	Merge { left: Box<Expression<'input>>, right: Box<Expression<'input>> },
 	Property { exp: Box<Expression<'input>>, name: Id<'input> },
+	TupleIndex { exp: Box<Expression<'input>>, index: u64 },
+	BufferIndex {exp: Box<Expression<'input>>, index: Box<Expression<'input>> },
 }
 
 #[derive(Debug)]

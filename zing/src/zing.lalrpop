@@ -1,5 +1,8 @@
 
+use std::f64;
 use std::str::FromStr;
+
+use lalrpop_util::ParseError;
 
 use crate::ast::*;
 
@@ -20,28 +23,18 @@ ProcedureKind: ProcedureKind = {
 }
 
 Pattern: Pattern<'input> = {
-	<name:Id> => Pattern::Variable {
-		name,
-		scope: Scope::Implicit,
-		width: Width::Implicit,
-	},
-	<name:Id> ":" <width:Width> => Pattern::Variable {
-		name,
-		scope: Scope::Implicit,
-		width,
-	},
-	<name:Id> ":" <scope:Scope> => Pattern::Variable {
-		name,
-		scope,
-		width: Width::Implicit,
-	},
-	<name:Id> ":" <scope:Scope> <width:Width> => Pattern::Variable {
-		name,
-		width,
-		scope,
-	},
-	"(" <elements:Comma<Pattern>> ")" => Pattern::Tuple {<>},
-	"[" <left:Box<Pattern>> "," <right:Box<Pattern>> "]" => Pattern::Split {<>},
+	<item:PatternItem> => vec![item],
+	"(" <items:Comma<PatternItem>> ")" => <>
+};
+
+PatternItem: PatternItem<'input> = {
+	<variable:PatternVariable> => PatternItem { <>, scope: None, width: None, value_type: None },
+	<variable:PatternVariable> ":" <scope:Scope?> <width:Width?> <value_type:Type?> => PatternItem {<>},
+};
+
+PatternVariable: PatternVariable<'input> = {
+	<name:Id> => PatternVariable::Variable {<>},
+	"[" <left:Id> "," <right:Id> "]" => PatternVariable::Split {<>},
 };
 
 Scope: Scope<'input> = {
@@ -55,6 +48,12 @@ Width: Width<'input> = {
 	"stereo" => Width::Stereo,
 	"`" <name:Id> => Width::Generic {<>},
 };
+
+Type: ValueType = {
+	"number" => ValueType::Number,
+	"bool" => ValueType::Bool,
+	"buffer" => ValueType::Buffer,
+}
 
 Statement: Statement<'input> = {
 	<node:Pattern> "=" <exp:Expression> ";" => Statement::Assign {<>},
@@ -98,19 +97,77 @@ MultiplicativeOp: BinOpKind = {
 };
 
 UnaryExpression: Expression<'input> = {
+	<op:UnaryOp> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
+	PrimaryExpression,
+};
+
+UnaryOp: UnOpKind = {
+	"-" => UnOpKind::Neg,
+	"!" => UnOpKind::Not,
+};
+
+PrimaryExpression: Expression<'input> = {
 	<value:Num> => Expression::Number {<>},
 	<name:Id> => Expression::Variable {<>},
 	<name:Id> "(" <args:Comma<Expression>> ")" => Expression::Call {<>},
 	"(" <elements:Comma<Expression>> ")" => Expression::Tuple {<>},
 	"[" <left:Box<Expression>> "," <right:Box<Expression>> "]" => Expression::Merge {<>},
-	<exp:Box<UnaryExpression>> "." <name:Id> => Expression::Property {<>},
+	<exp:Box<PrimaryExpression>> "." <name:Id> => Expression::Property {<>},
+	<exp:Box<PrimaryExpression>> "." <index:Uint> => Expression::TupleIndex {<>},
+	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" => Expression::BufferIndex {<>},
+};
+
+Num: f64 = {
+	<pos:@L> <i:Uint> =>? {
+		let n = i as f64;
+		if n as u64 == i {
+			Ok(n)
+		} else {
+			Err(ParseError::InvalidToken { location: pos })
+		}
+	},
+	DecimalNum,
+	HexadecimalNum,
+	"inf" => f64::INFINITY,
 };
 
 Id: Id<'input> = {
 	<pos:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id {<>},
 };
 
-Num: f64 = <s:r"[0-9]+"> => f64::from_str(s).unwrap();
+Uint: u64 = <pos:@L> <s:r"0|[1-9][0-9]*"> =>? {
+	u64::from_str(s).map_err(|e| ParseError::InvalidToken { location: pos })
+};
+
+DecimalNum: f64 = <pos:@L> <s:r"(0|[1-9][0-9]*)[.][0-9]+"> =>? {
+	f64::from_str(s).map_err(|e| ParseError::InvalidToken { location: pos })
+};
+
+HexadecimalNum: f64 = <pos:@L> <s:r"0x[0-9a-fA-F]+([.][0-9a-fA-F]*)?"> =>? {
+	let mut n = 0.0;
+	let mut f = 1.0;
+	let mut ff = 1.0;
+	for c in s.bytes().skip(2) {
+		if c == b'.' {
+			ff = 1.0 / 16.0;
+		} else {
+			let digit = match c {
+				(b'0' ..= b'9') => c - b'0',
+				(b'a' ..= b'f') => 10 + c - b'a',
+				(b'A' ..= b'F') => 10 + c - b'A',
+				_ => panic!(),
+			} as f64;
+			n *= 16.0;
+			let new_n = n + digit;
+			if new_n - n != digit {
+				return Err(ParseError::InvalidToken { location: pos });
+			}
+			n = new_n;
+			f *= ff;
+		}
+	}
+	Ok(n * f)
+};
 
 Comma<T>: Vec<T> = <v:(<T> ",")*> <e:T?> => v.into_iter().chain(e).collect();
 
