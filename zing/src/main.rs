@@ -6,11 +6,12 @@ use std::env;
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
 mod ast;
+mod pretty_print;
 
 fn main() {
 	for arg in env::args().skip(1) {
 		match zing::ProgramParser::new().parse(&arg) {
-			Ok(program) => println!("{:?}", program),
+			Ok(program) => println!("{}", program),
 			Err(error) => println!("{:?}", error),
 		}
 	}

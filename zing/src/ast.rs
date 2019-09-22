@@ -77,12 +77,12 @@ pub enum Expression<'input> {
 	BufferIndex {exp: Box<Expression<'input>>, index: Box<Expression<'input>> },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum UnOpKind {
 	Neg, Not,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum BinOpKind {
 	Add, Sub, Mul, Div, And, Or, Xor, Eq, Neq, Less, LessEq, Greater, GreaterEq,
 }

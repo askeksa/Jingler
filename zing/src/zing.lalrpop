@@ -46,7 +46,7 @@ Scope: Scope<'input> = {
 Width: Width<'input> = {
 	"mono" => Width::Mono,
 	"stereo" => Width::Stereo,
-	"`" <name:Id> => Width::Generic {<>},
+	"''" <name:Id> => Width::Generic {<>},
 };
 
 Type: ValueType = {
@@ -114,7 +114,13 @@ PrimaryExpression: Expression<'input> = {
 	<value:Num> => Expression::Number {<>},
 	<name:Id> => Expression::Variable {<>},
 	<name:Id> "(" <args:Comma<Expression>> ")" => Expression::Call {<>},
-	"(" <elements:Comma<Expression>> ")" => Expression::Tuple {<>},
+	"(" <mut elements:Comma<Expression>> ")" => {
+		if elements.len() == 1 {
+			elements.drain(..).next().unwrap()
+		} else {
+			Expression::Tuple {<>}
+		}
+	},
 	"[" <left:Box<Expression>> "," <right:Box<Expression>> "]" => Expression::Merge {<>},
 	<exp:Box<PrimaryExpression>> "." <name:Id> => Expression::Property {<>},
 	<exp:Box<PrimaryExpression>> "." <index:Uint> => Expression::TupleIndex {<>},
