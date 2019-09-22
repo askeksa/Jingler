@@ -60,16 +60,20 @@ Statement: Statement<'input> = {
 };
 
 Expression: Expression<'input> = {
-	LogicalExpression,
+	OrExpression,
 };
 
-LogicalExpression = BinOpLevel<LogicalOp, CompareExpression>;
+OrExpression = BinOpLevel<OrOp, XorExpression>;
 
-LogicalOp: BinOpKind = {
-	"&" => BinOpKind::And,
-	"|" => BinOpKind::Or,
-	"^" => BinOpKind::Xor,
-};
+OrOp: BinOpKind = "|" => BinOpKind::Or;
+
+XorExpression = BinOpLevel<XorOp, AndExpression>;
+
+XorOp: BinOpKind = "^" => BinOpKind::Xor;
+
+AndExpression = BinOpLevel<AndOp, CompareExpression>;
+
+AndOp: BinOpKind = "&" => BinOpKind::And;
 
 CompareExpression = BinOpLevel<CompareOp, AdditiveExpression>;
 
