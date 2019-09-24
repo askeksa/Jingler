@@ -17,6 +17,7 @@ pub enum Declaration<'input> {
 
 #[derive(Debug)]
 pub enum ProcedureKind {
+	Module,
 	Function,
 	Instrument,
 }
@@ -31,7 +32,7 @@ pub type Pattern<'input> = Vec<PatternItem<'input>>;
 #[derive(Debug)]
 pub struct PatternItem<'input> {
 	pub variable: PatternVariable<'input>,
-	pub scope: Option<Scope<'input>>,
+	pub scope: Option<Scope>,
 	pub width: Option<Width<'input>>,
 	pub value_type: Option<ValueType>,
 }
@@ -43,10 +44,9 @@ pub enum PatternVariable<'input> {
 }
 
 #[derive(Debug)]
-pub enum Scope<'input> {
+pub enum Scope {
 	Static,
 	Dynamic,
-	Generic { name: Id<'input> },
 }
 
 #[derive(Debug)]

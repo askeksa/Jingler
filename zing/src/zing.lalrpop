@@ -18,6 +18,7 @@ Declaration: Declaration<'input> = {
 };
 
 ProcedureKind: ProcedureKind = {
+	"module" => ProcedureKind::Module,
 	"function" => ProcedureKind::Function,
 	"instrument" => ProcedureKind::Instrument,
 }
@@ -37,16 +38,15 @@ PatternVariable: PatternVariable<'input> = {
 	"[" <left:Id> "," <right:Id> "]" => PatternVariable::Split {<>},
 };
 
-Scope: Scope<'input> = {
+Scope: Scope = {
 	"static" => Scope::Static,
 	"dynamic" => Scope::Dynamic,
-	"'" <name:Id> => Scope::Generic {<>},
 };
 
 Width: Width<'input> = {
 	"mono" => Width::Mono,
 	"stereo" => Width::Stereo,
-	"''" <name:Id> => Width::Generic {<>},
+	"^" <name:Id> => Width::Generic {<>},
 };
 
 Type: ValueType = {

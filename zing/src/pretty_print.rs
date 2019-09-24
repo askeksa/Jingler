@@ -34,6 +34,7 @@ impl Display for ProcedureKind {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use ProcedureKind::*;
 		match *self {
+			Module => "module",
 			Function => "function",
 			Instrument => "instrument",
 		}.fmt(f)
@@ -85,13 +86,12 @@ impl<'input> Display for PatternVariable<'input> {
 	}
 }
 
-impl<'input> Display for Scope<'input> {
+impl Display for Scope {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use Scope::*;
 		match self {
 			Static => write!(f, "static"),
 			Dynamic => write!(f, "dynamic"),
-			Generic { name } => write!(f, "'{}", name),
 		}
 	}
 }
@@ -102,7 +102,7 @@ impl<'input> Display for Width<'input> {
 		match self {
 			Mono => write!(f, "mono"),
 			Stereo => write!(f, "stereo"),
-			Generic { name } => write!(f, "''{}", name),
+			Generic { name } => write!(f, "^{}", name),
 		}
 	}
 }
