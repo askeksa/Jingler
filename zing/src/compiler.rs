@@ -1,26 +1,32 @@
 
+use std::mem::replace;
+use std::rc::Rc;
+
 use regex::Regex;
 
 use lalrpop_util::ParseError;
+
+use crate::ast::Program;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
 pub struct Compiler<'input> {
 	filename: &'input str,
 	raw_input: &'input str,
-	stripped_input: String, // Comments removed
-	errors: Vec<Message>,
+	stripped_input: Rc<str>, // Comments removed
+	messages: Vec<Message>,
 
 	r_line_break: Regex,
-	r_not_tab: Regex,
 }
 
+#[derive(Clone)]
 pub struct Message {
 	category: MessageCategory,
 	line: usize,
 	column: usize,
 	length: usize,
 	text: String,
+	source_line: String,
 }
 
 #[derive(Clone, Copy)]
@@ -43,40 +49,27 @@ impl MessageCategory {
 	}
 }
 
-pub struct CompileError<'input> {
-	compiler: &'input Compiler<'input>,
-}
-
-pub struct CompileErrorIterator<'input> {
-	compiler: &'input Compiler<'input>,
+pub struct CompileError {
+	filename: String,
+	messages: Vec<Message>,
 	index: usize,
+
+	r_not_tab: Regex,
 }
 
-impl<'input> IntoIterator for CompileError<'input> {
-	type Item = String;
-	type IntoIter = CompileErrorIterator<'input>;
-
-	fn into_iter(self) -> CompileErrorIterator<'input> {
-		CompileErrorIterator {
-			compiler: self.compiler,
-			index: 0,
-		}
-	}
-}
-
-impl<'input> Iterator for CompileErrorIterator<'input> {
+impl Iterator for CompileError {
 	type Item = String;
 
 	fn next(&mut self) -> Option<String> {
-		self.compiler.errors.get(self.index).map(|msg| {
-			let lines = self.compiler.r_line_break.split(self.compiler.raw_input);
-			let line = lines.skip(msg.line).next().unwrap_or("");
+		let index = self.index;
+		self.index += 1;
+		self.messages.get(index).map(|msg| {
+			let line = &msg.source_line;
 			let line_until_marker = &line[..line.len().min(msg.column)];
-			let indent = self.compiler.r_not_tab.replace_all(line_until_marker, " ");
+			let indent = self.r_not_tab.replace_all(line_until_marker, " ");
 			let marker = "^".repeat(msg.length);
-			self.index += 1;
 			format!("{}:{}:{}: {}: {}\n\n{}\n{}{}\n",
-				self.compiler.filename, msg.line + 1, msg.column + 1,
+				self.filename, msg.line + 1, msg.column + 1,
 				msg.category.as_text(), msg.text,
 				line,
 				indent, marker)
@@ -89,45 +82,46 @@ type CompilerOutput = String; // TODO: Sensible compile result
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
 		let strip_comments = Regex::new(r"//[^\r\n]*").unwrap();
-		let stripped_input = strip_comments.replace_all(raw_input, "").to_string();
+		let stripped_input = Rc::from(strip_comments.replace_all(raw_input, "").as_ref());
 
 		Compiler {
 			filename,
 			raw_input,
 			stripped_input,
-			errors: vec![],
+			messages: vec![],
 			r_line_break: Regex::new(r"\r|\n|\r\n").unwrap(),
-			r_not_tab: Regex::new(r"[^\t]").unwrap(),
 		}
 	}
 
 	pub fn compile(&mut self) -> Result<CompilerOutput, CompileError> {
-		let program = match zing::ProgramParser::new().parse(&self.stripped_input) {
-			Ok(result) => result,
-			Err(err) => {
-				match err {
-					ParseError::InvalidToken { location } => {
-						self.report_syntax_error(location, 1, "Invalid token.");
-					},
-					ParseError::UnrecognizedEOF { location, expected: _ } => {
-						self.report_syntax_error(location, 1, "Unexpected end of file.");
-					},
-					ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {
-						self.report_syntax_error(loc1, loc2 - loc1, "Unexpected token.");
-					},
-					ParseError::ExtraToken { token: (loc1, _, loc2) } => {
-						self.report_syntax_error(loc1, loc2 - loc1, "Extra token.");
-					},
-					_ => self.report_internal_error(0, 0, "Unknown parse error."),
-				}
-				return Err(self.make_error());
-			},
-		};
+		let stripped_input = Rc::clone(&self.stripped_input);
+		let program = self.parse(&stripped_input)?;
 
 		// TODO: Compile program
 
 		self.check_errors()?;
 		Ok(program.to_string())
+	}
+
+	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {
+		zing::ProgramParser::new().parse(text).map_err(|err| {
+			match err {
+				ParseError::InvalidToken { location } => {
+					self.report_syntax_error(location, 1, "Invalid token.");
+				},
+				ParseError::UnrecognizedEOF { location, expected: _ } => {
+					self.report_syntax_error(location, 1, "Unexpected end of file.");
+				},
+				ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {
+					self.report_syntax_error(loc1, loc2 - loc1, "Unexpected token.");
+				},
+				ParseError::ExtraToken { token: (loc1, _, loc2) } => {
+					self.report_syntax_error(loc1, loc2 - loc1, "Extra token.");
+				},
+				_ => self.report_internal_error(0, 0, "Unknown parse error."),
+			}
+			self.make_error()
+		})
 	}
 
 	fn report(&mut self, offset: usize, length: usize, category: MessageCategory, text: String) {
@@ -138,12 +132,16 @@ impl<'input> Compiler<'input> {
 				None => (0, offset)
 			}
 		};
-		self.errors.push(Message {
+		let source_lines = self.r_line_break.split(self.raw_input);
+		let source_line = source_lines.skip(line).next().unwrap_or("").to_string();
+
+		self.messages.push(Message {
 			category,
 			line,
 			column,
 			length,
 			text,
+			source_line,
 		});
 	}
 
@@ -167,12 +165,17 @@ impl<'input> Compiler<'input> {
 		self.report(offset, length, MessageCategory::Warning, text.into())
 	}
 
-	fn make_error(&'input self) -> CompileError<'input> {
-		CompileError { compiler: &self }
+	fn make_error(&mut self) -> CompileError {
+		CompileError {
+			filename: self.filename.to_string(),
+			messages: replace(&mut self.messages, vec![]),
+			index: 0,
+			r_not_tab: Regex::new(r"[^\t]").unwrap(),
+		}
 	}
 
-	fn check_errors(&self) -> Result<(), CompileError> {
-		if !self.errors.is_empty() {
+	fn check_errors(&mut self) -> Result<(), CompileError> {
+		if !self.messages.is_empty() {
 			Err(self.make_error())
 		} else {
 			Ok(())
