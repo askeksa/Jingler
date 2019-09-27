@@ -101,7 +101,7 @@ MultiplicativeOp: BinOpKind = {
 };
 
 UnaryExpression: Expression<'input> = {
-	<op:UnaryOp> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
+	<op:UnOp<UnaryOp>> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
 	PrimaryExpression,
 };
 
@@ -183,8 +183,16 @@ Comma<T>: Vec<T> = <v:(<T> ",")*> <e:T?> => v.into_iter().chain(e).collect();
 
 Box<T>: Box<T> = <data:T> => Box::new(data);
 
+UnOp<Op>: UnOp = {
+	<pos:@L> <kind:Op> => UnOp {<>}
+}
+
+BinOp<Op>: BinOp = {
+	<pos:@L> <kind:Op> => BinOp {<>}
+}
+
 BinOpLevel<Op, NextLevel>: Expression<'input> = {
-	<left:Box<BinOpLevel<Op, NextLevel>>> <op:Op> <right:Box<NextLevel>>
+	<left:Box<BinOpLevel<Op, NextLevel>>> <op:BinOp<Op>> <right:Box<NextLevel>>
 		=> Expression::BinOp {<>},
 	NextLevel
 }

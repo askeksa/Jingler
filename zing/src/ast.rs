@@ -67,8 +67,8 @@ pub enum ValueType {
 pub enum Expression<'input> {
 	Number { value: f64 },
 	Variable { name: Id<'input> },
-	UnOp { op: UnOpKind, exp: Box<Expression<'input>> },
-	BinOp { left: Box<Expression<'input>>, op: BinOpKind, right: Box<Expression<'input>> },
+	UnOp { op: UnOp, exp: Box<Expression<'input>> },
+	BinOp { left: Box<Expression<'input>>, op: BinOp, right: Box<Expression<'input>> },
 	Call { name: Id<'input>, args: Vec<Expression<'input>> },
 	Tuple { elements: Vec<Expression<'input>> },
 	Merge { left: Box<Expression<'input>>, right: Box<Expression<'input>> },
@@ -78,8 +78,20 @@ pub enum Expression<'input> {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct UnOp {
+	pub pos: usize,
+	pub kind: UnOpKind,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum UnOpKind {
 	Neg, Not,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BinOp {
+	pub pos: usize,
+	pub kind: BinOpKind,
 }
 
 #[derive(Clone, Copy, Debug)]

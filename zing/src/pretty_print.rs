@@ -146,6 +146,12 @@ impl Precedence {
 	}
 }
 
+impl BinOp {
+	fn precedence(&self) -> Precedence {
+		self.kind.precedence()
+	}
+}
+
 impl BinOpKind {
 	fn precedence(&self) -> Precedence {
 		use BinOpKind::*;
@@ -160,6 +166,12 @@ impl BinOpKind {
 	}
 }
 
+impl Display for UnOp {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		self.kind.fmt(f)
+	}
+}
+
 impl Display for UnOpKind {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use UnOpKind::*;
@@ -167,6 +179,12 @@ impl Display for UnOpKind {
 			Neg => "-",
 			Not => "!",
 		}.fmt(f)
+	}
+}
+
+impl Display for BinOp {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		self.kind.fmt(f)
 	}
 }
 
