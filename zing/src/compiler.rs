@@ -6,7 +6,7 @@ use regex::Regex;
 
 use lalrpop_util::ParseError;
 
-use crate::ast::Program;
+use crate::ast::*;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
@@ -35,6 +35,7 @@ pub enum MessageCategory {
 	Error,
 	InternalError,
 	Warning,
+	Context,
 }
 
 impl MessageCategory {
@@ -45,6 +46,7 @@ impl MessageCategory {
 			Error => "Error",
 			InternalError => "Internal error",
 			Warning => "Warning",
+			Context => "Context",
 		}
 	}
 }
@@ -77,6 +79,31 @@ impl Iterator for CompileError {
 	}
 }
 
+pub trait Location {
+	fn offset(&self) -> usize;
+	fn length(&self) -> usize;
+}
+
+impl Location for (usize, usize) {
+	fn offset(&self) -> usize { self.0 }
+	fn length(&self) -> usize { self.1 }
+}
+
+impl<'input> Location for &Id<'input> {
+	fn offset(&self) -> usize { self.pos }
+	fn length(&self) -> usize { self.text.len() }
+}
+
+impl Location for &UnOp {
+	fn offset(&self) -> usize { self.pos }
+	fn length(&self) -> usize { self.to_string().len() }
+}
+
+impl Location for &BinOp {
+	fn offset(&self) -> usize { self.pos }
+	fn length(&self) -> usize { self.to_string().len() }
+}
+
 type CompilerOutput = String; // TODO: Sensible compile result
 
 impl<'input> Compiler<'input> {
@@ -107,18 +134,18 @@ impl<'input> Compiler<'input> {
 		zing::ProgramParser::new().parse(text).map_err(|err| {
 			match err {
 				ParseError::InvalidToken { location } => {
-					self.report_syntax_error(location, 1, "Invalid token.");
+					self.report_syntax_error((location, 1), "Invalid token.");
 				},
 				ParseError::UnrecognizedEOF { location, expected: _ } => {
-					self.report_syntax_error(location, 1, "Unexpected end of file.");
+					self.report_syntax_error((location, 1), "Unexpected end of file.");
 				},
 				ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {
-					self.report_syntax_error(loc1, loc2 - loc1, "Unexpected token.");
+					self.report_syntax_error((loc1, loc2 - loc1), "Unexpected token.");
 				},
 				ParseError::ExtraToken { token: (loc1, _, loc2) } => {
-					self.report_syntax_error(loc1, loc2 - loc1, "Extra token.");
+					self.report_syntax_error((loc1, loc2 - loc1), "Extra token.");
 				},
-				_ => self.report_internal_error(0, 0, "Unknown parse error."),
+				_ => self.report_internal_error((0, 0), "Unknown parse error."),
 			}
 			self.make_error()
 		})
@@ -146,23 +173,28 @@ impl<'input> Compiler<'input> {
 	}
 
 	#[allow(dead_code)]
-	pub fn report_syntax_error<S: Into<String>>(&mut self, offset: usize, length: usize, text: S) {
-		self.report(offset, length, MessageCategory::SyntaxError, text.into())
+	pub fn report_syntax_error(&mut self, loc: impl Location, text: impl Into<String>) {
+		self.report(loc.offset(), loc.length(), MessageCategory::SyntaxError, text.into())
 	}
 
 	#[allow(dead_code)]
-	pub fn report_error<S: Into<String>>(&mut self, offset: usize, length: usize, text: S) {
-		self.report(offset, length, MessageCategory::Error, text.into())
+	pub fn report_error(&mut self, loc: impl Location, text: impl Into<String>) {
+		self.report(loc.offset(), loc.length(), MessageCategory::Error, text.into())
 	}
 
 	#[allow(dead_code)]
-	pub fn report_internal_error<S: Into<String>>(&mut self, offset: usize, length: usize, text: S) {
-		self.report(offset, length, MessageCategory::InternalError, text.into())
+	pub fn report_internal_error(&mut self, loc: impl Location, text: impl Into<String>) {
+		self.report(loc.offset(), loc.length(), MessageCategory::InternalError, text.into())
 	}
 
 	#[allow(dead_code)]
-	pub fn report_warning<S: Into<String>>(&mut self, offset: usize, length: usize, text: S) {
-		self.report(offset, length, MessageCategory::Warning, text.into())
+	pub fn report_warning(&mut self, loc: impl Location, text: impl Into<String>) {
+		self.report(loc.offset(), loc.length(), MessageCategory::Warning, text.into())
+	}
+
+	#[allow(dead_code)]
+	pub fn report_context(&mut self, loc: impl Location, text: impl Into<String>) {
+		self.report(loc.offset(), loc.length(), MessageCategory::Context, text.into())
 	}
 
 	fn make_error(&mut self) -> CompileError {
@@ -175,10 +207,14 @@ impl<'input> Compiler<'input> {
 	}
 
 	fn check_errors(&mut self) -> Result<(), CompileError> {
+		self.if_not_error(())
+	}
+
+	pub fn if_not_error<T>(&mut self, value: T) -> Result<T, CompileError> {
 		if !self.messages.is_empty() {
 			Err(self.make_error())
 		} else {
-			Ok(())
+			Ok(value)
 		}
 	}
 }
