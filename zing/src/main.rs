@@ -3,6 +3,7 @@
 
 mod ast;
 mod compiler;
+mod names;
 mod pretty_print;
 
 use std::env;

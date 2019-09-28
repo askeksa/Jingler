@@ -1,10 +1,10 @@
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Program<'input> {
 	pub declarations: Vec<Declaration<'input>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Declaration<'input> {
 	Procedure {
 		kind: ProcedureKind,
@@ -15,21 +15,21 @@ pub enum Declaration<'input> {
 	},
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ProcedureKind {
 	Module,
 	Function,
 	Instrument,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Statement<'input> {
 	Assign { node: Pattern<'input>, exp: Expression<'input> },
 }
 
 pub type Pattern<'input> = Vec<PatternItem<'input>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PatternItem<'input> {
 	pub variable: PatternVariable<'input>,
 	pub scope: Option<Scope>,
@@ -37,33 +37,33 @@ pub struct PatternItem<'input> {
 	pub value_type: Option<ValueType>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PatternVariable<'input> {
 	Variable { name: Id<'input> },
 	Split { left: Id<'input>, right: Id<'input> },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Scope {
 	Static,
 	Dynamic,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Width<'input> {
 	Mono,
 	Stereo,
 	Generic { name: Id<'input> },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ValueType {
 	Number,
 	Bool,
 	Buffer,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expression<'input> {
 	Number { value: f64 },
 	Variable { name: Id<'input> },
@@ -99,7 +99,7 @@ pub enum BinOpKind {
 	Add, Sub, Mul, Div, And, Or, Xor, Eq, Neq, Less, LessEq, Greater, GreaterEq,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Id<'input> {
 	pub pos: usize,
 	pub text: &'input str,

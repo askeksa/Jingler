@@ -7,6 +7,7 @@ use regex::Regex;
 use lalrpop_util::ParseError;
 
 use crate::ast::*;
+use crate::names::Names;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
@@ -123,6 +124,7 @@ impl<'input> Compiler<'input> {
 	pub fn compile(&mut self) -> Result<CompilerOutput, CompileError> {
 		let stripped_input = Rc::clone(&self.stripped_input);
 		let program = self.parse(&stripped_input)?;
+		let names = Names::find(&program, self)?;
 
 		// TODO: Compile program
 
