@@ -32,9 +32,7 @@ pub type Pattern<'input> = Vec<PatternItem<'input>>;
 #[derive(Clone, Debug)]
 pub struct PatternItem<'input> {
 	pub variable: PatternVariable<'input>,
-	pub scope: Option<Scope>,
-	pub width: Option<Width<'input>>,
-	pub value_type: Option<ValueType>,
+	pub item_type: Type,
 }
 
 #[derive(Clone, Debug)]
@@ -43,20 +41,27 @@ pub enum PatternVariable<'input> {
 	Split { left: Id<'input>, right: Id<'input> },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
+pub struct Type {
+	pub scope: Option<Scope>,
+	pub width: Option<Width>,
+	pub value_type: Option<ValueType>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub enum Scope {
 	Static,
 	Dynamic,
 }
 
-#[derive(Clone, Debug)]
-pub enum Width<'input> {
+#[derive(Clone, Copy, Debug)]
+pub enum Width {
 	Mono,
 	Stereo,
-	Generic { name: Id<'input> },
+	Generic,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ValueType {
 	Number,
 	Bool,

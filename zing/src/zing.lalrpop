@@ -29,8 +29,12 @@ Pattern: Pattern<'input> = {
 };
 
 PatternItem: PatternItem<'input> = {
-	<variable:PatternVariable> => PatternItem { <>, scope: None, width: None, value_type: None },
-	<variable:PatternVariable> ":" <scope:Scope?> <width:Width?> <value_type:Type?> => PatternItem {<>},
+	<variable:PatternVariable> <item_type:Type> => PatternItem {<>},
+};
+
+Type: Type = {
+	=> Type { scope: None, width: None, value_type: None },
+	":" <scope:Scope?> <width:Width?> <value_type:ValueType?> => Type {<>},
 };
 
 PatternVariable: PatternVariable<'input> = {
@@ -43,13 +47,13 @@ Scope: Scope = {
 	"dynamic" => Scope::Dynamic,
 };
 
-Width: Width<'input> = {
+Width: Width = {
 	"mono" => Width::Mono,
 	"stereo" => Width::Stereo,
-	"^" <name:Id> => Width::Generic {<>},
+	"generic" => Width::Generic,
 };
 
-Type: ValueType = {
+ValueType: ValueType = {
 	"number" => ValueType::Number,
 	"bool" => ValueType::Bool,
 	"buffer" => ValueType::Buffer,

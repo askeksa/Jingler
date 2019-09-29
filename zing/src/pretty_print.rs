@@ -57,6 +57,23 @@ impl<'input> Display for Statement<'input> {
 impl<'input> Display for PatternItem<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "{}", self.variable)?;
+		write!(f, "{}", self.item_type)?;
+		Ok(())
+	}
+}
+
+impl<'input> Display for PatternVariable<'input> {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		use PatternVariable::*;
+		match self {
+			Variable { name } => write!(f, "{}", name),
+			Split { left, right } => write!(f, "[{}, {}]", left, right),
+		}
+	}
+}
+
+impl Display for Type {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		let colon = &mut false;
 		fmt_with_colon(f, colon, &self.scope)?;
 		fmt_with_colon(f, colon, &self.width)?;
@@ -76,16 +93,6 @@ fn fmt_with_colon<T: Display>(f: &mut Formatter, colon: &mut bool, t_opt: &Optio
 	Ok(())
 }
 
-impl<'input> Display for PatternVariable<'input> {
-	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		use PatternVariable::*;
-		match self {
-			Variable { name } => write!(f, "{}", name),
-			Split { left, right } => write!(f, "[{}, {}]", left, right),
-		}
-	}
-}
-
 impl Display for Scope {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use Scope::*;
@@ -96,13 +103,13 @@ impl Display for Scope {
 	}
 }
 
-impl<'input> Display for Width<'input> {
+impl Display for Width {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use Width::*;
 		match self {
 			Mono => write!(f, "mono"),
 			Stereo => write!(f, "stereo"),
-			Generic { name } => write!(f, "^{}", name),
+			Generic => write!(f, "generic"),
 		}
 	}
 }
