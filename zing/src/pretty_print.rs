@@ -121,6 +121,7 @@ impl Display for ValueType {
 			Number => write!(f, "number"),
 			Bool => write!(f, "bool"),
 			Buffer => write!(f, "buffer"),
+			Typeless => write!(f, "typeless"),
 		}
 	}
 }

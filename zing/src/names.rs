@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::iter::once;
 
 use crate::ast::*;
+use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES};
 use crate::compiler::{Compiler, CompileError};
 
 #[derive(Clone, Debug)]
@@ -38,8 +39,14 @@ pub struct ProcedureRef {
 
 #[derive(Clone, Debug)]
 pub enum ProcedureDefinition {
-	BuiltIn {}, // TODO
+	BuiltIn { signature: &'static Signature<'static> },
 	Declaration { index: usize },
+}
+
+#[derive(Clone, Debug)]
+pub struct Signature<'sig> {
+	pub params: &'sig [Type],
+	pub outputs: &'sig [Type],
 }
 
 impl<'input> Names<'input> {
@@ -49,15 +56,18 @@ impl<'input> Names<'input> {
 			variables: vec![HashMap::new(); program.declarations.len()],
 		};
 
-		// TODO: Systematic initialization of built-in procedures
-		names.procedures.insert("sin", ProcedureRef {
-			kind: ProcedureKind::Function,
-			definition: ProcedureDefinition::BuiltIn {},
-		});
-		names.procedures.insert("cell", ProcedureRef {
-			kind: ProcedureKind::Module,
-			definition: ProcedureDefinition::BuiltIn {},
-		});
+		for (name, sig) in BUILTIN_FUNCTIONS {
+			names.procedures.insert(name, ProcedureRef {
+				kind: ProcedureKind::Function,
+				definition: ProcedureDefinition::BuiltIn { signature: sig },
+			});
+		}
+		for (name, sig) in BUILTIN_MODULES {
+			names.procedures.insert(name, ProcedureRef {
+				kind: ProcedureKind::Module,
+				definition: ProcedureDefinition::BuiltIn { signature: sig },
+			});
+		}
 
 		for (index, decl) in program.declarations.iter().enumerate() {
 			let Declaration::Procedure { kind, name, params, body, .. } = decl;

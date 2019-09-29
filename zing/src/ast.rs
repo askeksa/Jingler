@@ -66,6 +66,7 @@ pub enum ValueType {
 	Number,
 	Bool,
 	Buffer,
+	Typeless,
 }
 
 #[derive(Clone, Debug)]
