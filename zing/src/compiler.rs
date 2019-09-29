@@ -11,6 +11,7 @@ use crate::names::Names;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
+/// Main compiler state, mainly concerned with error reporting.
 pub struct Compiler<'input> {
 	filename: &'input str,
 	raw_input: &'input str,
@@ -20,6 +21,7 @@ pub struct Compiler<'input> {
 	r_line_break: Regex,
 }
 
+/// A diagnostic message.
 #[derive(Clone)]
 pub struct Message {
 	category: MessageCategory,
@@ -30,6 +32,7 @@ pub struct Message {
 	source_line: String,
 }
 
+/// Category / severity of a diagnostic.
 #[derive(Clone, Copy)]
 pub enum MessageCategory {
 	SyntaxError,
@@ -52,6 +55,9 @@ impl MessageCategory {
 	}
 }
 
+/// Error return from the compiler.
+///
+/// Iterate over it to get diagnostic messages.
 pub struct CompileError {
 	filename: String,
 	messages: Vec<Message>,
@@ -80,6 +86,7 @@ impl Iterator for CompileError {
 	}
 }
 
+/// Trait for things that can represent a location and length for a diagnostic.
 pub trait Location {
 	fn offset(&self) -> usize;
 	fn length(&self) -> usize;
