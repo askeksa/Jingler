@@ -9,7 +9,7 @@ pub enum Declaration<'input> {
 	Procedure {
 		kind: ProcedureKind,
 		name: Id<'input>,
-		params: Pattern<'input>,
+		inputs: Pattern<'input>,
 		outputs: Pattern<'input>,
 		body: Vec<Statement<'input>>,
 	},

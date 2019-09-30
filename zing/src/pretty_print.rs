@@ -15,9 +15,9 @@ impl<'input> Display for Declaration<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use Declaration::*;
 		match self {
-			Procedure { kind, name, params, outputs, body } => {
+			Procedure { kind, name, inputs, outputs, body } => {
 				write!(f, "{} {}", kind, name)?;
-				fmt_parenthesized_list(f, params)?;
+				fmt_parenthesized_list(f, inputs)?;
 				write!(f, " -> ")?;
 				fmt_parenthesized_list(f, outputs)?;
 				write!(f, "\n")?;

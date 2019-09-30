@@ -47,7 +47,7 @@ macro_rules! type_spec {
 macro_rules! sig {
 	{ [ $($($p:ident)+),* ] [ $($($o:ident)+),* ] } => {
 		Signature {
-			params: &[$(type_spec!($($p)+)),*],
+			inputs: &[$(type_spec!($($p)+)),*],
 			outputs: &[$(type_spec!($($o)+)),*],
 		}
 	};

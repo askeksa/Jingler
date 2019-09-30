@@ -52,7 +52,7 @@ pub enum ProcedureDefinition {
 /// Signature of a procedure or operator.
 #[derive(Clone, Debug)]
 pub struct Signature<'sig> {
-	pub params: &'sig [Type],
+	pub inputs: &'sig [Type],
 	pub outputs: &'sig [Type],
 }
 
@@ -80,7 +80,7 @@ impl<'ast> Names<'ast> {
 
 		// Run through all declarattions in the program
 		for (decl_index, decl) in program.declarations.iter().enumerate() {
-			let Declaration::Procedure { kind, name, params, body, .. } = decl;
+			let Declaration::Procedure { kind, name, inputs, body, .. } = decl;
 			let proc_ref = ProcedureRef {
 				kind: *kind,
 				definition: ProcedureDefinition::Declaration { decl_index },
@@ -89,7 +89,7 @@ impl<'ast> Names<'ast> {
 
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
-			let input = (VariableKind::Input, params);
+			let input = (VariableKind::Input, inputs);
 			let nodes = (0..body.len()).map(|body_index| {
 				let Statement::Assign { ref node, .. } = body[body_index];
 				(VariableKind::Node { body_index }, node)
@@ -151,9 +151,9 @@ impl<'ast> Names<'ast> {
 		self.variables[decl_index].entry(name.text).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let pattern = match &program.declarations[decl_index] {
-				Declaration::Procedure { params, body, .. } => {
+				Declaration::Procedure { inputs, body, .. } => {
 					match existing.kind {
-						VariableKind::Input => params,
+						VariableKind::Input => inputs,
 						VariableKind::Node { body_index } => match body[body_index] {
 							Statement::Assign { ref node, .. } => node,
 						},

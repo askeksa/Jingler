@@ -13,7 +13,7 @@ pub Program: Program<'input> = {
 };
 
 Declaration: Declaration<'input> = {
-	<kind:ProcedureKind> <name:Id> <params:Pattern> "->" <outputs:Pattern> <body:Statement*>
+	<kind:ProcedureKind> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
 		=> Declaration::Procedure {<>},
 };
 

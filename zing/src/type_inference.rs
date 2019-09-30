@@ -31,10 +31,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	pub fn infer_signatures(&mut self, program: &'comp mut Program<'ast>) {
 		for decl in &mut program.declarations {
-			let Declaration::Procedure { kind, name, params, outputs, .. } = decl;
+			let Declaration::Procedure { kind, name, inputs, outputs, .. } = decl;
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
-			for (is_output, item) in repeat(false).zip(params).chain(repeat(true).zip(outputs)) {
+			for (is_output, item) in repeat(false).zip(inputs).chain(repeat(true).zip(outputs)) {
 				let PatternItem { variable, item_type } = item;
 				match kind {
 					// Module inputs/outputs default to dynamic stereo number, and only
