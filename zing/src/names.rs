@@ -8,9 +8,9 @@ use crate::compiler::{Compiler, CompileError};
 
 /// Mapping of names in the program to their definitions.
 #[derive(Clone, Debug)]
-pub struct Names<'input> {
-	procedures: HashMap<&'input str, ProcedureRef>,
-	variables: Vec<HashMap<&'input str, VariableRef>>,
+pub struct Names<'ast> {
+	procedures: HashMap<&'ast str, ProcedureRef>,
+	variables: Vec<HashMap<&'ast str, VariableRef>>,
 }
 
 /// A reference to a named entry in a pattern.
@@ -56,9 +56,9 @@ pub struct Signature<'sig> {
 	pub outputs: &'sig [Type],
 }
 
-impl<'input> Names<'input> {
+impl<'ast> Names<'ast> {
 	/// Find all named entities in the program and build a map for locating them.
-	pub fn find(program: &Program<'input>, compiler: &mut Compiler) -> Result<Names<'input>, CompileError> {
+	pub fn find(program: &Program<'ast>, compiler: &mut Compiler) -> Result<Names<'ast>, CompileError> {
 		let mut names = Names {
 			procedures: HashMap::new(),
 			variables: vec![HashMap::new(); program.declarations.len()],
@@ -120,11 +120,12 @@ impl<'input> Names<'input> {
 			}
 		}
 
-		compiler.if_not_error(names)
+		compiler.if_no_errors(names)
 	}
 
-	fn insert_procedure(&mut self, program: &Program<'input>, compiler: &mut Compiler,
-			name: &Id<'input>, proc_ref: ProcedureRef) {
+	fn insert_procedure(&mut self,
+			program: &Program<'ast>, compiler: &mut Compiler,
+			name: &Id<'ast>, proc_ref: ProcedureRef) {
 		self.procedures.entry(name.text).and_modify(|existing| {
 			match existing.definition {
 				ProcedureDefinition::BuiltIn { .. } => {
@@ -144,8 +145,9 @@ impl<'input> Names<'input> {
 		}).or_insert(proc_ref);
 	}
 
-	fn insert_variable(&mut self, program: &Program<'input>, compiler: &mut Compiler,
-			decl_index: usize, name: &Id<'input>, var_ref: VariableRef) {
+	fn insert_variable(&mut self,
+			program: &Program<'ast>, compiler: &mut Compiler,
+			decl_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
 		self.variables[decl_index].entry(name.text).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let pattern = match &program.declarations[decl_index] {

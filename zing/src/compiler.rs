@@ -8,6 +8,7 @@ use lalrpop_util::ParseError;
 
 use crate::ast::*;
 use crate::names::Names;
+use crate::type_inference::infer_types;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
@@ -112,6 +113,27 @@ impl Location for &BinOp {
 	fn length(&self) -> usize { self.to_string().len() }
 }
 
+impl<A: Location, B:Location> Location for (A, B) {
+	fn offset(&self) -> usize { self.0.offset() }
+	fn length(&self) -> usize { self.1.offset() + self.1.length() - self.0.offset() }
+}
+
+impl<'input> Location for &PatternVariable<'input> {
+	fn offset(&self) -> usize {
+		match self {
+			PatternVariable::Variable { name } => name.offset(),
+			PatternVariable::Split { left, right } => (left, right).offset(),
+		}
+	}
+
+	fn length(&self) -> usize {
+		match self {
+			PatternVariable::Variable { name } => name.length(),
+			PatternVariable::Split { left, right } => (left, right).length(),
+		}
+	}
+}
+
 type CompilerOutput = String; // TODO: Sensible compile result
 
 impl<'input> Compiler<'input> {
@@ -130,8 +152,9 @@ impl<'input> Compiler<'input> {
 
 	pub fn compile(&mut self) -> Result<CompilerOutput, CompileError> {
 		let stripped_input = Rc::clone(&self.stripped_input);
-		let program = self.parse(&stripped_input)?;
+		let mut program = self.parse(&stripped_input)?;
 		let names = Names::find(&program, self)?;
+		infer_types(&mut program, &names, self)?;
 
 		// TODO: Compile program
 
@@ -215,11 +238,11 @@ impl<'input> Compiler<'input> {
 		}
 	}
 
-	fn check_errors(&mut self) -> Result<(), CompileError> {
-		self.if_not_error(())
+	pub fn check_errors(&mut self) -> Result<(), CompileError> {
+		self.if_no_errors(())
 	}
 
-	pub fn if_not_error<T>(&mut self, value: T) -> Result<T, CompileError> {
+	pub fn if_no_errors<T>(&mut self, value: T) -> Result<T, CompileError> {
 		if !self.messages.is_empty() {
 			Err(self.make_error())
 		} else {

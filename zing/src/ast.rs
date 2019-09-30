@@ -41,27 +41,27 @@ pub enum PatternVariable<'input> {
 	Split { left: Id<'input>, right: Id<'input> },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Type {
 	pub scope: Option<Scope>,
 	pub width: Option<Width>,
 	pub value_type: Option<ValueType>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scope {
 	Static,
 	Dynamic,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Width {
 	Mono,
 	Stereo,
 	Generic,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ValueType {
 	Number,
 	Bool,

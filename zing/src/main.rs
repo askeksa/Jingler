@@ -6,6 +6,7 @@ mod builtin;
 mod compiler;
 mod names;
 mod pretty_print;
+mod type_inference;
 
 use std::env;
 use std::fs;
