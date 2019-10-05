@@ -33,6 +33,12 @@ pub struct Message {
 	source_line: String,
 }
 
+impl Message {
+	fn is_fatal(&self) -> bool {
+		self.category.is_fatal()
+	}
+}
+
 /// Category / severity of a diagnostic.
 #[derive(Clone, Copy)]
 pub enum MessageCategory {
@@ -52,6 +58,17 @@ impl MessageCategory {
 			InternalError => "Internal error",
 			Warning => "Warning",
 			Context => "Context",
+		}
+	}
+
+	fn is_fatal(self) -> bool {
+		use MessageCategory::*;
+		match self {
+			SyntaxError => true,
+			Error => true,
+			InternalError => true,
+			Warning => false,
+			Context => false,
 		}
 	}
 }
@@ -209,27 +226,22 @@ impl<'input> Compiler<'input> {
 		});
 	}
 
-	#[allow(dead_code)]
 	pub fn report_syntax_error(&mut self, loc: impl Location, text: impl Into<String>) {
 		self.report(loc.offset(), loc.length(), MessageCategory::SyntaxError, text.into())
 	}
 
-	#[allow(dead_code)]
 	pub fn report_error(&mut self, loc: impl Location, text: impl Into<String>) {
 		self.report(loc.offset(), loc.length(), MessageCategory::Error, text.into())
 	}
 
-	#[allow(dead_code)]
 	pub fn report_internal_error(&mut self, loc: impl Location, text: impl Into<String>) {
 		self.report(loc.offset(), loc.length(), MessageCategory::InternalError, text.into())
 	}
 
-	#[allow(dead_code)]
 	pub fn report_warning(&mut self, loc: impl Location, text: impl Into<String>) {
 		self.report(loc.offset(), loc.length(), MessageCategory::Warning, text.into())
 	}
 
-	#[allow(dead_code)]
 	pub fn report_context(&mut self, loc: impl Location, text: impl Into<String>) {
 		self.report(loc.offset(), loc.length(), MessageCategory::Context, text.into())
 	}
@@ -248,7 +260,7 @@ impl<'input> Compiler<'input> {
 	}
 
 	pub fn if_no_errors<T>(&mut self, value: T) -> Result<T, CompileError> {
-		if !self.messages.is_empty() {
+		if self.messages.iter().any(|m| m.is_fatal()) {
 			Err(self.make_error())
 		} else {
 			Ok(value)
