@@ -17,9 +17,9 @@ impl<'input> Display for Declaration<'input> {
 		match self {
 			Procedure { kind, name, inputs, outputs, body } => {
 				write!(f, "{} {}", kind, name)?;
-				fmt_parenthesized_list(f, inputs)?;
+				fmt_parenthesized_list(f, &inputs.items)?;
 				write!(f, " -> ")?;
-				fmt_parenthesized_list(f, outputs)?;
+				fmt_parenthesized_list(f, &outputs.items)?;
 				write!(f, "\n")?;
 				for statement in body {
 					write!(f, "    {}\n", statement)?;
@@ -46,7 +46,7 @@ impl<'input> Display for Statement<'input> {
 		use Statement::*;
 		match self {
 			Assign { node, exp } => {
-				fmt_parenthesized_list(f, node)?;
+				fmt_parenthesized_list(f, &node.items)?;
 				write!(f, " = {};", exp)?;
 			},
 		}

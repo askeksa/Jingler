@@ -34,7 +34,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			let Declaration::Procedure { kind, name, inputs, outputs, .. } = decl;
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
-			for (is_output, item) in repeat(false).zip(inputs).chain(repeat(true).zip(outputs)) {
+			let input_iter = repeat(false).zip(&mut inputs.items);
+			let output_iter = repeat(true).zip(&mut outputs.items);
+			for (is_output, item) in input_iter.chain(output_iter) {
 				let PatternItem { variable, item_type } = item;
 				match kind {
 					// Module inputs/outputs default to dynamic stereo number, and only

@@ -27,7 +27,12 @@ pub enum Statement<'input> {
 	Assign { node: Pattern<'input>, exp: Expression<'input> },
 }
 
-pub type Pattern<'input> = Vec<PatternItem<'input>>;
+#[derive(Clone, Debug)]
+pub struct Pattern<'input> {
+	pub pos1: usize,
+	pub items: Vec<PatternItem<'input>>,
+	pub pos2: usize,
+}
 
 #[derive(Clone, Debug)]
 pub struct PatternItem<'input> {
@@ -41,7 +46,7 @@ pub enum PatternVariable<'input> {
 	Split { left: Id<'input>, right: Id<'input> },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Type {
 	pub scope: Option<Scope>,
 	pub width: Option<Width>,

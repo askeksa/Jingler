@@ -113,6 +113,11 @@ impl Location for &BinOp {
 	fn length(&self) -> usize { self.to_string().len() }
 }
 
+impl<'input> Location for &Pattern<'input> {
+	fn offset(&self) -> usize { self.pos1 }
+	fn length(&self) -> usize { self.pos2 - self.pos1 }
+}
+
 impl<A: Location, B:Location> Location for (A, B) {
 	fn offset(&self) -> usize { self.0.offset() }
 	fn length(&self) -> usize { self.1.offset() + self.1.length() - self.0.offset() }

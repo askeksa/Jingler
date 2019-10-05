@@ -24,16 +24,23 @@ ProcedureKind: ProcedureKind = {
 }
 
 Pattern: Pattern<'input> = {
-	<item:PatternItem> => vec![item],
-	"(" <items:Comma<PatternItem>> ")" => <>
+	<pos1:@L> <items:PatternItems> <pos2:@R> => Pattern {<>},
+};
+
+PatternItems: Vec<PatternItem<'input>> = {
+	<Vec<PatternItem>>,
+	"(" <Comma<PatternItem>> ")",
 };
 
 PatternItem: PatternItem<'input> = {
-	<variable:PatternVariable> <item_type:Type> => PatternItem {<>},
+	<variable:PatternVariable> => PatternItem {
+		variable,
+		item_type: Type::default(),
+	},
+	<variable:PatternVariable> <item_type:ExplicitType> => PatternItem {<>},
 };
 
-Type: Type = {
-	=> Type { scope: None, width: None, value_type: None },
+ExplicitType: Type = {
 	":" <scope:Scope?> <width:Width?> <value_type:ValueType?> => Type {<>},
 };
 
@@ -186,6 +193,8 @@ HexadecimalNum: f64 = <pos:@L> <s:r"0x[0-9a-fA-F]+([.][0-9a-fA-F]*)?"> =>? {
 Comma<T>: Vec<T> = <v:(<T> ",")*> <e:T?> => v.into_iter().chain(e).collect();
 
 Box<T>: Box<T> = <data:T> => Box::new(data);
+
+Vec<T>: Vec<T> = <item:T> => vec![item];
 
 UnOp<Op>: UnOp = {
 	<pos:@L> <kind:Op> => UnOp {<>}

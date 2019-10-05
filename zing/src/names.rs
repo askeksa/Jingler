@@ -95,7 +95,7 @@ impl<'ast> Names<'ast> {
 				(VariableKind::Node { body_index }, node)
 			});
 			for (variable_kind, node) in once(input).chain(nodes) {
-				for (tuple_index, item) in node.iter().enumerate() {
+				for (tuple_index, item) in node.items.iter().enumerate() {
 					match &item.variable {
 						PatternVariable::Variable { name } => {
 							let var_ref = VariableRef {
@@ -160,7 +160,7 @@ impl<'ast> Names<'ast> {
 					}
 				},
 			};
-			let existing_name = match (&pattern[existing.tuple_index].variable, existing.channel) {
+			let existing_name = match (&pattern.items[existing.tuple_index].variable, existing.channel) {
 				(PatternVariable::Variable { name }, ChannelKind::Single) => name,
 				(PatternVariable::Split { left, right }, ChannelKind::Side { side_index }) => {
 					[left, right][side_index]
