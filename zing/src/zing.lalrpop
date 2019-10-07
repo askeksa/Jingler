@@ -24,7 +24,7 @@ ProcedureKind: ProcedureKind = {
 }
 
 Pattern: Pattern<'input> = {
-	<pos1:@L> <items:PatternItems> <pos2:@R> => Pattern {<>},
+	<before:@L> <items:PatternItems> <after:@R> => Pattern {<>},
 };
 
 PatternItems: Vec<PatternItem<'input>> = {
@@ -122,20 +122,14 @@ UnaryOp: UnOpKind = {
 };
 
 PrimaryExpression: Expression<'input> = {
-	<value:Num> => Expression::Number {<>},
+	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
 	<name:Id> => Expression::Variable {<>},
-	<name:Id> "(" <args:Comma<Expression>> ")" => Expression::Call {<>},
-	"(" <mut elements:Comma<Expression>> ")" => {
-		if elements.len() == 1 {
-			elements.drain(..).next().unwrap()
-		} else {
-			Expression::Tuple {<>}
-		}
-	},
-	"[" <left:Box<Expression>> "," <right:Box<Expression>> "]" => Expression::Merge {<>},
+	<name:Id> "(" <args:Comma<Expression>> ")" <after:@R> => Expression::Call {<>},
+	<before:@L> "(" <elements:Comma<Expression>> ")" <after:@R> => Expression::Tuple {<>},
+	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
 	<exp:Box<PrimaryExpression>> "." <name:Id> => Expression::Property {<>},
-	<exp:Box<PrimaryExpression>> "." <index:Uint> => Expression::TupleIndex {<>},
-	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" => Expression::BufferIndex {<>},
+	<exp:Box<PrimaryExpression>> "." <index:Uint> <after:@R> => Expression::TupleIndex {<>},
+	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
 
 Num: f64 = {
@@ -153,7 +147,7 @@ Num: f64 = {
 };
 
 Id: Id<'input> = {
-	<pos:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id {<>},
+	<before:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id {<>},
 };
 
 Uint: u64 = <pos:@L> <s:r"0|[1-9][0-9]*"> =>? {
@@ -197,11 +191,11 @@ Box<T>: Box<T> = <data:T> => Box::new(data);
 Vec<T>: Vec<T> = <item:T> => vec![item];
 
 UnOp<Op>: UnOp = {
-	<pos:@L> <kind:Op> => UnOp {<>}
+	<before:@L> <kind:Op> => UnOp {<>}
 }
 
 BinOp<Op>: BinOp = {
-	<pos:@L> <kind:Op> => BinOp {<>}
+	<before:@L> <kind:Op> => BinOp {<>}
 }
 
 BinOpLevel<Op, NextLevel>: Expression<'input> = {

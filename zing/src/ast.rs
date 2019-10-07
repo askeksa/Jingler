@@ -1,4 +1,6 @@
 
+type Pos = usize;
+
 #[derive(Clone, Debug)]
 pub struct Program<'input> {
 	pub declarations: Vec<Declaration<'input>>,
@@ -29,9 +31,9 @@ pub enum Statement<'input> {
 
 #[derive(Clone, Debug)]
 pub struct Pattern<'input> {
-	pub pos1: usize,
+	pub before: Pos,
 	pub items: Vec<PatternItem<'input>>,
-	pub pos2: usize,
+	pub after: Pos,
 }
 
 #[derive(Clone, Debug)]
@@ -76,21 +78,21 @@ pub enum ValueType {
 
 #[derive(Clone, Debug)]
 pub enum Expression<'input> {
-	Number { value: f64 },
+	Number { before: Pos, value: f64, after: Pos },
 	Variable { name: Id<'input> },
 	UnOp { op: UnOp, exp: Box<Expression<'input>> },
 	BinOp { left: Box<Expression<'input>>, op: BinOp, right: Box<Expression<'input>> },
-	Call { name: Id<'input>, args: Vec<Expression<'input>> },
-	Tuple { elements: Vec<Expression<'input>> },
-	Merge { left: Box<Expression<'input>>, right: Box<Expression<'input>> },
+	Call { name: Id<'input>, args: Vec<Expression<'input>>, after: Pos },
+	Tuple { before: Pos, elements: Vec<Expression<'input>>, after: Pos },
+	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
 	Property { exp: Box<Expression<'input>>, name: Id<'input> },
-	TupleIndex { exp: Box<Expression<'input>>, index: u64 },
-	BufferIndex {exp: Box<Expression<'input>>, index: Box<Expression<'input>> },
+	TupleIndex { exp: Box<Expression<'input>>, index: u64, after: Pos },
+	BufferIndex {exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct UnOp {
-	pub pos: usize,
+	pub before: Pos,
 	pub kind: UnOpKind,
 }
 
@@ -101,7 +103,7 @@ pub enum UnOpKind {
 
 #[derive(Clone, Copy, Debug)]
 pub struct BinOp {
-	pub pos: usize,
+	pub before: Pos,
 	pub kind: BinOpKind,
 }
 
@@ -112,11 +114,43 @@ pub enum BinOpKind {
 
 #[derive(Clone, Debug)]
 pub struct Id<'input> {
-	pub pos: usize,
+	pub before: Pos,
 	pub text: &'input str,
 }
 
 impl<'input> Expression<'input> {
+	pub fn pos_before(&self) -> usize {
+		use Expression::*;
+		match *self {
+			Number { before, .. } => before,
+			Variable { ref name, .. } => name.before,
+			UnOp { op, .. } => op.before,
+			BinOp { ref left, .. } => left.pos_before(),
+			Call { ref name, .. } => name.before,
+			Tuple { before, .. } => before,
+			Merge { before, .. } => before,
+			Property { ref exp, .. } => exp.pos_before(),
+			TupleIndex { ref exp, .. } => exp.pos_before(),
+			BufferIndex { ref exp, .. } => exp.pos_before(),
+		}
+	}
+
+	pub fn pos_after(&self) -> usize {
+		use Expression::*;
+		match *self {
+			Number { after, .. } => after,
+			Variable { ref name, .. } => name.before + name.text.len(),
+			UnOp { ref exp, .. } => exp.pos_after(),
+			BinOp { ref right, .. } => right.pos_after(),
+			Call { after, .. } => after,
+			Tuple { after, .. } => after,
+			Merge { after, .. } => after,
+			Property { ref name, .. } => name.before + name.text.len(),
+			TupleIndex { after, .. } => after,
+			BufferIndex { after, .. } => after,
+		}
+	}
+
 	pub fn traverse(&self,
 			pre: &mut impl FnMut(&Expression<'input>),
 			post: &mut impl FnMut(&Expression<'input>)) {
@@ -137,12 +171,12 @@ impl<'input> Expression<'input> {
 					arg.traverse(pre, post);
 				}
 			},
-			Tuple { elements } => {
+			Tuple { elements, .. } => {
 				for element in elements {
 					element.traverse(pre, post);
 				}
 			},
-			Merge { left, right } => {
+			Merge { left, right, .. } => {
 				left.traverse(pre, post);
 				right.traverse(pre, post);
 			},
@@ -152,7 +186,7 @@ impl<'input> Expression<'input> {
 			TupleIndex { exp, .. } => {
 				exp.traverse(pre, post);
 			},
-			BufferIndex { exp, index } => {
+			BufferIndex { exp, index, .. } => {
 				exp.traverse(pre, post);
 				index.traverse(pre, post);
 			},

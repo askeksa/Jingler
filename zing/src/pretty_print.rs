@@ -229,7 +229,7 @@ impl<'input> Expression<'input> {
 		if parenthesized { f.write_str("(")?; }
 		use Expression::*;
 		match self {
-			Number { value } => write!(f, "{}", value)?,
+			Number { value, .. } => write!(f, "{}", value)?,
 			Variable { name } => write!(f, "{}", name)?,
 			UnOp { op, exp } => {
 				write!(f, "{}", op)?;
@@ -240,25 +240,29 @@ impl<'input> Expression<'input> {
 				write!(f, " {} ", op)?;
 				right.fmt_with_precedence(f, op.precedence().binary_next())?;
 			},
-			Call { name, args } => {
+			Call { name, args, .. } => {
 				write!(f, "{}", name)?;
 				fmt_parenthesized_list(f, args)?;
 			},
-			Tuple { elements } => {
-				fmt_parenthesized_list(f, elements)?;
+			Tuple { elements, .. } => {
+				if let [single] = elements.as_slice() {
+					single.fmt_with_precedence(f, p)?;
+				} else {
+					fmt_parenthesized_list(f, elements)?;
+				}
 			},
-			Merge { left, right } => {
+			Merge { left, right, .. } => {
 				write!(f, "[{}, {}]", left, right)?;
 			},
 			Property { exp, name } => {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, ".{}", name)?;
 			},
-			TupleIndex { exp, index } => {
+			TupleIndex { exp, index, .. } => {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, ".{}", index)?;
 			},
-			BufferIndex { exp, index } => {
+			BufferIndex { exp, index, .. } => {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, "[{}]", index)?;
 			},

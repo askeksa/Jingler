@@ -104,55 +104,66 @@ impl Iterator for CompileError {
 	}
 }
 
-/// Trait for things that can represent a location and length for a diagnostic.
+/// Trait for things that can represent a range of positions for a diagnostic.
 pub trait Location {
-	fn offset(&self) -> usize;
-	fn length(&self) -> usize;
+	fn pos_before(&self) -> usize;
+	fn pos_after(&self) -> usize;
 }
 
+/// (offset, length) pair.
 impl Location for (usize, usize) {
-	fn offset(&self) -> usize { self.0 }
-	fn length(&self) -> usize { self.1 }
+	fn pos_before(&self) -> usize { self.0 }
+	fn pos_after(&self) -> usize { self.0 + self.1 }
 }
 
 impl<'input> Location for &Id<'input> {
-	fn offset(&self) -> usize { self.pos }
-	fn length(&self) -> usize { self.text.len() }
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.before + self.text.len() }
 }
 
 impl Location for &UnOp {
-	fn offset(&self) -> usize { self.pos }
-	fn length(&self) -> usize { self.to_string().len() }
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.before + self.to_string().len() }
 }
 
 impl Location for &BinOp {
-	fn offset(&self) -> usize { self.pos }
-	fn length(&self) -> usize { self.to_string().len() }
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.before + self.to_string().len() }
 }
 
 impl<'input> Location for &Pattern<'input> {
-	fn offset(&self) -> usize { self.pos1 }
-	fn length(&self) -> usize { self.pos2 - self.pos1 }
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.after }
 }
 
 impl<A: Location, B:Location> Location for (A, B) {
-	fn offset(&self) -> usize { self.0.offset() }
-	fn length(&self) -> usize { self.1.offset() + self.1.length() - self.0.offset() }
+	fn pos_before(&self) -> usize { self.0.pos_before() }
+	fn pos_after(&self) -> usize { self.1.pos_after() }
 }
 
 impl<'input> Location for &PatternVariable<'input> {
-	fn offset(&self) -> usize {
+	fn pos_before(&self) -> usize {
 		match self {
-			PatternVariable::Variable { name } => name.offset(),
-			PatternVariable::Split { left, right } => (left, right).offset(),
+			PatternVariable::Variable { name } => name.pos_before(),
+			PatternVariable::Split { left, .. } => left.pos_before(),
 		}
 	}
 
-	fn length(&self) -> usize {
+	fn pos_after(&self) -> usize {
 		match self {
-			PatternVariable::Variable { name } => name.length(),
-			PatternVariable::Split { left, right } => (left, right).length(),
+			PatternVariable::Variable { name } => name.pos_after(),
+			PatternVariable::Split { right, .. } => right.pos_after(),
 		}
+	}
+}
+
+impl<'input> Location for &Expression<'input> {
+	fn pos_before(&self) -> usize {
+		(**self).pos_before()
+	}
+
+	fn pos_after(&self) -> usize {
+		(**self).pos_after()
 	}
 }
 
@@ -205,7 +216,9 @@ impl<'input> Compiler<'input> {
 		})
 	}
 
-	fn report(&mut self, offset: usize, length: usize, category: MessageCategory, text: String) {
+	fn report(&mut self, loc: &dyn Location, category: MessageCategory, text: String) {
+		let offset = loc.pos_before();
+		let length = loc.pos_after() - offset;
 		let until_offset = &self.stripped_input[..self.stripped_input.len().min(offset)];
 		let (line, column) = {
 			match self.r_line_break.find_iter(until_offset).enumerate().last() {
@@ -227,23 +240,23 @@ impl<'input> Compiler<'input> {
 	}
 
 	pub fn report_syntax_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(loc.offset(), loc.length(), MessageCategory::SyntaxError, text.into())
+		self.report(&loc, MessageCategory::SyntaxError, text.into())
 	}
 
 	pub fn report_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(loc.offset(), loc.length(), MessageCategory::Error, text.into())
+		self.report(&loc, MessageCategory::Error, text.into())
 	}
 
 	pub fn report_internal_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(loc.offset(), loc.length(), MessageCategory::InternalError, text.into())
+		self.report(&loc, MessageCategory::InternalError, text.into())
 	}
 
 	pub fn report_warning(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(loc.offset(), loc.length(), MessageCategory::Warning, text.into())
+		self.report(&loc, MessageCategory::Warning, text.into())
 	}
 
 	pub fn report_context(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(loc.offset(), loc.length(), MessageCategory::Context, text.into())
+		self.report(&loc, MessageCategory::Context, text.into())
 	}
 
 	fn make_error(&mut self) -> CompileError {
