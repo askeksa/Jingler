@@ -115,3 +115,58 @@ pub struct Id<'input> {
 	pub pos: usize,
 	pub text: &'input str,
 }
+
+impl<'input> Expression<'input> {
+	pub fn traverse(&self,
+			pre: &mut impl FnMut(&Expression<'input>),
+			post: &mut impl FnMut(&Expression<'input>)) {
+		pre(self);
+		use Expression::*;
+		match self {
+			Number { .. } => {},
+			Variable { .. } => {},
+			UnOp { exp, .. } => {
+				exp.traverse(pre, post);
+			},
+			BinOp { left, right, .. } => {
+				left.traverse(pre, post);
+				right.traverse(pre, post);
+			},
+			Call { args, .. } => {
+				for arg in args {
+					arg.traverse(pre, post);
+				}
+			},
+			Tuple { elements } => {
+				for element in elements {
+					element.traverse(pre, post);
+				}
+			},
+			Merge { left, right } => {
+				left.traverse(pre, post);
+				right.traverse(pre, post);
+			},
+			Property { exp, .. } => {
+				exp.traverse(pre, post);
+			},
+			TupleIndex { exp, .. } => {
+				exp.traverse(pre, post);
+			},
+			BufferIndex { exp, index } => {
+				exp.traverse(pre, post);
+				index.traverse(pre, post);
+			},
+		}
+		post(self);
+	}
+
+	pub fn traverse_pre(&self,
+			pre: &mut impl FnMut(&Expression<'input>)) {
+		self.traverse(pre, &mut |_| {});
+	}
+
+	pub fn traverse_post(&self,
+			post: &mut impl FnMut(&Expression<'input>)) {
+		self.traverse(&mut |_| {}, post);
+	}
+}
