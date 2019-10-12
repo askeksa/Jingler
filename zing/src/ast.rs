@@ -17,7 +17,7 @@ pub enum Declaration<'input> {
 	},
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcedureKind {
 	Module,
 	Function,

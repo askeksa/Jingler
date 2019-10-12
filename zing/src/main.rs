@@ -2,7 +2,7 @@
 #[macro_use] extern crate lalrpop_util;
 
 mod ast;
-mod builtin;
+#[macro_use] mod builtin;
 mod compiler;
 mod names;
 mod pretty_print;

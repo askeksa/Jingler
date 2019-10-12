@@ -4,7 +4,7 @@ use crate::names::Signature;
 
 macro_rules! scope {
 	{ static } => { Scope::Static };
-	{ dynamic } => { Scope::Static };
+	{ dynamic } => { Scope::Dynamic };
 }
 
 macro_rules! width {
@@ -44,6 +44,7 @@ macro_rules! type_spec {
 	};
 }
 
+#[macro_export]
 macro_rules! sig {
 	{ [ $($($p:ident)+),* ] [ $($($o:ident)+),* ] } => {
 		Signature {
