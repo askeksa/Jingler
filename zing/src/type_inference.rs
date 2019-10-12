@@ -145,8 +145,44 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		for (decl_index, decl) in program.declarations.iter_mut().enumerate() {
 			self.current_decl_index = decl_index;
 			self.infer_body(decl)?;
+			self.check_outputs(decl)?;
 		}
 		Ok(())
+	}
+
+	fn check_outputs(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
+		let Declaration::Procedure { outputs, .. } = decl;
+		for output in &outputs.items {
+			let mut check_output = |name: &Id<'ast>, output_type: &Type| {
+				match self.ready.get(name.text) {
+					Some(&TypeResult::Type { inferred_type }) => {
+						if !inferred_type.assignable_to(output_type) {
+							self.compiler.report_error(name,
+								format!("Expression of type{} can't be assigned to output '{}'{}.",
+								inferred_type, name, output_type));
+						}
+					},
+					Some(&TypeResult::Error) => {},
+					None => {
+						self.compiler.report_error(name,
+							format!("No assignment to output '{}'.", name));
+					},
+				}
+			};
+			match &output.variable {
+				PatternVariable::Variable { name } => {
+					check_output(name, &output.item_type);
+				},
+				PatternVariable::Split { left, right } => {
+					let mut side_type = output.item_type;
+					side_type.width = Some(Width::Mono);
+					check_output(left, &side_type);
+					check_output(right, &side_type);
+				},
+			}
+		}
+
+		self.compiler.check_errors()
 	}
 
 	fn infer_body(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
@@ -207,7 +243,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			}
 		}
 
-		Ok(())
+		self.compiler.check_errors()
 	}
 
 	fn find_ready(&mut self,
@@ -274,7 +310,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					},
 					None => {
 						self.compiler.report_error(name,
-							format!("Variable not found: '{}'.", name.text));
+							format!("Variable not found: '{}'.", name));
 					},
 				}
 			}
@@ -299,15 +335,12 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					node_type.scope = node_type.scope.or(inferred_type.scope);
 					node_type.width = node_type.width.or(inferred_type.width);
 					node_type.value_type = node_type.value_type.or(inferred_type.value_type);
-					if node_type.scope == inferred_type.scope &&
-							(node_type.width == inferred_type.width ||
-							inferred_type.width == Some(Width::Mono)) &&
-							node_type.value_type == inferred_type.value_type {
+					if inferred_type.assignable_to(&node_type) {
 						item.item_type = node_type;
 						TypeResult::Type { inferred_type: node_type }
 					} else {
 						self.compiler.report_error(&item.variable,
-							format!("Expression with type{} can't be assigned to {}{}",
+							format!("Expression of type{} can't be assigned to '{}'{}.",
 								inferred_type, item.variable, item.item_type));
 						TypeResult::Error
 					}
@@ -419,7 +452,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 			},
 			None => {
-				self.compiler.report_error(name, format!("Procedure not found: '{}'.", name.text));
+				self.compiler.report_error(name, format!("Procedure not found: '{}'.", name));
 				vec![TypeResult::Error]
 			},
 		}

@@ -76,6 +76,24 @@ pub enum ValueType {
 	Typeless,
 }
 
+impl Type {
+	pub fn assignable_to(&self, to: &Type) -> bool {
+		let scope_ok = match (self.scope, to.scope) {
+			(Some(Scope::Static), Some(Scope::Dynamic)) => true,
+			(from, to) => from == to,
+		};
+		let width_ok = match (self.value_type, self.width, to.width) {
+			(Some(ValueType::Buffer), from, to) => from == to,
+			(_, Some(Width::Mono), Some(Width::Stereo)) => true,
+			(_, Some(Width::Mono), Some(Width::Generic)) => true,
+			(_, from, to) => from == to,
+		};
+		let value_type_ok = self.value_type == to.value_type;
+
+		scope_ok && width_ok && value_type_ok
+	}
+}
+
 #[derive(Clone, Debug)]
 pub enum Expression<'input> {
 	Number { before: Pos, value: f64, after: Pos },
