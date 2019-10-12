@@ -53,6 +53,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			let Declaration::Procedure { kind, name, inputs, outputs, .. } = decl;
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
+			let mut seen_generic_input = false;
 			let input_iter = repeat(false).zip(&mut inputs.items);
 			let output_iter = repeat(true).zip(&mut outputs.items);
 			for (is_output, item) in input_iter.chain(output_iter) {
@@ -126,6 +127,16 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							}
 						}
 					},
+				}
+				if item_type.width == Some(Width::Generic) {
+					if is_output {
+						if !seen_generic_input {
+							self.compiler.report_error(&*variable,
+								"Outputs can't be generic when none of the inputs are generic.");
+						}
+					} else {
+						seen_generic_input = true;
+					}
 				}
 			}
 			if output_count < instrument_types.len() {
