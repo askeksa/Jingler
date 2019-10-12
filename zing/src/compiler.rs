@@ -116,22 +116,22 @@ impl Location for (usize, usize) {
 	fn pos_after(&self) -> usize { self.0 + self.1 }
 }
 
-impl<'input> Location for &Id<'input> {
+impl<'input> Location for Id<'input> {
 	fn pos_before(&self) -> usize { self.before }
 	fn pos_after(&self) -> usize { self.before + self.text.len() }
 }
 
-impl Location for &UnOp {
+impl Location for UnOp {
 	fn pos_before(&self) -> usize { self.before }
 	fn pos_after(&self) -> usize { self.before + self.to_string().len() }
 }
 
-impl Location for &BinOp {
+impl Location for BinOp {
 	fn pos_before(&self) -> usize { self.before }
 	fn pos_after(&self) -> usize { self.before + self.to_string().len() }
 }
 
-impl<'input> Location for &Pattern<'input> {
+impl<'input> Location for Pattern<'input> {
 	fn pos_before(&self) -> usize { self.before }
 	fn pos_after(&self) -> usize { self.after }
 }
@@ -141,7 +141,7 @@ impl<A: Location, B:Location> Location for (A, B) {
 	fn pos_after(&self) -> usize { self.1.pos_after() }
 }
 
-impl<'input> Location for &PatternVariable<'input> {
+impl<'input> Location for PatternVariable<'input> {
 	fn pos_before(&self) -> usize {
 		match self {
 			PatternVariable::Variable { name } => name.pos_before(),
@@ -157,13 +157,13 @@ impl<'input> Location for &PatternVariable<'input> {
 	}
 }
 
-impl<'input> Location for &Expression<'input> {
+impl<'input> Location for Expression<'input> {
 	fn pos_before(&self) -> usize {
-		(**self).pos_before()
+		self.pos_before()
 	}
 
 	fn pos_after(&self) -> usize {
-		(**self).pos_after()
+		self.pos_after()
 	}
 }
 
@@ -199,18 +199,18 @@ impl<'input> Compiler<'input> {
 		zing::ProgramParser::new().parse(text).map_err(|err| {
 			match err {
 				ParseError::InvalidToken { location } => {
-					self.report_syntax_error((location, 1), "Invalid token.");
+					self.report_syntax_error(&(location, 1), "Invalid token.");
 				},
 				ParseError::UnrecognizedEOF { location, expected: _ } => {
-					self.report_syntax_error((location, 1), "Unexpected end of file.");
+					self.report_syntax_error(&(location, 1), "Unexpected end of file.");
 				},
 				ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {
-					self.report_syntax_error((loc1, loc2 - loc1), "Unexpected token.");
+					self.report_syntax_error(&(loc1, loc2 - loc1), "Unexpected token.");
 				},
 				ParseError::ExtraToken { token: (loc1, _, loc2) } => {
-					self.report_syntax_error((loc1, loc2 - loc1), "Extra token.");
+					self.report_syntax_error(&(loc1, loc2 - loc1), "Extra token.");
 				},
-				_ => self.report_internal_error((0, 0), "Unknown parse error."),
+				_ => self.report_internal_error(&(0, 0), "Unknown parse error."),
 			}
 			self.make_error()
 		})
@@ -239,24 +239,24 @@ impl<'input> Compiler<'input> {
 		});
 	}
 
-	pub fn report_syntax_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(&loc, MessageCategory::SyntaxError, text.into())
+	pub fn report_syntax_error(&mut self, loc: &dyn Location, text: impl Into<String>) {
+		self.report(loc, MessageCategory::SyntaxError, text.into())
 	}
 
-	pub fn report_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(&loc, MessageCategory::Error, text.into())
+	pub fn report_error(&mut self, loc: &dyn Location, text: impl Into<String>) {
+		self.report(loc, MessageCategory::Error, text.into())
 	}
 
-	pub fn report_internal_error(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(&loc, MessageCategory::InternalError, text.into())
+	pub fn report_internal_error(&mut self, loc: &dyn Location, text: impl Into<String>) {
+		self.report(loc, MessageCategory::InternalError, text.into())
 	}
 
-	pub fn report_warning(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(&loc, MessageCategory::Warning, text.into())
+	pub fn report_warning(&mut self, loc: &dyn Location, text: impl Into<String>) {
+		self.report(loc, MessageCategory::Warning, text.into())
 	}
 
-	pub fn report_context(&mut self, loc: impl Location, text: impl Into<String>) {
-		self.report(&loc, MessageCategory::Context, text.into())
+	pub fn report_context(&mut self, loc: &dyn Location, text: impl Into<String>) {
+		self.report(loc, MessageCategory::Context, text.into())
 	}
 
 	fn make_error(&mut self) -> CompileError {
