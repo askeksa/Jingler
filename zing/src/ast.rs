@@ -97,6 +97,7 @@ impl Type {
 #[derive(Clone, Debug)]
 pub enum Expression<'input> {
 	Number { before: Pos, value: f64, after: Pos },
+	Bool { before: Pos, value: bool },
 	Variable { name: Id<'input> },
 	UnOp { op: UnOp, exp: Box<Expression<'input>> },
 	BinOp { left: Box<Expression<'input>>, op: BinOp, right: Box<Expression<'input>> },
@@ -146,6 +147,7 @@ impl<'input> Expression<'input> {
 		use Expression::*;
 		match *self {
 			Number { before, .. } => before,
+			Bool { before, .. } => before,
 			Variable { ref name, .. } => name.before,
 			UnOp { op, .. } => op.before,
 			BinOp { ref left, .. } => left.pos_before(),
@@ -163,6 +165,7 @@ impl<'input> Expression<'input> {
 		use Expression::*;
 		match *self {
 			Number { after, .. } => after,
+			Bool { before, value } => before + if value { 4 } else { 5 },
 			Variable { ref name, .. } => name.before + name.text.len(),
 			UnOp { ref exp, .. } => exp.pos_after(),
 			BinOp { ref right, .. } => right.pos_after(),
@@ -183,6 +186,7 @@ impl<'input> Expression<'input> {
 		use Expression::*;
 		match self {
 			Number { .. } => {},
+			Bool { .. } => {},
 			Variable { .. } => {},
 			UnOp { exp, .. } => {
 				exp.traverse(pre, post);

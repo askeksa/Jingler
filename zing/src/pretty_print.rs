@@ -230,6 +230,7 @@ impl<'input> Expression<'input> {
 		use Expression::*;
 		match self {
 			Number { value, .. } => write!(f, "{}", value)?,
+			Bool { value, .. } => write!(f, "{}", value)?,
 			Variable { name } => write!(f, "{}", name)?,
 			UnOp { op, exp } => {
 				write!(f, "{}", op)?;
@@ -282,6 +283,7 @@ impl<'input> Expression<'input> {
 		use Expression::*;
 		match self {
 			Number { .. } => Precedence::Primary,
+			Bool { .. } => Precedence::Primary,
 			Variable { .. } => Precedence::Primary,
 			UnOp { .. } => Precedence::Unary,
 			BinOp { op, .. } => op.precedence(),

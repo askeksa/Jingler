@@ -370,6 +370,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		use Expression::*;
 		match exp {
 			Number { value, .. } => self.infer_number(value, loc),
+			Bool { value, .. } => self.infer_bool(value, loc),
 			Variable { name } => self.infer_variable(name, loc),
 			UnOp { op, exp } => self.infer_unop(op, exp, loc),
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
@@ -403,6 +404,17 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			scope: None,
 			width: Some(Width::Mono),
 			value_type: Some(ValueType::Number),
+		};
+		vec![TypeResult::Type { inferred_type }]
+	}
+
+	fn infer_bool(&mut self,
+			_value: &bool,
+			_loc: &dyn Location) -> Vec<TypeResult> {
+		let inferred_type = Type {
+			scope: None,
+			width: Some(Width::Mono),
+			value_type: Some(ValueType::Bool),
 		};
 		vec![TypeResult::Type { inferred_type }]
 	}

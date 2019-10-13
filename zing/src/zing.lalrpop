@@ -125,6 +125,7 @@ UnaryOp: UnOpKind = {
 
 PrimaryExpression: Expression<'input> = {
 	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
+	<before:@L> <value:Bool> => Expression::Bool {<>},
 	<name:Id> => Expression::Variable {<>},
 	<name:Id> "(" <args:Comma<Expression>> ")" <after:@R> => Expression::Call {<>},
 	<before:@L> "(" <elements:Comma<Expression>> ")" <after:@R> => Expression::Tuple {<>},
@@ -146,6 +147,11 @@ Num: f64 = {
 	DecimalNum,
 	HexadecimalNum,
 	"inf" => f64::INFINITY,
+};
+
+Bool: bool = {
+	"false" => false,
+	"true" => true,
 };
 
 Id: Id<'input> = {
