@@ -373,6 +373,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			Variable { name } => self.infer_variable(name, loc),
 			UnOp { op, exp } => self.infer_unop(op, exp, loc),
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
+			Conditional { condition, then, otherwise }
+				=> self.infer_conditional(condition, then, otherwise, loc),
 			Call { name, args, .. } => self.infer_call(name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
@@ -424,6 +426,30 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let left_operand = self.expect_single(left, "left operand of binary operator");
 		let right_operand = self.expect_single(right, "right operand of binary operator");
 		self.check_signature(op.signature(), &[left_operand, right_operand], loc)
+	}
+
+	fn infer_conditional(&mut self,
+			condition: &Expression<'ast>, then: &Expression<'ast>, otherwise: &Expression<'ast>,
+			loc: &dyn Location) -> Vec<TypeResult> {
+		let condition_operand = self.expect_single(condition, "condition of conditional operator");
+		let then_operand = self.expect_single(then, "operand of conditional operator");
+		let otherwise_operand = self.expect_single(otherwise, "operand of conditional operator");
+		let sig = sig!([generic bool, generic typeless, generic typeless] [generic typeless]);
+		let result = self.check_signature(&sig, &[condition_operand, then_operand, otherwise_operand], loc);
+		if let TypeResult::Type {
+			inferred_type: Type { value_type: Some(ValueType::Buffer), .. }
+		} = result[0] {
+			if let TypeResult::Type {
+				inferred_type: Type { width, .. }
+			} = condition_operand {
+				if width != Some(Width::Mono) {
+					self.compiler.report_error(loc,
+						"Conditionals on buffers must have mono conditions.");
+					return vec![TypeResult::Error];
+				}
+			}
+		}
+		result
 	}
 
 	fn infer_call(&mut self,

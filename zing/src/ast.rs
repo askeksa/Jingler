@@ -100,6 +100,11 @@ pub enum Expression<'input> {
 	Variable { name: Id<'input> },
 	UnOp { op: UnOp, exp: Box<Expression<'input>> },
 	BinOp { left: Box<Expression<'input>>, op: BinOp, right: Box<Expression<'input>> },
+	Conditional {
+		condition: Box<Expression<'input>>,
+		then: Box<Expression<'input>>,
+		otherwise: Box<Expression<'input>>,
+	},
 	Call { name: Id<'input>, args: Vec<Expression<'input>>, after: Pos },
 	Tuple { before: Pos, elements: Vec<Expression<'input>>, after: Pos },
 	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
@@ -144,6 +149,7 @@ impl<'input> Expression<'input> {
 			Variable { ref name, .. } => name.before,
 			UnOp { op, .. } => op.before,
 			BinOp { ref left, .. } => left.pos_before(),
+			Conditional { ref condition, .. } => condition.pos_before(),
 			Call { ref name, .. } => name.before,
 			Tuple { before, .. } => before,
 			Merge { before, .. } => before,
@@ -160,6 +166,7 @@ impl<'input> Expression<'input> {
 			Variable { ref name, .. } => name.before + name.text.len(),
 			UnOp { ref exp, .. } => exp.pos_after(),
 			BinOp { ref right, .. } => right.pos_after(),
+			Conditional { ref otherwise, .. } => otherwise.pos_after(),
 			Call { after, .. } => after,
 			Tuple { after, .. } => after,
 			Merge { after, .. } => after,
@@ -183,6 +190,11 @@ impl<'input> Expression<'input> {
 			BinOp { left, right, .. } => {
 				left.traverse(pre, post);
 				right.traverse(pre, post);
+			},
+			Conditional { condition, then, otherwise } => {
+				condition.traverse(pre, post);
+				then.traverse(pre, post);
+				otherwise.traverse(pre, post);
 			},
 			Call { args, .. } => {
 				for arg in args {

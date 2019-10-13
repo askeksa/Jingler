@@ -240,6 +240,13 @@ impl<'input> Expression<'input> {
 				write!(f, " {} ", op)?;
 				right.fmt_with_precedence(f, op.precedence().binary_next())?;
 			},
+			Conditional { condition, then, otherwise } => {
+				condition.fmt_with_precedence(f, Precedence::Or)?;
+				write!(f, " ? ")?;
+				then.fmt_with_precedence(f, Precedence::Expression)?;
+				write!(f, " : ")?;
+				otherwise.fmt_with_precedence(f, Precedence::Expression)?;
+			},
 			Call { name, args, .. } => {
 				write!(f, "{}", name)?;
 				fmt_parenthesized_list(f, args)?;
@@ -278,6 +285,7 @@ impl<'input> Expression<'input> {
 			Variable { .. } => Precedence::Primary,
 			UnOp { .. } => Precedence::Unary,
 			BinOp { op, .. } => op.precedence(),
+			Conditional { .. } => Precedence::Expression,
 			Call { .. } => Precedence::Primary,
 			Tuple { .. } => Precedence::Primary,
 			Merge { .. } => Precedence::Primary,

@@ -72,6 +72,8 @@ Statement: Statement<'input> = {
 
 Expression: Expression<'input> = {
 	OrExpression,
+	<condition:Box<OrExpression>> "?" <then:Box<Expression>> ":" <otherwise:Box<Expression>>
+		=> Expression::Conditional {<>},
 };
 
 OrExpression = BinOpLevel<OrOp, XorExpression>;
