@@ -145,7 +145,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 			// Extract signature
 			let Declaration::Procedure { kind, inputs, outputs, .. } = decl;
-			let input_types = inputs.items.iter().map(|item| item.item_type).collect();
+			let input_types = inputs.items.iter().map(|item| {
+				let mut input_type = item.item_type;
+				if *kind == ProcedureKind::Instrument {
+					// Seen from the outside, all instrument inputs are dynamic.
+					input_type.scope = Some(Scope::Dynamic);
+				}
+				input_type
+			}).collect();
 			let output_types = outputs.items.iter().map(|item| item.item_type).collect();
 			self.signatures.push((*kind, input_types, output_types));
 		}
