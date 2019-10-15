@@ -14,6 +14,7 @@
 %define I_EXP2_BODY 1
 %define I_FDONE 1
 %define I_FOP 15
+%define I_FPUTNEXT 1
 %define I_CONSTANT 50
 %define I_PROC_CALL 50
 %define I_NOTE_PROPERTY 3

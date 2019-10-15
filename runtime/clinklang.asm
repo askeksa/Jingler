@@ -310,6 +310,9 @@ RunGeneratedCode:
 	snip		kill, rs, I_KILL
 	pextrb		[ebp-1], xmm0, 7
 
+	snip		fputnext, rt, I_FPUTNEXT
+	fld			qword [ebx]
+
 	snip		trigger, ss, I_TRIGGER
 	pusha
 	mov			ebp, [InstrumentIndex]
