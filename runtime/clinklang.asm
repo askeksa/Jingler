@@ -257,6 +257,9 @@ RunGeneratedCode:
 	snip		state_leave, rr, I_STATE_LEAVE
 	pop			edi
 
+	snip		kill, rs, I_KILL
+	pextrb		[ebp-1], xmm0, 7
+
 	snip		cell_init, rs, I_CELL_INIT
 	movapd		[edi], xmm0
 	add			edi, byte 16
@@ -267,6 +270,9 @@ RunGeneratedCode:
 
 	snip		addsub, rt, I_ADDSUB
 	addsubpd	xmm0, [ebx]
+
+	snip		fputnext, rt, I_FPUTNEXT
+	fld			qword [ebx]
 
 	snip		random, rt, I_RANDOM
 	cvtsd2si	eax, xmm0
@@ -281,24 +287,7 @@ RunGeneratedCode:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
-	snip		buffer_alloc, ts, I_BUFFER_ALLOC
-	mov			eax, [BufferAllocPtr]
-	mov			[ebx + 4], eax
-	cvtsd2si	eax, xmm0
-	mov			[ebx], eax
-	shl			eax, 4
-	add			[BufferAllocPtr], eax
-
-	snip		buffer_load, sr, I_BUFFER_LOAD
-	xor			edx, edx
-	cvtsd2si	eax, [ebx]
-	add			ebx, byte 16
-	div			dword [ebx]
-	shl			edx, 4
-	add			edx, [ebx + 4]
-	movapd		xmm0, [edx]
-
-	snip		buffer_store, rs, I_BUFFER_STORE
+	snip		buffer_store, rt, I_BUFFER_STORE
 	xor			edx, edx
 	cvtsd2si	eax, [ebx]
 	add			ebx, byte 16
@@ -307,11 +296,22 @@ RunGeneratedCode:
 	add			edx, [ebx + 4]
 	movapd		[edx], xmm0
 
-	snip		kill, rs, I_KILL
-	pextrb		[ebp-1], xmm0, 7
+	snip		buffer_load, st, I_BUFFER_LOAD
+	xor			edx, edx
+	cvtsd2si	eax, [ebx]
+	add			ebx, byte 16
+	div			dword [ebx]
+	shl			edx, 4
+	add			edx, [ebx + 4]
+	movapd		xmm0, [edx]
 
-	snip		fputnext, rt, I_FPUTNEXT
-	fld			qword [ebx]
+	snip		buffer_alloc, ts, I_BUFFER_ALLOC
+	mov			eax, [BufferAllocPtr]
+	mov			[ebx + 4], eax
+	cvtsd2si	eax, xmm0
+	mov			[ebx], eax
+	shl			eax, 4
+	add			[BufferAllocPtr], eax
 
 	snip		trigger, ss, I_TRIGGER
 	pusha
