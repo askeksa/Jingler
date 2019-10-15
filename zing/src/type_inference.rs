@@ -497,8 +497,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					},
 				}
 				match definition {
-					ProcedureDefinition::BuiltIn { signature } => {
-						self.check_call_signature(signature, &operands, loc)
+					ProcedureDefinition::BuiltIn { sig, .. } => {
+						self.check_call_signature(sig, &operands, loc)
 					}
 					ProcedureDefinition::Declaration { decl_index } => {
 						let (_, ref inputs, ref outputs) = self.signatures[*decl_index].clone();

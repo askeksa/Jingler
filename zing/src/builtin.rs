@@ -1,5 +1,6 @@
 
 use crate::ast::{BinOp, BinOpKind, Scope, Type, UnOp, UnOpKind, ValueType, Width};
+use crate::bytecodes::*;
 use crate::names::Signature;
 
 macro_rules! scope {
@@ -54,21 +55,33 @@ macro_rules! sig {
 	};
 }
 
-pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>)] = &[
-	("atan2", sig!([mono, mono] [mono])),
-	("ceil",  sig!([generic] [generic])),
-	("cos",   sig!([mono] [mono])),
-	("exp2",  sig!([mono] [mono])),
-	("floor", sig!([generic] [generic])),
-	("log2",  sig!([mono] [mono])),
-	("max",   sig!([generic, generic] [generic])),
-	("min",   sig!([generic, generic] [generic])),
-	("pow",   sig!([mono, mono] [mono])),
-	("round", sig!([generic] [generic])),
-	("sin",   sig!([mono] [mono])),
-	("sqrt",  sig!([generic] [generic])),
-	("tan",   sig!([mono] [mono])),
-	("trunc", sig!([generic] [generic])),
+macro_rules! bc {
+	{ $($b:expr),* } => {
+		{
+			#[allow(unused)] use Bytecode::*;
+			#[allow(unused)] use RoundingMode::*;
+			#[allow(unused)] use CompareOp::*;
+			#[allow(unused)] use NoteProperty::*;
+			#[allow(unused)] use Fopcode::*;
+			&[$($b),*]
+		}
+	}
+}
+
+pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Bytecode])] = &[
+	("atan2", sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fpatan), Fdone]),
+	("ceil",  sig!([generic] [generic]),          bc![Round(Ceil)]),
+	("cos",   sig!([mono] [mono]),                bc![Fop(Fcos), Fdone]),
+	("exp2",  sig!([mono] [mono]),                bc![Fop(Frndint), Exp2Body, Fdone]),
+	("floor", sig!([generic] [generic]),          bc![Round(Floor)]),
+	("max",   sig!([generic, generic] [generic]), bc![Max]),
+	("min",   sig!([generic, generic] [generic]), bc![Min]),
+	("mlog2", sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
+	("round", sig!([generic] [generic]),          bc![Round(Nearest)]),
+	("sin",   sig!([mono] [mono]),                bc![Fop(Fsin), Fdone]),
+	("sqrt",  sig!([generic] [generic]),          bc![Sqrt]),
+	("tan",   sig!([mono] [mono]),                bc![Fop(Fptan), Fdone, Fdone]),
+	("trunc", sig!([generic] [generic]),          bc![Round(Truncate)]),
 ];
 
 pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
@@ -76,47 +89,86 @@ pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
 	("delay", sig!([static mono number, dynamic generic typeless] [dynamic generic typeless]))
 ];
 
-pub trait OperatorSignature {
+pub trait OperatorSemantics {
 	fn signature(&self) -> &'static Signature<'static>;
+	fn bytecodes(&self) -> &'static [Bytecode];
 }
 
-impl OperatorSignature for UnOp {
+impl OperatorSemantics for UnOp {
 	fn signature(&self) -> &'static Signature<'static> {
 		self.kind.signature()
 	}
+
+	fn bytecodes(&self) -> &'static [Bytecode] {
+		self.kind.bytecodes()
+	}
 }
 
-impl OperatorSignature for UnOpKind {
+impl OperatorSemantics for UnOpKind {
 	fn signature(&self) -> &'static Signature<'static> {
+		use UnOpKind::*;
 		match self {
-			UnOpKind::Neg => &sig!([generic number] [generic number]),
-			UnOpKind::Not => &sig!([generic bool] [generic bool]),
+			Neg => &sig!([generic number] [generic number]),
+			Not => &sig!([generic bool] [generic bool]),
 		}
 	}
-}
 
-impl OperatorSignature for BinOp {
-	fn signature(&self) -> &'static Signature<'static> {
-		self.kind.signature()
+	fn bytecodes(&self) -> &'static [Bytecode] {
+		use UnOpKind::*;
+		match self {
+			Neg => bc![Constant(0), Expand, Sub],
+			Not => bc![Constant(0), Expand, Compare(Eq)],
+		}
+
 	}
 }
 
-impl OperatorSignature for BinOpKind {
+impl OperatorSemantics for BinOp {
 	fn signature(&self) -> &'static Signature<'static> {
+		self.kind.signature()
+	}
+
+	fn bytecodes(&self) -> &'static [Bytecode] {
+		self.kind.bytecodes()
+	}
+}
+
+impl OperatorSemantics for BinOpKind {
+	fn signature(&self) -> &'static Signature<'static> {
+		use BinOpKind::*;
 		match self {
-			BinOpKind::Add       => &sig!([generic number, generic number] [generic number]),
-			BinOpKind::Sub       => &sig!([generic number, generic number] [generic number]),
-			BinOpKind::Mul       => &sig!([generic number, generic number] [generic number]),
-			BinOpKind::Div       => &sig!([generic number, generic number] [generic number]),
-			BinOpKind::And       => &sig!([generic bool, generic bool] [generic bool]),
-			BinOpKind::Or        => &sig!([generic bool, generic bool] [generic bool]),
-			BinOpKind::Xor       => &sig!([generic bool, generic bool] [generic bool]),
-			BinOpKind::Eq        => &sig!([generic number, generic number] [generic bool]),
-			BinOpKind::Neq       => &sig!([generic number, generic number] [generic bool]),
-			BinOpKind::Less      => &sig!([generic number, generic number] [generic bool]),
-			BinOpKind::LessEq    => &sig!([generic number, generic number] [generic bool]),
-			BinOpKind::Greater   => &sig!([generic number, generic number] [generic bool]),
-			BinOpKind::GreaterEq => &sig!([generic number, generic number] [generic bool]),
+			Add       => &sig!([generic number, generic number] [generic number]),
+			Sub       => &sig!([generic number, generic number] [generic number]),
+			Mul       => &sig!([generic number, generic number] [generic number]),
+			Div       => &sig!([generic number, generic number] [generic number]),
+			And       => &sig!([generic bool, generic bool] [generic bool]),
+			Or        => &sig!([generic bool, generic bool] [generic bool]),
+			Xor       => &sig!([generic bool, generic bool] [generic bool]),
+			Eq        => &sig!([generic number, generic number] [generic bool]),
+			Neq       => &sig!([generic number, generic number] [generic bool]),
+			Less      => &sig!([generic number, generic number] [generic bool]),
+			LessEq    => &sig!([generic number, generic number] [generic bool]),
+			Greater   => &sig!([generic number, generic number] [generic bool]),
+			GreaterEq => &sig!([generic number, generic number] [generic bool]),
+		}
+	}
+
+	fn bytecodes(&self) -> &'static [Bytecode] {
+		use BinOpKind::*;
+		match self {
+			Add       => bc![Add],
+			Sub       => bc![Sub],
+			Mul       => bc![Mul],
+			Div       => bc![Div],
+			And       => bc![And],
+			Or        => bc![Or],
+			Xor       => bc![Xor],
+			Eq        => bc![Compare(Eq)],
+			Neq       => bc![Compare(Neq)],
+			Less      => bc![Compare(Less)],
+			LessEq    => bc![Compare(LessEq)],
+			Greater   => bc![Compare(Greater)],
+			GreaterEq => bc![Compare(GreaterEq)],
 		}
 	}
 }

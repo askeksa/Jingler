@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::iter::once;
 
 use crate::ast::*;
+use crate::bytecodes::*;
 use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES};
 use crate::compiler::{Compiler, CompileError};
 
@@ -45,7 +46,10 @@ pub struct ProcedureRef {
 /// Is this a built-in definition or declared in the program?
 #[derive(Clone, Debug)]
 pub enum ProcedureDefinition {
-	BuiltIn { signature: &'static Signature<'static> },
+	BuiltIn {
+		sig: &'static Signature<'static>,
+		bc: &'static [Bytecode],
+	},
 	Declaration { decl_index: usize },
 }
 
@@ -65,16 +69,16 @@ impl<'ast> Names<'ast> {
 		};
 
 		// Insert built-in functions and modules
-		for (name, sig) in BUILTIN_FUNCTIONS {
+		for (name, sig, bc) in BUILTIN_FUNCTIONS {
 			names.procedures.insert(name, ProcedureRef {
 				kind: ProcedureKind::Function,
-				definition: ProcedureDefinition::BuiltIn { signature: sig },
+				definition: ProcedureDefinition::BuiltIn { sig, bc },
 			});
 		}
 		for (name, sig) in BUILTIN_MODULES {
 			names.procedures.insert(name, ProcedureRef {
 				kind: ProcedureKind::Module,
-				definition: ProcedureDefinition::BuiltIn { signature: sig },
+				definition: ProcedureDefinition::BuiltIn { sig, bc: &[] },
 			});
 		}
 
