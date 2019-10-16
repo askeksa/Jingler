@@ -338,6 +338,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_statement(&mut self,
 			node: &mut Pattern<'ast>,
 			exp: &mut Expression<'ast>) {
+		let (current_kind, _, _) = self.signatures[self.current_decl_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
 			self.compiler.report_error(node,
@@ -346,11 +347,20 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 		let node_iter = node.items.iter_mut();
 		let exp_iter = exp_types.iter().chain(repeat(&TypeResult::Error));
+		let mut seen_static = false;
+		let mut seen_dynamic = false;
 		for (item, exp_type) in node_iter.zip(exp_iter) {
 			let mut node_type = item.item_type;
 			let result = match exp_type {
 				TypeResult::Type { inferred_type } => {
 					node_type.scope = node_type.scope.or(inferred_type.scope);
+					if current_kind != ProcedureKind::Function {
+						node_type.scope = node_type.scope.or(Some(Scope::Static));
+						match node_type.scope.unwrap() {
+							Scope::Static => seen_static = true,
+							Scope::Dynamic => seen_dynamic = true,
+						}
+					}
 					node_type.width = node_type.width.or(inferred_type.width);
 					node_type.value_type = node_type.value_type.or(inferred_type.value_type);
 					if inferred_type.assignable_to(&node_type) {
@@ -368,6 +378,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				},
 			};
 			self.make_ready(&item.variable, result);
+		}
+		if seen_static && seen_dynamic {
+			self.compiler.report_error(node,
+				"Can't have both static and dynamic in the same pattern.");
 		}
 	}
 

@@ -80,6 +80,7 @@ impl Type {
 	pub fn assignable_to(&self, to: &Type) -> bool {
 		let scope_ok = match (self.scope, to.scope) {
 			(Some(Scope::Static), Some(Scope::Dynamic)) => true,
+			(None, _) => true,
 			(from, to) => from == to,
 		};
 		let width_ok = match (self.value_type, self.width, to.width) {
