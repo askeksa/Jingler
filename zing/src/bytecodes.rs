@@ -105,3 +105,57 @@ pub enum Fopcode {
 	Fsin = 0xFE,
 	Fcos = 0xFF,
 }
+
+impl Bytecode {
+	pub fn stack_change(&self) -> (usize, usize) { // pops, pushes
+		use Bytecode::*;
+		match self {
+			Constant(..) => (0, 1),
+
+			Add | Sub | AddSub | Mul | Div => (2, 1),
+			And | AndNot | Or | Xor => (2, 1),
+			Min | Max | Compare(..) => (2, 1),
+			Sqrt | Round(..) => (1, 1),
+
+			Fputnext => (2, 1),
+			Fop(..) | Exp2Body | Fdone => (1, 1),
+
+			Expand => (1, 1),
+			SplitRL | SplitLR => (1, 2),
+			MergeLR => (2, 1),
+
+			Pop => (1, 0),
+			PopNext => (2, 1),
+			StackLoad(offset) => {
+				let offset = *offset as usize;
+				(offset + 1, offset + 2)
+			},
+			StackStore(offset) => {
+				let offset = *offset as usize;
+				(offset + 2, offset + 1)
+			},
+
+			CellInit => (1, 0),
+			CellRead => (0, 1),
+			CellStore(..) => (1, 0),
+			StateEnter | StateLeave => (0, 0),
+
+			BufferAlloc => (1, 1),
+			BufferLoad => (2, 1),
+			BufferStore => (3, 0),
+			BufferLength => (1, 1),
+
+			Proc => panic!("stack_change on 'proc'"),
+			Call(..) => panic!("stack_change on 'call'"),
+			CallInstrument => (0, 0),
+			Kill => (1, 0),
+			ReadNoteProperty(..) => (0, 1),
+
+			Cmp => (2, 2),
+			Label | Loop | If | EndIf => (0, 0),
+			Else => panic!("stack_change on 'else'"),
+
+			Random => (2, 1),
+		}
+	}
+}
