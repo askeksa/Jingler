@@ -7,6 +7,7 @@ use regex::Regex;
 use lalrpop_util::ParseError;
 
 use crate::ast::*;
+use crate::bytecodes::Bytecode;
 use crate::code_generator::generate_code;
 use crate::names::Names;
 use crate::type_inference::infer_types;
@@ -168,7 +169,7 @@ impl<'input> Location for Expression<'input> {
 	}
 }
 
-type CompilerOutput = String; // TODO: Sensible compile result
+type CompilerOutput = Vec<Bytecode>;
 
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
@@ -191,10 +192,7 @@ impl<'input> Compiler<'input> {
 		let signatures = infer_types(&mut program, &names, self)?;
 		let code = generate_code(&program, &names, signatures, self)?;
 
-		// TODO: Compile program
-
-		self.check_errors()?;
-		Ok(format!("{:?}", code))
+		Ok(code)
 	}
 
 	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {

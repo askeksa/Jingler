@@ -1,0 +1,8 @@
+[package]
+name = "zing-cmd"
+version = "0.1.0"
+authors = ["Aske Simon Christensen <askesc@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+zing = { path = "../zing" }
