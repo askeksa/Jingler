@@ -7,14 +7,15 @@ use crate::builtin::*;
 use crate::compiler::{CompileError, Compiler, Location};
 use crate::names::*;
 
-pub fn infer_types<'ast, 'input>(
+pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
-		compiler: &mut Compiler<'input>) -> Result<(), CompileError> {
+		compiler: &'comp mut Compiler<'input>)
+		-> Result<Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
 	type_inferrer.infer_bodies(program)?;
-	Ok(())
+	Ok(type_inferrer.signatures)
 }
 
 

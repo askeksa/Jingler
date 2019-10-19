@@ -4,6 +4,7 @@
 mod ast;
 #[macro_use] mod builtin;
 mod bytecodes;
+mod code_generator;
 mod compiler;
 mod names;
 mod pretty_print;

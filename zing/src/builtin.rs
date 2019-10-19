@@ -55,6 +55,7 @@ macro_rules! sig {
 	};
 }
 
+#[macro_export]
 macro_rules! bc {
 	{ $($b:expr),* } => {
 		{

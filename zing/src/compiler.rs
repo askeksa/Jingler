@@ -7,6 +7,7 @@ use regex::Regex;
 use lalrpop_util::ParseError;
 
 use crate::ast::*;
+use crate::code_generator::generate_code;
 use crate::names::Names;
 use crate::type_inference::infer_types;
 
@@ -187,12 +188,13 @@ impl<'input> Compiler<'input> {
 		let stripped_input = Rc::clone(&self.stripped_input);
 		let mut program = self.parse(&stripped_input)?;
 		let names = Names::find(&program, self)?;
-		infer_types(&mut program, &names, self)?;
+		let signatures = infer_types(&mut program, &names, self)?;
+		let code = generate_code(&program, &names, signatures, self)?;
 
 		// TODO: Compile program
 
 		self.check_errors()?;
-		Ok(program.to_string())
+		Ok(format!("{:?}", code))
 	}
 
 	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {
