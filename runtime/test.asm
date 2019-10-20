@@ -82,6 +82,27 @@ section musdat rdata align=1
 %define b(c) _snip_id_%+c
 
 MusicData:
+	; Number of tracks
+	db 1
+
+	; Velocity
+	dd 1
+	db 0x80
+	; Tone
+	dd 1
+	db 60, 64, 67, 72, 0x80
+	; Length
+	dd 5292
+	db 2, 1, 9, 1, 0x80
+	; Distance
+	dd 5292
+	db 4, 1, 1, 1, 0x80
+
+
+	; Music length
+	dd MUSIC_SPACE
+
+
 	; Global init
 	db b(proc)
 
@@ -108,27 +129,6 @@ MusicData:
 	db b(note_property)+NOTE_LENGTH, b(compare)+COMPARE_EQ, b(kill)
 
 	db b(proc), 0
-
-
-	; Music length
-	dd MUSIC_SPACE
-
-	; Number of tracks
-	db 1
-
-	; Velocity
-	dd 1
-	db 0x80
-	; Tone
-	dd 1
-	db 60, 64, 67, 72, 0x80
-	; Length
-	dd 5292
-	db 2, 1, 9, 1, 0x80
-	; Distance
-	dd 5292
-	db 4, 1, 1, 1, 0x80
-
 
 	; Constant pool
 	dd 0.0

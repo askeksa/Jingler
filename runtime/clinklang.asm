@@ -116,8 +116,55 @@ section ckmain text align=1
 
 ClinklangCompute:
 	mov			esi, [esp + 4]
-	mov			edi, GeneratedCode
 
+UnpackNotes:
+	mov			edx, 3 ; Component
+	xor			eax, eax
+	lodsb
+	xchg		ebp, eax ; Number of tracks
+
+.componentloop:
+	lodsd
+	push		eax ; Value factor
+
+	mov			edi, TrackStarts
+	mov			ebx, NoteHeaders
+	mov			ecx, ebp
+.trackloop:
+	mov			[edi], ebx
+	scasd
+
+.noteloop:
+	; Load value
+	xor			eax, eax
+	lodsb
+	cmp			al, 0x80
+	je			.next_track
+	jb			.bytevalue
+	not			al
+	mov			ah, al
+	lodsb
+.bytevalue:
+	imul		eax, [esp]
+	mov			[ebx + edx*4], eax
+	add			ebx, byte 16
+	jmp			.noteloop
+
+.next_track:
+	mov			dword [ebx], 0x80000000 ; Track terminator
+	add			ebx, byte 16
+	loop		.trackloop
+	pop			eax
+
+	dec			edx
+	jns			.componentloop
+
+RenderMusic:
+	lodsd
+	push		eax ; Music length
+
+GenerateCode:
+	mov			edi, GeneratedCode
 	mov			edx, OUT_S >> 4
 .mainloop:
 	xor			eax, eax
@@ -162,51 +209,6 @@ ClinklangCompute:
 	call		ebp
 	jmp			.mainloop
 .decode_done:
-
-UnpackNotes:
-	lodsd
-	push		eax ; Music length
-
-	mov			edx, 3 ; Component
-	xor			eax, eax
-	lodsb
-	xchg		ebp, eax ; Number of tracks
-
-.componentloop:
-	lodsd
-	push		eax ; Value factor
-
-	mov			edi, TrackStarts
-	mov			ebx, NoteHeaders
-	mov			ecx, ebp
-.trackloop:
-	mov			[edi], ebx
-	scasd
-
-.noteloop:
-	; Load value
-	xor			eax, eax
-	lodsb
-	cmp			al, 0x80
-	je			.next_track
-	jb			.bytevalue
-	not			al
-	mov			ah, al
-	lodsb
-.bytevalue:
-	imul		eax, [esp]
-	mov			[ebx + edx*4], eax
-	add			ebx, byte 16
-	jmp			.noteloop
-
-.next_track:
-	mov			dword [ebx], 0x80000000 ; Track terminator
-	add			ebx, byte 16
-	loop		.trackloop
-	pop			eax
-
-	dec			edx
-	jns			.componentloop
 
 	; ESI = Constant pool
 RunGeneratedCode:
