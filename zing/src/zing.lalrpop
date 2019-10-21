@@ -33,20 +33,15 @@ PatternItems: Vec<PatternItem<'input>> = {
 };
 
 PatternItem: PatternItem<'input> = {
-	<variable:PatternVariable> => PatternItem {
-		variable,
+	<name:Id> => PatternItem {
+		name,
 		item_type: Type::default(),
 	},
-	<variable:PatternVariable> <item_type:ExplicitType> => PatternItem {<>},
+	<name:Id> <item_type:ExplicitType> => PatternItem {<>},
 };
 
 ExplicitType: Type = {
 	":" <scope:Scope?> <width:Width?> <value_type:ValueType?> => Type {<>},
-};
-
-PatternVariable: PatternVariable<'input> = {
-	<name:Id> => PatternVariable::Variable {<>},
-	"[" <left:Id> "," <right:Id> "]" => PatternVariable::Split {<>},
 };
 
 Scope: Scope = {

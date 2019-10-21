@@ -177,10 +177,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									item.clone()
 								} else {
 									PatternItem {
-										variable: PatternVariable::Variable {
-											name: Id {
-												text: "#dummy#", before: item.variable.pos_before()
-											}
+										name: Id {
+											text: "#dummy#", before: item.name.pos_before()
 										},
 										item_type: item.item_type,
 									}
@@ -217,8 +215,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 		let mut process = |pred: &dyn Fn(ProcedureKind, &str) -> bool, step: usize| {
 			for (decl_index, decl) in program.declarations.iter().enumerate() {
-				let Declaration::Procedure { kind, name, .. } = decl;
-				if pred(*kind, name.text) {
+				let Declaration::Procedure { kind, name: proc_name, .. } = decl;
+				if pred(*kind, proc_name.text) {
 					let id = self.proc_for_id.len() as u16;
 					self.proc_id[decl_index] = id;
 					for _ in 0..step {
@@ -301,15 +299,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn add_stack_indices(&mut self, pattern: &Pattern<'ast>, scope: Option<Scope>, adjust_stack: bool) {
 		for item in &pattern.items {
 			if scope.is_none() || item.item_type.scope == scope {
-				match &item.variable {
-					PatternVariable::Variable { name } => {
-						self.stack_index.insert(name.text, self.next_stack_index);
-						self.next_stack_index += 1;
-					},
-					PatternVariable::Split { .. } => {
-						self.unsupported(&item.variable, "split");
-					},
-				}
+				self.stack_index.insert(item.name.text, self.next_stack_index);
+				self.next_stack_index += 1;
 				if adjust_stack {
 					self.stack_height += 1;
 				}
@@ -341,14 +332,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern<'ast>) {
 		for item in &outputs.items {
-			match &item.variable {
-				PatternVariable::Variable { name } => {
-					self.mark_implicit_cell(name);
-				},
-				PatternVariable::Split { .. } => {
-					self.unsupported(&item.variable, "split");
-				},
-			}
+			self.mark_implicit_cell(&item.name);
 		}
 	}
 
@@ -455,15 +439,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn stack_adjust_from_outputs(&mut self, outputs: &'ast Pattern<'ast>) -> Vec<usize> {
 		let mut stack_adjust = vec![];
 		for item in &outputs.items {
-			match &item.variable {
-				PatternVariable::Variable { name } => {
-					let index = self.stack_index[name.text];
-					stack_adjust.push(index);
-				},
-				PatternVariable::Split { .. } => {
-					self.unsupported(&item.variable, "split");
-				},
-			}
+			let index = self.stack_index[item.name.text];
+			stack_adjust.push(index);
 		}
 		stack_adjust
 	}

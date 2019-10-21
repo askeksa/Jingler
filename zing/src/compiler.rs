@@ -143,22 +143,6 @@ impl<A: Location, B:Location> Location for (A, B) {
 	fn pos_after(&self) -> usize { self.1.pos_after() }
 }
 
-impl<'input> Location for PatternVariable<'input> {
-	fn pos_before(&self) -> usize {
-		match self {
-			PatternVariable::Variable { name } => name.pos_before(),
-			PatternVariable::Split { left, .. } => left.pos_before(),
-		}
-	}
-
-	fn pos_after(&self) -> usize {
-		match self {
-			PatternVariable::Variable { name } => name.pos_after(),
-			PatternVariable::Split { right, .. } => right.pos_after(),
-		}
-	}
-}
-
 impl<'input> Location for Expression<'input> {
 	fn pos_before(&self) -> usize {
 		self.pos_before()

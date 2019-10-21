@@ -19,7 +19,6 @@ pub struct Names<'ast> {
 pub struct VariableRef {
 	pub kind: VariableKind,
 	pub tuple_index: usize,
-	pub channel: ChannelKind,
 }
 
 /// Location of the pattern this variable occurs in: input or node.
@@ -27,13 +26,6 @@ pub struct VariableRef {
 pub enum VariableKind {
 	Input,
 	Node { body_index: usize },
-}
-
-/// Is this variable referring directly to a value or is it one side of a split?
-#[derive(Clone, Copy, Debug)]
-pub enum ChannelKind {
-	Single,
-	Side { side_index: usize }
 }
 
 /// A reference to a top-level module, function or instrument.
@@ -84,12 +76,12 @@ impl<'ast> Names<'ast> {
 
 		// Run through all declarattions in the program
 		for (decl_index, decl) in program.declarations.iter().enumerate() {
-			let Declaration::Procedure { kind, name, inputs, body, .. } = decl;
+			let Declaration::Procedure { kind, name: proc_name, inputs, body, .. } = decl;
 			let proc_ref = ProcedureRef {
 				kind: *kind,
 				definition: ProcedureDefinition::Declaration { decl_index },
 			};
-			names.insert_procedure(program, compiler, name, proc_ref);
+			names.insert_procedure(program, compiler, proc_name, proc_ref);
 
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
@@ -100,26 +92,11 @@ impl<'ast> Names<'ast> {
 			});
 			for (variable_kind, node) in once(input).chain(nodes) {
 				for (tuple_index, item) in node.items.iter().enumerate() {
-					match &item.variable {
-						PatternVariable::Variable { name } => {
-							let var_ref = VariableRef {
-								kind: variable_kind,
-								tuple_index,
-								channel: ChannelKind::Single,
-							};
-							names.insert_variable(program, compiler, decl_index, name, var_ref);
-						},
-						PatternVariable::Split { left, right } => {
-							for (side_index, side_name) in [left, right].iter().enumerate() {
-								let var_ref = VariableRef {
-									kind: variable_kind,
-									tuple_index,
-									channel: ChannelKind::Side { side_index },
-								};
-								names.insert_variable(program, compiler, decl_index, side_name, var_ref);
-							}
-						},
-					}
+					let var_ref = VariableRef {
+						kind: variable_kind,
+						tuple_index,
+					};
+					names.insert_variable(program, compiler, decl_index, &item.name, var_ref);
 				}
 			}
 		}
@@ -164,13 +141,7 @@ impl<'ast> Names<'ast> {
 					}
 				},
 			};
-			let existing_name = match (&pattern.items[existing.tuple_index].variable, existing.channel) {
-				(PatternVariable::Variable { name }, ChannelKind::Single) => name,
-				(PatternVariable::Split { left, right }, ChannelKind::Side { side_index }) => {
-					[left, right][side_index]
-				},
-				_ => panic!("Mismatch between PatternVariable and ChannelKind"),
-			};
+			let existing_name = &pattern.items[existing.tuple_index].name;
 			compiler.report_context(existing_name, "Previously defined here.");
 		}).or_insert(var_ref);
 	}

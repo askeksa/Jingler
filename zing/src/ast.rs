@@ -38,14 +38,8 @@ pub struct Pattern<'input> {
 
 #[derive(Clone, Debug)]
 pub struct PatternItem<'input> {
-	pub variable: PatternVariable<'input>,
+	pub name: Id<'input>,
 	pub item_type: Type,
-}
-
-#[derive(Clone, Debug)]
-pub enum PatternVariable<'input> {
-	Variable { name: Id<'input> },
-	Split { left: Id<'input>, right: Id<'input> },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

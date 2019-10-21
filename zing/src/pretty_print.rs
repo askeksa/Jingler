@@ -56,19 +56,9 @@ impl<'input> Display for Statement<'input> {
 
 impl<'input> Display for PatternItem<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		write!(f, "{}", self.variable)?;
+		write!(f, "{}", self.name)?;
 		write!(f, "{}", self.item_type)?;
 		Ok(())
-	}
-}
-
-impl<'input> Display for PatternVariable<'input> {
-	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		use PatternVariable::*;
-		match self {
-			Variable { name } => write!(f, "{}", name),
-			Split { left, right } => write!(f, "[{}, {}]", left, right),
-		}
 	}
 }
 

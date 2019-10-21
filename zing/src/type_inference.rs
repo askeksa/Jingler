@@ -51,14 +51,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	pub fn infer_signatures(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
 		for decl in &mut program.declarations {
-			let Declaration::Procedure { kind, name, inputs, outputs, .. } = decl;
+			let Declaration::Procedure { kind, name: proc_name, inputs, outputs, .. } = decl;
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
 			let mut seen_generic_input = false;
 			let input_iter = repeat(false).zip(&mut inputs.items);
 			let output_iter = repeat(true).zip(&mut outputs.items);
 			for (is_output, item) in input_iter.chain(output_iter) {
-				let PatternItem { variable, item_type } = item;
+				let PatternItem { name: variable_name, item_type } = item;
 				match kind {
 					// Module inputs/outputs default to dynamic stereo number, and only
 					// inputs can be static.
@@ -66,7 +66,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						item_type.scope = item_type.scope.or(Some(Scope::Dynamic));
 						if is_output {
 							if let Some(Scope::Static) = item_type.scope {
-								self.compiler.report_error(&*variable,
+								self.compiler.report_error(&*variable_name,
 									"Module outputs can't be static.");
 							}
 						}
@@ -77,7 +77,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					// static/dynamic distinction.
 					ProcedureKind::Function => {
 						if item_type.scope.is_some() {
-							self.compiler.report_error(&*variable,
+							self.compiler.report_error(&*variable_name,
 								"Function inputs or outputs can't be marked static or dynamic.");
 						}
 						item_type.width = item_type.width.or(Some(Width::Stereo));
@@ -93,7 +93,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						if is_output {
 							match item_type.scope.unwrap() {
 								Scope::Static => {
-									self.compiler.report_error(&*variable,
+									self.compiler.report_error(&*variable_name,
 										"Instrument outputs can't be static.");
 								},
 								Scope::Dynamic => {
@@ -102,11 +102,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 										item_type.width = item_type.width.or(input.width);
 										item_type.value_type = item_type.value_type.or(input.value_type);
 										if item_type != input {
-											self.compiler.report_error(&*variable,
+											self.compiler.report_error(&*variable_name,
 												"Instrument output type doesn't match the corresponding input.");
 										}
 									} else if output_count == instrument_types.len() {
-										self.compiler.report_error(&*variable,
+										self.compiler.report_error(&*variable_name,
 											"Instrument has more outputs than dynamic inputs.");
 									}
 									output_count += 1;
@@ -118,7 +118,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							match item_type.scope.unwrap() {
 								Scope::Static => {
 									if !instrument_types.is_empty() {
-										self.compiler.report_error(&*variable,
+										self.compiler.report_error(&*variable_name,
 											"Static instrument inputs can't come after dynamic inputs.");
 									}
 								},
@@ -132,7 +132,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				if item_type.width == Some(Width::Generic) {
 					if is_output {
 						if !seen_generic_input {
-							self.compiler.report_error(&*variable,
+							self.compiler.report_error(&*variable_name,
 								"Outputs can't be generic when none of the inputs are generic.");
 						}
 					} else {
@@ -141,7 +141,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 			}
 			if output_count < instrument_types.len() {
-				self.compiler.report_error(&*name, "Instrument has fewer outputs than dynamic inputs.");
+				self.compiler.report_error(&*proc_name, "Instrument has fewer outputs than dynamic inputs.");
 			}
 
 			// Extract signature
@@ -171,32 +171,19 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	fn check_outputs(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
 		let Declaration::Procedure { outputs, .. } = decl;
-		for output in &outputs.items {
-			let mut check_output = |name: &Id<'ast>, output_type: &Type| {
-				match self.ready.get(name.text) {
-					Some(&TypeResult::Type { inferred_type }) => {
-						if !inferred_type.assignable_to(output_type) {
-							self.compiler.report_error(name,
-								format!("Expression of type{} can't be assigned to output '{}'{}.",
-								inferred_type, name, output_type));
-						}
-					},
-					Some(&TypeResult::Error) => {},
-					None => {
-						self.compiler.report_error(name,
-							format!("No assignment to output '{}'.", name));
-					},
-				}
-			};
-			match &output.variable {
-				PatternVariable::Variable { name } => {
-					check_output(name, &output.item_type);
+		for PatternItem { name: variable_name, item_type } in &outputs.items {
+			match self.ready.get(variable_name.text) {
+				Some(&TypeResult::Type { inferred_type }) => {
+					if !inferred_type.assignable_to(item_type) {
+						self.compiler.report_error(variable_name,
+							format!("Expression of type{} can't be assigned to output '{}'{}.",
+							inferred_type, variable_name, item_type));
+					}
 				},
-				PatternVariable::Split { left, right } => {
-					let mut side_type = output.item_type;
-					side_type.width = Some(Width::Mono);
-					check_output(left, &side_type);
-					check_output(right, &side_type);
+				Some(&TypeResult::Error) => {},
+				None => {
+					self.compiler.report_error(variable_name,
+						format!("No assignment to output '{}'.", variable_name));
 				},
 			}
 		}
@@ -205,10 +192,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_body(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
-		let Declaration::Procedure { kind, name, inputs, body, .. } = decl;
-		self.current_is_main = name.text == "main";
+		let Declaration::Procedure { kind, name: proc_name, inputs, body, .. } = decl;
+		self.current_is_main = proc_name.text == "main";
 		if self.current_is_main && *kind != ProcedureKind::Module {
-			self.compiler.report_error(&*name, "'main' must be a module.");
+			self.compiler.report_error(&*proc_name, "'main' must be a module.");
 		}
 
 		// Record dependencies of all statements and mark inputs and fully typed
@@ -240,7 +227,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				// There are cycles. Require width and infer rest of type.
 				for (body_index, Statement::Assign { node, .. }) in body.iter_mut().enumerate() {
 					if !done[body_index] {
-						for PatternItem { variable, item_type } in &mut node.items {
+						for PatternItem { name: variable_name, item_type } in &mut node.items {
 							let Type { scope, width, value_type } = item_type;
 							if *kind != ProcedureKind::Function {
 								if scope.is_none() {
@@ -248,7 +235,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 								}
 							}
 							if width.is_none() {
-								self.compiler.report_error(&*variable,
+								self.compiler.report_error(&*variable_name,
 									"Variables depending on a cycle must specify explict width (mono, stereo or generic).");
 								*width = Some(Width::Stereo);
 							}
@@ -268,25 +255,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn find_ready(&mut self,
 			proc_kind: ProcedureKind,
 			pattern: &mut Pattern<'ast>) {
-		for PatternItem { variable, item_type } in &mut pattern.items {
+		for PatternItem { name: variable_name, item_type } in &mut pattern.items {
 			let Type { scope, width, value_type } = item_type;
-			// A split pattern can only be used for stereo values, and buffer
-			// values can't be split.
-			if let PatternVariable::Split { .. } = variable {
-				if width.is_none() {
-					*width = Some(Width::Stereo);
-				} else if *width != Some(Width::Stereo) {
-					self.compiler.report_error(&*variable, "Only stereo values can be split.");
-				}
-				if *value_type == Some(ValueType::Buffer) {
-					self.compiler.report_error(&*variable, "Buffer values can't be split.");
-				}
-			}
 			// Mark variable ready if it is fully typed.
 			let is_ready = match proc_kind {
 				ProcedureKind::Function => {
 					if scope.is_some() {
-						self.compiler.report_error(&*variable,
+						self.compiler.report_error(&*variable_name,
 							"Variables in functions can't be marked static or dynamic.");
 					}
 					width.is_some() && value_type.is_some()
@@ -294,26 +269,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				_ => scope.is_some() && width.is_some() && value_type.is_some(),
 			};
 			if is_ready {
-				self.make_ready(variable, TypeResult::Type {
+				self.ready.insert(variable_name.text, TypeResult::Type {
 					inferred_type: *item_type,
 				});
-			}
-		}
-	}
-
-	fn make_ready(&mut self,
-			variable: &PatternVariable<'ast>,
-			mut result: TypeResult) {
-		match variable {
-			PatternVariable::Variable { name } => {
-				self.ready.insert(name.text, result);
-			},
-			PatternVariable::Split { left, right } => {
-				if let TypeResult::Type { inferred_type } = &mut result {
-					inferred_type.width = Some(Width::Mono);
-				}
-				self.ready.insert(left.text, result);
-				self.ready.insert(right.text, result);
 			}
 		}
 	}
@@ -322,14 +280,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			exp: &Expression<'ast>,
 			dependencies: &mut HashSet<&'ast str>) {
 		exp.traverse_pre(&mut |exp| {
-			if let Expression::Variable { name } = exp {
-				match self.names.lookup_variable(self.current_decl_index, name.text) {
+			if let Expression::Variable { name: variable_name } = exp {
+				match self.names.lookup_variable(self.current_decl_index, variable_name.text) {
 					Some(..) => {
-						dependencies.insert(name.text);
+						dependencies.insert(variable_name.text);
 					},
 					None => {
-						self.compiler.report_error(name,
-							format!("Variable not found: '{}'.", name));
+						self.compiler.report_error(variable_name,
+							format!("Variable not found: '{}'.", variable_name));
 					},
 				}
 			}
@@ -368,9 +326,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						item.item_type = node_type;
 						TypeResult::Type { inferred_type: node_type }
 					} else {
-						self.compiler.report_error(&item.variable,
+						self.compiler.report_error(&item.name,
 							format!("Expression of type{} can't be assigned to '{}'{}.",
-								inferred_type, item.variable, item.item_type));
+								inferred_type, item.name, item.item_type));
 						TypeResult::Error
 					}
 				},
@@ -378,7 +336,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					TypeResult::Error
 				},
 			};
-			self.make_ready(&item.variable, result);
+			self.ready.insert(item.name.text, result);
 		}
 		if seen_static && seen_dynamic {
 			self.compiler.report_error(node,
