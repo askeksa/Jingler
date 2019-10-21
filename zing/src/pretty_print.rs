@@ -4,27 +4,22 @@ use crate::ast::*;
 
 impl<'input> Display for Program<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		for declaration in &self.declarations {
-			write!(f, "\n{}", declaration)?;
+		for procedure in &self.procedures {
+			write!(f, "\n{}", procedure)?;
 		}
 		Ok(())
 	}
 }
 
-impl<'input> Display for Declaration<'input> {
+impl<'input> Display for Procedure<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		use Declaration::*;
-		match self {
-			Procedure { kind, name, inputs, outputs, body } => {
-				write!(f, "{} {}", kind, name)?;
-				fmt_parenthesized_list(f, &inputs.items)?;
-				write!(f, " -> ")?;
-				fmt_parenthesized_list(f, &outputs.items)?;
-				write!(f, "\n")?;
-				for statement in body {
-					write!(f, "    {}\n", statement)?;
-				}
-			},
+		write!(f, "{} {}", self.kind, self.name)?;
+		fmt_parenthesized_list(f, &self.inputs.items)?;
+		write!(f, " -> ")?;
+		fmt_parenthesized_list(f, &self.outputs.items)?;
+		write!(f, "\n")?;
+		for statement in &self.body {
+			write!(f, "    {}\n", statement)?;
 		}
 		Ok(())
 	}

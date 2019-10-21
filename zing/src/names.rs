@@ -42,7 +42,7 @@ pub enum ProcedureDefinition {
 		sig: &'static Signature<'static>,
 		bc: &'static [Bytecode],
 	},
-	Declaration { decl_index: usize },
+	Declaration { proc_index: usize },
 }
 
 /// Signature of a procedure or operator.
@@ -57,7 +57,7 @@ impl<'ast> Names<'ast> {
 	pub fn find(program: &Program<'ast>, compiler: &mut Compiler) -> Result<Names<'ast>, CompileError> {
 		let mut names = Names {
 			procedures: HashMap::new(),
-			variables: vec![HashMap::new(); program.declarations.len()],
+			variables: vec![HashMap::new(); program.procedures.len()],
 		};
 
 		// Insert built-in functions and modules
@@ -74,20 +74,19 @@ impl<'ast> Names<'ast> {
 			});
 		}
 
-		// Run through all declarattions in the program
-		for (decl_index, decl) in program.declarations.iter().enumerate() {
-			let Declaration::Procedure { kind, name: proc_name, inputs, body, .. } = decl;
+		// Run through all procedures in the program
+		for (proc_index, proc) in program.procedures.iter().enumerate() {
 			let proc_ref = ProcedureRef {
-				kind: *kind,
-				definition: ProcedureDefinition::Declaration { decl_index },
+				kind: proc.kind,
+				definition: ProcedureDefinition::Declaration { proc_index },
 			};
-			names.insert_procedure(program, compiler, proc_name, proc_ref);
+			names.insert_procedure(program, compiler, &proc.name, proc_ref);
 
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
-			let input = (VariableKind::Input, inputs);
-			let nodes = (0..body.len()).map(|body_index| {
-				let Statement::Assign { ref node, .. } = body[body_index];
+			let input = (VariableKind::Input, &proc.inputs);
+			let nodes = (0..proc.body.len()).map(|body_index| {
+				let Statement::Assign { ref node, .. } = proc.body[body_index];
 				(VariableKind::Node { body_index }, node)
 			});
 			for (variable_kind, node) in once(input).chain(nodes) {
@@ -96,7 +95,7 @@ impl<'ast> Names<'ast> {
 						kind: variable_kind,
 						tuple_index,
 					};
-					names.insert_variable(program, compiler, decl_index, &item.name, var_ref);
+					names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
 				}
 			}
 		}
@@ -114,13 +113,10 @@ impl<'ast> Names<'ast> {
 						format!("The {} '{}' has the same name as a built-in {}.",
 							proc_ref.kind, name, existing.kind));
 				},
-				ProcedureDefinition::Declaration { decl_index } => {
+				ProcedureDefinition::Declaration { proc_index } => {
 					compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
-					match program.declarations[decl_index] {
-						Declaration::Procedure { name: ref existing_name, .. } => {
-							compiler.report_context(existing_name, "Previously defined here.");
-						},
-					}
+					let existing_name = &program.procedures[proc_index].name;
+					compiler.report_context(existing_name, "Previously defined here.");
 				},
 			}
 		}).or_insert(proc_ref);
@@ -128,17 +124,14 @@ impl<'ast> Names<'ast> {
 
 	fn insert_variable(&mut self,
 			program: &Program<'ast>, compiler: &mut Compiler,
-			decl_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
-		self.variables[decl_index].entry(name.text).and_modify(|existing| {
+			proc_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
+		self.variables[proc_index].entry(name.text).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
-			let pattern = match &program.declarations[decl_index] {
-				Declaration::Procedure { inputs, body, .. } => {
-					match existing.kind {
-						VariableKind::Input => inputs,
-						VariableKind::Node { body_index } => match body[body_index] {
-							Statement::Assign { ref node, .. } => node,
-						},
-					}
+			let proc = &program.procedures[proc_index];
+			let pattern = match existing.kind {
+				VariableKind::Input => &proc.inputs,
+				VariableKind::Node { body_index } => match proc.body[body_index] {
+					Statement::Assign { ref node, .. } => node,
 				},
 			};
 			let existing_name = &pattern.items[existing.tuple_index].name;
@@ -151,8 +144,8 @@ impl<'ast> Names<'ast> {
 		self.procedures.get(name)
 	}
 
-	/// Look up a variable by name inside a specific declaration.
-	pub fn lookup_variable(&self, decl_index: usize, name: &str) -> Option<&VariableRef> {
-		self.variables[decl_index].get(name)
+	/// Look up a variable by name inside a specific procedure.
+	pub fn lookup_variable(&self, proc_index: usize, name: &str) -> Option<&VariableRef> {
+		self.variables[proc_index].get(name)
 	}
 }

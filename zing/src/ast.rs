@@ -3,18 +3,16 @@ type Pos = usize;
 
 #[derive(Clone, Debug)]
 pub struct Program<'input> {
-	pub declarations: Vec<Declaration<'input>>,
+	pub procedures: Vec<Procedure<'input>>,
 }
 
 #[derive(Clone, Debug)]
-pub enum Declaration<'input> {
-	Procedure {
-		kind: ProcedureKind,
-		name: Id<'input>,
-		inputs: Pattern<'input>,
-		outputs: Pattern<'input>,
-		body: Vec<Statement<'input>>,
-	},
+pub struct Procedure<'input> {
+	pub kind: ProcedureKind,
+	pub name: Id<'input>,
+	pub inputs: Pattern<'input>,
+	pub outputs: Pattern<'input>,
+	pub body: Vec<Statement<'input>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

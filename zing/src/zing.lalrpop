@@ -9,12 +9,12 @@ use crate::ast::*;
 grammar;
 
 pub Program: Program<'input> = {
-	<declarations:Declaration*> => Program {<>},
+	<procedures:Procedure*> => Program {<>},
 };
 
-Declaration: Declaration<'input> = {
+Procedure: Procedure<'input> = {
 	<kind:ProcedureKind> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
-		=> Declaration::Procedure {<>},
+		=> Procedure {<>},
 };
 
 ProcedureKind: ProcedureKind = {

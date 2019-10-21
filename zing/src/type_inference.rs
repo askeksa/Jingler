@@ -26,7 +26,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
-	current_decl_index: usize,
+	current_proc_index: usize,
 	current_is_main: bool,
 }
 
@@ -44,22 +44,21 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			compiler,
 			signatures: vec![],
 			ready: HashMap::new(),
-			current_decl_index: 0,
+			current_proc_index: 0,
 			current_is_main: false,
 		}
 	}
 
 	pub fn infer_signatures(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
-		for decl in &mut program.declarations {
-			let Declaration::Procedure { kind, name: proc_name, inputs, outputs, .. } = decl;
+		for proc in &mut program.procedures {
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
 			let mut seen_generic_input = false;
-			let input_iter = repeat(false).zip(&mut inputs.items);
-			let output_iter = repeat(true).zip(&mut outputs.items);
+			let input_iter = repeat(false).zip(&mut proc.inputs.items);
+			let output_iter = repeat(true).zip(&mut proc.outputs.items);
 			for (is_output, item) in input_iter.chain(output_iter) {
 				let PatternItem { name: variable_name, item_type } = item;
-				match kind {
+				match proc.kind {
 					// Module inputs/outputs default to dynamic stereo number, and only
 					// inputs can be static.
 					ProcedureKind::Module => {
@@ -141,37 +140,35 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 			}
 			if output_count < instrument_types.len() {
-				self.compiler.report_error(&*proc_name, "Instrument has fewer outputs than dynamic inputs.");
+				self.compiler.report_error(&proc.name, "Instrument has fewer outputs than dynamic inputs.");
 			}
 
 			// Extract signature
-			let Declaration::Procedure { kind, inputs, outputs, .. } = decl;
-			let input_types = inputs.items.iter().map(|item| {
+			let input_types = proc.inputs.items.iter().map(|item| {
 				let mut input_type = item.item_type;
-				if *kind == ProcedureKind::Instrument {
+				if proc.kind == ProcedureKind::Instrument {
 					// Seen from the outside, all instrument inputs are dynamic.
 					input_type.scope = Some(Scope::Dynamic);
 				}
 				input_type
 			}).collect();
-			let output_types = outputs.items.iter().map(|item| item.item_type).collect();
-			self.signatures.push((*kind, input_types, output_types));
+			let output_types = proc.outputs.items.iter().map(|item| item.item_type).collect();
+			self.signatures.push((proc.kind, input_types, output_types));
 		}
 		self.compiler.check_errors()
 	}
 
 	pub fn infer_bodies(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
-		for (decl_index, decl) in program.declarations.iter_mut().enumerate() {
-			self.current_decl_index = decl_index;
-			self.infer_body(decl)?;
-			self.check_outputs(decl)?;
+		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
+			self.current_proc_index = proc_index;
+			self.infer_body(proc)?;
+			self.check_outputs(proc)?;
 		}
 		Ok(())
 	}
 
-	fn check_outputs(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
-		let Declaration::Procedure { outputs, .. } = decl;
-		for PatternItem { name: variable_name, item_type } in &outputs.items {
+	fn check_outputs(&mut self, proc: &mut Procedure<'ast>) -> Result<(), CompileError> {
+		for PatternItem { name: variable_name, item_type } in &proc.outputs.items {
 			match self.ready.get(variable_name.text) {
 				Some(&TypeResult::Type { inferred_type }) => {
 					if !inferred_type.assignable_to(item_type) {
@@ -191,30 +188,29 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.compiler.check_errors()
 	}
 
-	fn infer_body(&mut self, decl: &mut Declaration<'ast>) -> Result<(), CompileError> {
-		let Declaration::Procedure { kind, name: proc_name, inputs, body, .. } = decl;
-		self.current_is_main = proc_name.text == "main";
-		if self.current_is_main && *kind != ProcedureKind::Module {
-			self.compiler.report_error(&*proc_name, "'main' must be a module.");
+	fn infer_body(&mut self, proc: &mut Procedure<'ast>) -> Result<(), CompileError> {
+		self.current_is_main = proc.name.text == "main";
+		if self.current_is_main && proc.kind != ProcedureKind::Module {
+			self.compiler.report_error(&proc.name, "'main' must be a module.");
 		}
 
 		// Record dependencies of all statements and mark inputs and fully typed
 		// variables as ready.
 		// A statement can be inferred when all its dependencies are ready.
 		self.ready.clear();
-		let mut dependencies = vec![HashSet::new(); body.len()];
-		self.find_ready(*kind, inputs);
-		for (body_index, Statement::Assign { node, exp }) in body.iter_mut().enumerate() {
+		let mut dependencies = vec![HashSet::new(); proc.body.len()];
+		self.find_ready(proc.kind, &mut proc.inputs);
+		for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
 			self.find_dependencies(exp, &mut dependencies[body_index]);
-			self.find_ready(*kind, node);
+			self.find_ready(proc.kind, node);
 		}
 		self.compiler.check_errors()?;
 
-		let mut done = vec![false; body.len()];
+		let mut done = vec![false; proc.body.len()];
 		let mut done_count = 0;
-		while done_count < body.len() {
+		while done_count < proc.body.len() {
 			let mut changed = false;
-			for (body_index, Statement::Assign { node, exp }) in body.iter_mut().enumerate() {
+			for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
 				if !done[body_index] && dependencies[body_index].iter()
 						.all(|name| self.ready.contains_key(name)) {
 					self.infer_statement(node, exp);
@@ -225,11 +221,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			}
 			if !changed {
 				// There are cycles. Require width and infer rest of type.
-				for (body_index, Statement::Assign { node, .. }) in body.iter_mut().enumerate() {
+				for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
 					if !done[body_index] {
 						for PatternItem { name: variable_name, item_type } in &mut node.items {
 							let Type { scope, width, value_type } = item_type;
-							if *kind != ProcedureKind::Function {
+							if proc.kind != ProcedureKind::Function {
 								if scope.is_none() {
 									*scope = Some(Scope::Dynamic);
 								}
@@ -243,7 +239,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 								*value_type = Some(ValueType::Number);
 							}
 						}
-						self.find_ready(*kind, node);
+						self.find_ready(proc.kind, node);
 					}
 				}
 			}
@@ -281,7 +277,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			dependencies: &mut HashSet<&'ast str>) {
 		exp.traverse_pre(&mut |exp| {
 			if let Expression::Variable { name: variable_name } = exp {
-				match self.names.lookup_variable(self.current_decl_index, variable_name.text) {
+				match self.names.lookup_variable(self.current_proc_index, variable_name.text) {
 					Some(..) => {
 						dependencies.insert(variable_name.text);
 					},
@@ -297,7 +293,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_statement(&mut self,
 			node: &mut Pattern<'ast>,
 			exp: &mut Expression<'ast>) {
-		let (current_kind, _, _) = self.signatures[self.current_decl_index];
+		let (current_kind, _, _) = self.signatures[self.current_proc_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
 			self.compiler.report_error(node,
@@ -455,7 +451,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			Some(ProcedureRef { kind, definition }) => {
 				match kind {
 					ProcedureKind::Module => {
-						let (current_kind, _, _) = self.signatures[self.current_decl_index];
+						let (current_kind, _, _) = self.signatures[self.current_proc_index];
 						if current_kind == ProcedureKind::Function {
 							self.compiler.report_error(name,
 								"Modules can't be called from functions.");
@@ -473,8 +469,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					ProcedureDefinition::BuiltIn { sig, .. } => {
 						self.check_call_signature(sig, &operands, loc)
 					}
-					ProcedureDefinition::Declaration { decl_index } => {
-						let (_, ref inputs, ref outputs) = self.signatures[*decl_index].clone();
+					ProcedureDefinition::Declaration { proc_index } => {
+						let (_, ref inputs, ref outputs) = self.signatures[*proc_index].clone();
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, &operands, loc)
 					},
