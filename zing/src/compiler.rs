@@ -2,7 +2,7 @@
 use std::mem::replace;
 use std::rc::Rc;
 
-use regex::Regex;
+use regex::{Captures, Regex};
 
 use lalrpop_util::ParseError;
 
@@ -18,7 +18,7 @@ lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 pub struct Compiler<'input> {
 	filename: &'input str,
 	raw_input: &'input str,
-	stripped_input: Rc<str>, // Comments removed
+	processed_input: Rc<str>, // Comments removed, semicolons added
 	messages: Vec<Message>,
 
 	r_line_break: Regex,
@@ -33,6 +33,7 @@ pub struct Message {
 	length: usize,
 	text: String,
 	source_line: String,
+	marker_max_length: usize,
 }
 
 impl Message {
@@ -94,9 +95,13 @@ impl Iterator for CompileError {
 		self.index += 1;
 		self.messages.get(index).map(|msg| {
 			let line = &msg.source_line;
-			let line_until_marker = &line[..line.len().min(msg.column)];
+			let line_until_marker = &line[..msg.column];
 			let indent = self.r_not_tab.replace_all(line_until_marker, " ");
-			let marker = "^".repeat(msg.length);
+			let marker = if msg.length <= msg.marker_max_length {
+				"^".repeat(msg.length)
+			} else {
+				"^".repeat(msg.marker_max_length) + "..."
+			};
 			format!("{}:{}:{}: {}: {}\n\n{}\n{}{}\n",
 				self.filename, msg.line + 1, msg.column + 1,
 				msg.category.as_text(), msg.text,
@@ -157,21 +162,36 @@ type CompilerOutput = Vec<Bytecode>;
 
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
-		let strip_comments = Regex::new(r"//[^\r\n]*").unwrap();
-		let stripped_input = Rc::from(strip_comments.replace_all(raw_input, "").as_ref());
+		let r_process = Regex::new(r"(?m:^(?:([ \t]*)([^#]+?)([;\\]?))?[ \t]*(?:#.*)?\r?$)").unwrap();
+		let process_fn = |caps: &Captures| -> String {
+			match (caps.get(1), caps.get(2), caps.get(3)) {
+				(Some(indent), Some(text), Some(term)) => {
+					// Insert semicolon if line is indented and does not end with
+					// a semicolon or backslash. Remove trailing backslash.
+					let semi = match (indent.as_str(), term.as_str()) {
+						("", _) => term.as_str(),
+						(_, "\\") => "",
+						_ => ";",
+					};
+					format!("{}{}{}", indent.as_str(), text.as_str(), semi)
+				},
+				_ => format!(""),
+			}
+		};
+		let processed_input = Rc::from(r_process.replace_all(raw_input, process_fn).as_ref());
 
 		Compiler {
 			filename,
 			raw_input,
-			stripped_input,
+			processed_input,
 			messages: vec![],
-			r_line_break: Regex::new(r"\r|\n|\r\n").unwrap(),
+			r_line_break: Regex::new(r"\n|\r\n").unwrap(),
 		}
 	}
 
 	pub fn compile(&mut self) -> Result<CompilerOutput, CompileError> {
-		let stripped_input = Rc::clone(&self.stripped_input);
-		let mut program = self.parse(&stripped_input)?;
+		let processed_input = Rc::clone(&self.processed_input);
+		let mut program = self.parse(&processed_input)?;
 		let names = Names::find(&program, self)?;
 		let signatures = infer_types(&mut program, &names, self)?;
 		let code = generate_code(&program, &names, signatures, self)?;
@@ -203,7 +223,8 @@ impl<'input> Compiler<'input> {
 	fn report(&mut self, loc: &dyn Location, category: MessageCategory, text: String) {
 		let offset = loc.pos_before();
 		let length = loc.pos_after() - offset;
-		let until_offset = &self.stripped_input[..self.stripped_input.len().min(offset)];
+		let (until_offset, from_offset) = self.processed_input.split_at(offset);
+		let marker_max_length = self.r_line_break.find(from_offset).map(|m| m.start()).unwrap_or(0);
 		let (line, column) = {
 			match self.r_line_break.find_iter(until_offset).enumerate().last() {
 				Some((count, last)) => (count + 1, offset - last.end()),
@@ -220,6 +241,7 @@ impl<'input> Compiler<'input> {
 			length,
 			text,
 			source_line,
+			marker_max_length,
 		});
 	}
 
