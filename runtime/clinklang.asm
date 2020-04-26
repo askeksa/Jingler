@@ -121,15 +121,15 @@ UnpackNotes:
 	mov			edx, 3 ; Component
 	xor			eax, eax
 	lodsb
-	xchg		ebp, eax ; Number of tracks
+	xchg		ecx, eax ; Number of tracks
 
 .componentloop:
 	lodsd
-	push		eax ; Value factor
+	xchg		ebp, eax ; Value factor
 
 	mov			edi, TrackStarts
 	mov			ebx, NoteHeaders
-	mov			ecx, ebp
+	push		ecx
 .trackloop:
 	mov			[edi], ebx
 	scasd
@@ -145,7 +145,7 @@ UnpackNotes:
 	mov			ah, al
 	lodsb
 .bytevalue:
-	imul		eax, [esp]
+	imul		eax, ebp
 	mov			[ebx + edx*4], eax
 	add			ebx, byte 16
 	jmp			.noteloop
@@ -154,17 +154,22 @@ UnpackNotes:
 	mov			dword [ebx], 0x80000000 ; Track terminator
 	add			ebx, byte 16
 	loop		.trackloop
-	pop			eax
+	pop			ecx
 
 	dec			edx
 	jns			.componentloop
 
-RenderMusic:
+	mov			edi, GeneratedCode
 	lodsd
+
+RenderMusic:
+	; ESI = Bytecode, followed by constant pool
+	; EDI = Space for generated code
+	; EAX = Number of samples to render
+
 	push		eax ; Music length
 
 GenerateCode:
-	mov			edi, GeneratedCode
 	mov			edx, OUT_S >> 4
 .mainloop:
 	xor			eax, eax
@@ -315,7 +320,7 @@ RunGeneratedCode:
 	shl			eax, 4
 	add			[BufferAllocPtr], eax
 
-	snip		trigger, ss, I_TRIGGER
+	snip		call_instrument, ss, I_CALL_INSTRUMENT
 	pusha
 	mov			ebp, [InstrumentIndex]
 
