@@ -259,7 +259,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
-		self.cell_stack_index = 0;
+		self.cell_stack_index = self.stack_height;
 		for cell_index in 0..(self.stack_index_in_cell.len() + self.cell_init.len()) {
 			self.emit(bc![CellRead]);
 			if let Some(name) = self.name_in_cell.get(&cell_index) {
@@ -272,10 +272,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.generate_code_for_statement(statement)?;
 			}
 		}
-		let cell_index = self.stack_index_in_cell.len();
+		let mut cell_index = self.stack_index_in_cell.len();
 		while let Some(exp) = self.update_queue.pop_front() {
 			self.generate(exp);
 			self.emit(bc![CellStore(cell_index as u16)]);
+			cell_index += 1;
 		}
 		Ok(())
 	}
