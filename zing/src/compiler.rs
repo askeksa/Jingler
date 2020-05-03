@@ -117,6 +117,25 @@ pub trait Location {
 	fn pos_after(&self) -> usize;
 }
 
+pub struct PosRange {
+	before: usize,
+	after: usize,
+}
+
+impl PosRange {
+	pub fn from(loc: &impl Location) -> Self {
+		PosRange {
+			before: loc.pos_before(),
+			after: loc.pos_after(),
+		}
+	}
+}
+
+impl Location for PosRange {
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.after }
+}
+
 /// (offset, length) pair.
 impl Location for (usize, usize) {
 	fn pos_before(&self) -> usize { self.0 }

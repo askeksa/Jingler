@@ -259,6 +259,9 @@ impl<'input> Expression<'input> {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, "[{}]", index)?;
 			},
+			Expand { exp } => {
+				write!(f, "[{}]", exp)?;
+			},
 		}
 		if parenthesized { f.write_str(")")?; }
 		Ok(())
@@ -279,6 +282,7 @@ impl<'input> Expression<'input> {
 			Property { .. } => Precedence::Primary,
 			TupleIndex { .. } => Precedence::Primary,
 			BufferIndex { .. } => Precedence::Primary,
+			Expand { .. } => Precedence::Primary,
 		}
 	}
 }

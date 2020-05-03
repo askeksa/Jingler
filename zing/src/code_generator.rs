@@ -431,6 +431,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(exp);
 				self.find_cells(index);
 			},
+			Expand { exp } => {
+				self.find_cells(exp);
+			}
 		}
 	}
 
@@ -603,6 +606,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.generate(exp);
 				self.generate(index);
 				self.emit(bc![BufferLoad]);
+			},
+			Expand { exp } => {
+				self.generate(exp);
+				self.emit(bc![Expand]);
 			},
 		}
 	}

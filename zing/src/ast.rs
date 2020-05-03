@@ -104,7 +104,8 @@ pub enum Expression<'input> {
 	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
 	Property { exp: Box<Expression<'input>>, name: Id<'input> },
 	TupleIndex { exp: Box<Expression<'input>>, index: u64, after: Pos },
-	BufferIndex {exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
+	BufferIndex { exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
+	Expand { exp: Box<Expression<'input>> },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -151,6 +152,7 @@ impl<'input> Expression<'input> {
 			Property { ref exp, .. } => exp.pos_before(),
 			TupleIndex { ref exp, .. } => exp.pos_before(),
 			BufferIndex { ref exp, .. } => exp.pos_before(),
+			Expand { ref exp } => exp.pos_before(),
 		}
 	}
 
@@ -169,6 +171,7 @@ impl<'input> Expression<'input> {
 			Property { ref name, .. } => name.before + name.text.len(),
 			TupleIndex { after, .. } => after,
 			BufferIndex { after, .. } => after,
+			Expand { ref exp } => exp.pos_after(),
 		}
 	}
 
@@ -216,6 +219,9 @@ impl<'input> Expression<'input> {
 			BufferIndex { exp, index, .. } => {
 				exp.traverse(pre, post);
 				index.traverse(pre, post);
+			},
+			Expand { exp } => {
+				exp.traverse(pre, post);
 			},
 		}
 		post(self);
