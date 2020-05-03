@@ -619,7 +619,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					match (sig_type.width.unwrap(), arg_type.width.unwrap()) {
 						(Width::Generic, Width::Stereo) => seen_stereo = true,
 						(Width::Generic, Width::Generic) => seen_generic = true,
-						(_, Width::Mono) => {},
+						(Width::Mono, Width::Mono) => {},
+						(s, Width::Mono) => if arg_type.value_type == Some(ValueType::Buffer) {
+							self.compiler.report_error(loc,
+								format!("Can't pass a mono buffer value into a {} buffer input.", s));
+						},
 						(s, a) => if s != a {
 							self.compiler.report_error(loc,
 								format!("Can't pass a {} value into a {} input.", a, s));
