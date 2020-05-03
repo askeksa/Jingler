@@ -505,18 +505,55 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_property(&mut self,
 			exp: &Expression<'ast>, name: &Id<'ast>,
 			loc: &dyn Location) -> Vec<TypeResult> {
-		if name.text == "left" {
-			let operand = self.expect_single(exp, "operand of 'left' property");
-			let left_sig = sig!([stereo typeless] [mono typeless]);
-			self.check_signature(&left_sig, &[operand], loc)
-		} else if name.text == "right" {
-			let operand = self.expect_single(exp, "operand of 'right' property");
-			let right_sig = sig!([stereo typeless] [mono typeless]);
-			self.check_signature(&right_sig, &[operand], loc)
+		if name.text == "left" || name.text == "right" {
+			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
+				TypeResult::Type {
+					inferred_type: Type {
+						scope,
+						width: Some(width),
+						value_type: Some(value_type),
+					}
+				} => {
+					if value_type == ValueType::Buffer {
+						self.compiler.report_error(loc,
+							format!("No '{}' property on buffer.", name.text));
+						vec![TypeResult::Error]
+					} else if width != Width::Stereo {
+						self.compiler.report_error(loc,
+							format!("Can only take '{}' property on stereo value.", name.text));
+						vec![TypeResult::Error]
+					} else {
+						vec![TypeResult::Type {
+							inferred_type: Type {
+								scope, width: Some(Width::Mono), value_type: Some(value_type)
+							}
+						}]
+					}
+				},
+				_ => vec![TypeResult::Error],
+			}
 		} else if name.text == "length" {
-			let operand = self.expect_single(exp, "operand of 'length' property");
-			let length_sig = sig!([generic buffer] [mono number]);
-			self.check_signature(&length_sig, &[operand], loc)
+			match self.expect_single(exp, "operand of 'length' property") {
+				TypeResult::Type {
+					inferred_type: Type {
+						scope,
+						value_type: Some(value_type),
+						..
+					}
+				} => {
+					if value_type != ValueType::Buffer {
+						self.compiler.report_error(loc, "Can only take 'length' property on buffer.");
+						vec![TypeResult::Error]
+					} else {
+						vec![TypeResult::Type {
+							inferred_type: Type {
+								scope, width: Some(Width::Mono), value_type: Some(ValueType::Number)
+							}
+						}]
+					}
+				},
+				_ => vec![TypeResult::Error],
+			}
 		} else {
 			self.compiler.report_error(name, format!("Invalid property '{}'.", name));
 			vec![TypeResult::Error]
