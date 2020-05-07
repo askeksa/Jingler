@@ -81,7 +81,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 			Ok(program) => {
 				if options.dump_bytecodes {
 					for (i, bc) in program.iter().enumerate() {
-						println!("{:5}  {:?}", i, bc);
+						println!("{:5}  {}", i, bc);
 					}
 				}
 				match encode_bytecodes(&program) {

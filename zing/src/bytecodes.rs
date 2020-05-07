@@ -1,5 +1,8 @@
 #![allow(unused)]
 
+use std::f32;
+use std::fmt::{Display, Error, Formatter};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Bytecode {
 	// Constants
@@ -157,5 +160,19 @@ impl Bytecode {
 
 			Random => (2, 1),
 		}
+	}
+}
+
+impl Display for Bytecode {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match *self {
+			Bytecode::Constant(c) => {
+				write!(f, "Constant({})", f32::from_bits(c))?;
+			},
+			bc => {
+				write!(f, "{:?}", bc)?;
+			},
+		}
+		Ok(())
 	}
 }
