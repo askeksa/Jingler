@@ -207,6 +207,30 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 		self.compiler.check_errors()?;
 
+		// Find variables on or between cycles.
+		let mut on_cycle = vec![true; proc.body.len()];
+		let mut dependency_count: HashMap<&str, i32> = HashMap::new();
+		for dep in &dependencies {
+			for name in dep {
+				*dependency_count.entry(name).or_default() += 1;
+			}
+		}
+		let mut changed = true;
+		while changed {
+			changed = false;
+			for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
+				if on_cycle[body_index] && node.items.iter().all(|item| {
+					*dependency_count.entry(item.name.text).or_default() == 0
+				}) {
+					for name in &dependencies[body_index] {
+						*dependency_count.entry(name).or_default() -= 1;
+					}
+					on_cycle[body_index] = false;
+					changed = true;
+				}
+			}
+		}
+
 		let mut done = vec![false; proc.body.len()];
 		let mut done_count = 0;
 		while done_count < proc.body.len() {
@@ -223,7 +247,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			if !changed {
 				// There are cycles. Require width and infer rest of type.
 				for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
-					if !done[body_index] {
+					if !done[body_index] && on_cycle[body_index] {
 						for PatternItem { name: variable_name, item_type } in &mut node.items {
 							let Type { scope, width, value_type } = item_type;
 							if proc.kind != ProcedureKind::Function {
@@ -233,7 +257,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							}
 							if width.is_none() {
 								self.compiler.report_error(&*variable_name,
-									"Variables depending on a cycle must specify explict width (mono, stereo or generic).");
+									"Variables on a cycle must specify explict width (mono, stereo or generic).");
 								*width = Some(Width::Stereo);
 							}
 							if value_type.is_none() {
