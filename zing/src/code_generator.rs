@@ -203,7 +203,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 		self.emit(bc![Proc]);
 
-		Ok(())
+		self.compiler.check_errors()
 	}
 
 	fn init_proc_id(&mut self, program: &Program<'ast>) {
@@ -494,7 +494,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(bc![Constant(0)]);
 			},
 			Variable { name } => {
-				let offset = self.stack_height - self.stack_index[name.text] - 1;
+				let offset = match self.stack_index.get(name.text) {
+					Some(stack_index) => self.stack_height - stack_index - 1,
+					None => {
+						self.unsupported(exp, "accessing a variable above its definition (except in cell or delay)");
+						0
+					},
+				};
 				self.emit(bc![StackLoad(offset as u16)]);
 			},
 			UnOp { op, exp } => {
