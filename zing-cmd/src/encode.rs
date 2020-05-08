@@ -10,11 +10,17 @@ const fn implicit_code(opcode: u8) -> u8 {
 
 
 #[allow(non_snake_case)]
-pub fn encode_bytecodes(bytecodes: &[Bytecode]) -> Result<(Vec<u8>, Vec<u32>), String> {
+pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
 	let mut constant_set = BTreeSet::new();
 	for bc in bytecodes {
-		if let Bytecode::Constant(v) = bc {
-			constant_set.insert(*v);
+		match bc {
+			Bytecode::Constant(v) => {
+				constant_set.insert(*v);
+			},
+			Bytecode::SampleRate => {
+				constant_set.insert(sample_rate.to_bits());
+			},
+			_ => {},
 		}
 	}
 	let constants: Vec<u32> = constant_set.into_iter().collect();
@@ -89,6 +95,7 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode]) -> Result<(Vec<u8>, Vec<u32>), S
 			Bytecode::Proc => PROC,
 			Bytecode::Call(proc) => PROC_CALL + check(proc, 50, "procedure")?,
 			Bytecode::Constant(constant) => CONSTANT + check(constant_map[&constant], 50, "constant")?,
+			Bytecode::SampleRate => CONSTANT + check(constant_map[&sample_rate.to_bits()], 50, "constant")?,
 			Bytecode::ReadNoteProperty(property) => NOTE_PROPERTY + property as u8,
 			Bytecode::StackLoad(offset) => STACK_LOAD + check(offset, 25, "stack load")?,
 			Bytecode::StackStore(offset) => STACK_STORE + check(offset, 25, "stack store")?,

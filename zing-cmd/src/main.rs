@@ -84,7 +84,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 						println!("{:5}  {}", i, bc);
 					}
 				}
-				match encode_bytecodes(&program) {
+				match encode_bytecodes(&program, options.sample_rate) {
 					Ok((bytecodes, constants)) => if options.run {
 						let mut music_data = bytecodes.clone();
 						music_data.push(0);

@@ -71,20 +71,21 @@ macro_rules! bc {
 }
 
 pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Bytecode])] = &[
-	("atan2", sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fpatan), Fdone]),
-	("ceil",  sig!([generic] [generic]),          bc![Round(Ceil)]),
-	("cos",   sig!([mono] [mono]),                bc![Fop(Fcos), Fdone]),
-	("exp2",  sig!([mono] [mono]),                bc![Fop(Frndint), Exp2Body, Fdone]),
-	("floor", sig!([generic] [generic]),          bc![Round(Floor)]),
-	("max",   sig!([generic, generic] [generic]), bc![Max]),
-	("min",   sig!([generic, generic] [generic]), bc![Min]),
-	("mlog2", sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
-	("random",sig!([mono] [mono]),                bc![Constant(0x3F800000), Random, Constant(0x30000000), Mul]),
-	("round", sig!([generic] [generic]),          bc![Round(Nearest)]),
-	("sin",   sig!([mono] [mono]),                bc![Fop(Fsin), Fdone]),
-	("sqrt",  sig!([generic] [generic]),          bc![Sqrt]),
-	("tan",   sig!([mono] [mono]),                bc![Fop(Fptan), Fdone, Fdone]),
-	("trunc", sig!([generic] [generic]),          bc![Round(Truncate)]),
+	("atan2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fpatan), Fdone]),
+	("ceil",       sig!([generic] [generic]),          bc![Round(Ceil)]),
+	("cos",        sig!([mono] [mono]),                bc![Fop(Fcos), Fdone]),
+	("exp2",       sig!([mono] [mono]),                bc![Fop(Frndint), Exp2Body, Fdone]),
+	("floor",      sig!([generic] [generic]),          bc![Round(Floor)]),
+	("max",        sig!([generic, generic] [generic]), bc![Max]),
+	("min",        sig!([generic, generic] [generic]), bc![Min]),
+	("mlog2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
+	("random",     sig!([mono] [mono]),                bc![Constant(0x3F800000), Random, Constant(0x30000000), Mul]),
+	("round",      sig!([generic] [generic]),          bc![Round(Nearest)]),
+	("samplerate", sig!([] [mono]),                    bc![SampleRate]),
+	("sin",        sig!([mono] [mono]),                bc![Fop(Fsin), Fdone]),
+	("sqrt",       sig!([generic] [generic]),          bc![Sqrt]),
+	("tan",        sig!([mono] [mono]),                bc![Fop(Fptan), Fdone, Fdone]),
+	("trunc",      sig!([generic] [generic]),          bc![Round(Truncate)]),
 ];
 
 pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[

@@ -7,6 +7,7 @@ use std::fmt::{Display, Error, Formatter};
 pub enum Bytecode {
 	// Constants
 	Constant(u32),
+	SampleRate,
 
 	// Operations
 	Add,
@@ -113,7 +114,7 @@ impl Bytecode {
 	pub fn stack_change(&self) -> (usize, usize) { // pops, pushes
 		use Bytecode::*;
 		match self {
-			Constant(..) => (0, 1),
+			Constant(..) | SampleRate => (0, 1),
 
 			Add | Sub | AddSub | Mul | Div => (2, 1),
 			And | AndNot | Or | Xor => (2, 1),
