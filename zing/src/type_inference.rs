@@ -203,6 +203,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.find_ready(proc.kind, &mut proc.inputs);
 		for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
 			self.find_dependencies(exp, &mut dependencies[body_index]);
+			// Inherit types from outputs.
+			for PatternItem { name, item_type } in &mut node.items {
+				if let Some(output) = proc.outputs.items.iter().find(|item| item.name.text == name.text) {
+					item_type.scope = item_type.scope.or(output.item_type.scope);
+					item_type.width = item_type.width.or(output.item_type.width);
+					item_type.value_type = item_type.value_type.or(output.item_type.value_type);
+				}
+			}
 			self.find_ready(proc.kind, node);
 		}
 		self.compiler.check_errors()?;
