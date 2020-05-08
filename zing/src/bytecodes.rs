@@ -145,7 +145,7 @@ impl Bytecode {
 
 			BufferAlloc => (1, 1),
 			BufferLoad => (2, 1),
-			BufferStore => (3, 0),
+			BufferStore => (3, 1),
 			BufferLength => (1, 1),
 
 			Proc => panic!("stack_change on 'proc'"),

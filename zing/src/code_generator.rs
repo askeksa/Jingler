@@ -24,6 +24,9 @@ fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
 }
 
 
+#[derive(Clone)]
+enum StateKind { Cell, Delay }
+
 struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
@@ -50,13 +53,13 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// Stack index of next cell in execution order
 	cell_stack_index: usize,
 	// Static expression to initialize explicit cell
-	cell_init: Vec<&'ast Expression<'ast>>,
+	cell_init: Vec<(StateKind, &'ast Expression<'ast>)>,
 	// Module calls in execution order
 	module_call: Vec<(usize, &'ast Vec<Expression<'ast>>)>,
 	// Instruments in execution order
 	instrument_order: Vec<usize>,
 	// Queue for dynamic cell update expressions
-	update_queue: VecDeque<&'ast Expression<'ast>>,
+	update_queue: VecDeque<(StateKind, &'ast Expression<'ast>)>,
 }
 
 impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
@@ -242,9 +245,16 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.name_in_cell.insert(cell_index, name);
 			}
 		}
-		for exp in self.cell_init.clone() {
+		for (kind, exp) in self.cell_init.clone() {
 			self.generate(exp);
-			self.emit(bc![CellInit]);
+			match kind {
+				StateKind::Cell => {
+					self.emit(bc![CellInit]);
+				},
+				StateKind::Delay => {
+					self.emit(bc![BufferAlloc, Constant(0), MergeLR, CellInit]);
+				},
+			}
 		}
 		for (proc_index, args) in self.module_call.clone() {
 			let (_, inputs, _) = &self.signatures[proc_index];
@@ -259,23 +269,43 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
-		self.cell_stack_index = self.stack_height;
-		for cell_index in 0..(self.stack_index_in_cell.len() + self.cell_init.len()) {
-			self.emit(bc![CellRead]);
+		let cell_stack_index_base = self.stack_height;
+		for cell_index in 0 .. self.stack_index_in_cell.len() {
 			if let Some(name) = self.name_in_cell.get(&cell_index) {
-				self.stack_index.entry(name).or_insert(self.next_stack_index);
+				self.stack_index.entry(name).or_insert(self.stack_height);
 			}
-			self.next_stack_index += 1;
+			self.emit(bc![CellRead]);
 		}
+		self.cell_stack_index = self.stack_height;
+		for _ in 0 .. self.cell_init.len() {
+			self.emit(bc![CellRead]);
+		}
+		self.next_stack_index = self.stack_height;
+
 		for statement in body {
 			if statement_scope(statement) == Some(Scope::Dynamic) {
 				self.generate_code_for_statement(statement)?;
 			}
 		}
 		let mut cell_index = self.stack_index_in_cell.len();
-		while let Some(exp) = self.update_queue.pop_front() {
-			self.generate(exp);
-			self.emit(bc![CellStore(cell_index as u16)]);
+		while let Some((kind, exp)) = self.update_queue.pop_front() {
+			match kind {
+				StateKind::Cell => {
+					self.generate(exp);
+					self.emit(bc![CellStore(cell_index as u16)]);
+				},
+				StateKind::Delay => {
+					let stack_index = cell_stack_index_base + cell_index;
+					let offset = self.stack_height - stack_index - 1;
+					self.emit(bc![StackLoad(offset as u16), SplitLR]);
+					self.generate(exp);
+					self.emit(bc![
+						BufferStore, Pop,
+						StackLoad(offset as u16), SplitLR, Constant(1f32.to_bits()), Add, MergeLR,
+						CellStore(cell_index as u16)
+					]);
+				}
+			}
 			cell_index += 1;
 		}
 		Ok(())
@@ -322,7 +352,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(exp);
 			}
 		}
-		while let Some(exp) = self.update_queue.pop_front() {
+		while let Some((_kind, exp)) = self.update_queue.pop_front() {
 			self.find_cells(exp);
 		}
 
@@ -373,11 +403,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							(Module, BuiltIn { .. }) => {
 								match name.text {
 									"cell" => {
-										self.cell_init.push(&args[0]);
-										self.update_queue.push_back(&args[1]);
+										self.cell_init.push((StateKind::Cell, &args[0]));
+										self.update_queue.push_back((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
-										self.unsupported(exp, "delay");
+										self.cell_init.push((StateKind::Delay, &args[0]));
+										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}
@@ -531,10 +562,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										let offset = self.stack_height - self.cell_stack_index - 1;
 										self.cell_stack_index += 1;
 										self.emit(bc![StackLoad(offset as u16)]);
-										self.update_queue.push_back(&args[1]);
+										self.update_queue.push_back((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
-										self.unsupported(exp, "delay");
+										let offset = self.stack_height - self.cell_stack_index - 1;
+										self.cell_stack_index += 1;
+										self.emit(bc![StackLoad(offset as u16), SplitLR, BufferLoad]);
+										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}
