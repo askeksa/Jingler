@@ -546,9 +546,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			Conditional { condition, then, otherwise } => {
 				self.generate(condition);
 				self.generate(then);
-				self.emit(bc![StackLoad(1), And, StackLoad(1)]);
+				self.emit(bc![StackLoad(1), And]);
 				self.generate(otherwise);
-				self.emit(bc![AndNot, Or, PopNext]);
+				self.emit(bc![StackLoad(2), AndNot, Or, PopNext]);
 			},
 			Call { name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
