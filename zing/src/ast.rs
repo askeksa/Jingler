@@ -85,6 +85,12 @@ impl Type {
 
 		scope_ok && width_ok && value_type_ok
 	}
+
+	pub fn inherit(&mut self, from: &Type) {
+		self.scope = self.scope.or(from.scope);
+		self.width = self.width.or(from.width);
+		self.value_type = self.value_type.or(from.value_type);
+	}
 }
 
 #[derive(Clone, Debug)]

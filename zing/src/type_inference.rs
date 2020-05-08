@@ -63,15 +63,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					// Module inputs/outputs default to dynamic stereo number, and only
 					// inputs can be static.
 					ProcedureKind::Module => {
-						item_type.scope = item_type.scope.or(Some(Scope::Dynamic));
 						if is_output {
 							if let Some(Scope::Static) = item_type.scope {
 								self.compiler.report_error(&*variable_name,
 									"Module outputs can't be static.");
 							}
 						}
-						item_type.width = item_type.width.or(Some(Width::Stereo));
-						item_type.value_type = item_type.value_type.or(Some(ValueType::Number));
+						item_type.inherit(&type_spec!(dynamic stereo number));
 					},
 					// Function inputs/outputs default to stereo number and have no
 					// static/dynamic distinction.
@@ -80,8 +78,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							self.compiler.report_error(&*variable_name,
 								"Function inputs or outputs can't be marked static or dynamic.");
 						}
-						item_type.width = item_type.width.or(Some(Width::Stereo));
-						item_type.value_type = item_type.value_type.or(Some(ValueType::Number));
+						item_type.inherit(&type_spec!(stereo number));
 					},
 					// Instrument inputs default to dynamic stereo number, only
 					// inputs can be static, all static inputs must appear before all
@@ -89,18 +86,16 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					// and outputs, the types of these must match up, and outputs
 					// default to the types of their corresponding inputs.
 					ProcedureKind::Instrument => {
-						item_type.scope = item_type.scope.or(Some(Scope::Dynamic));
 						if is_output {
-							match item_type.scope.unwrap() {
-								Scope::Static => {
+							match item_type.scope {
+								Some(Scope::Static) => {
 									self.compiler.report_error(&*variable_name,
 										"Instrument outputs can't be static.");
 								},
-								Scope::Dynamic => {
+								Some(Scope::Dynamic) | None => {
 									if output_count < instrument_types.len() {
 										let input = &instrument_types[output_count];
-										item_type.width = item_type.width.or(input.width);
-										item_type.value_type = item_type.value_type.or(input.value_type);
+										item_type.inherit(input);
 										if item_type != input {
 											self.compiler.report_error(&*variable_name,
 												"Instrument output type doesn't match the corresponding input.");
@@ -113,8 +108,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 								},
 							}
 						} else {
-							item_type.width = item_type.width.or(Some(Width::Stereo));
-							item_type.value_type = item_type.value_type.or(Some(ValueType::Number));
+							item_type.inherit(&type_spec!(dynamic stereo number));
 							match item_type.scope.unwrap() {
 								Scope::Static => {
 									if !instrument_types.is_empty() {
@@ -206,9 +200,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			// Inherit types from outputs.
 			for PatternItem { name, item_type } in &mut node.items {
 				if let Some(output) = proc.outputs.items.iter().find(|item| item.name.text == name.text) {
-					item_type.scope = item_type.scope.or(output.item_type.scope);
-					item_type.width = item_type.width.or(output.item_type.width);
-					item_type.value_type = item_type.value_type.or(output.item_type.value_type);
+					item_type.inherit(&output.item_type);
 				}
 			}
 			self.find_ready(proc.kind, node);
@@ -342,7 +334,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			let mut node_type = item.item_type;
 			let result = match exp_type {
 				TypeResult::Type { inferred_type } => {
-					node_type.scope = node_type.scope.or(inferred_type.scope);
+					node_type.inherit(inferred_type);
 					if current_kind != ProcedureKind::Function {
 						node_type.scope = node_type.scope.or(Some(Scope::Static));
 						match node_type.scope.unwrap() {
@@ -350,8 +342,6 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							Scope::Dynamic => seen_dynamic = true,
 						}
 					}
-					node_type.width = node_type.width.or(inferred_type.width);
-					node_type.value_type = node_type.value_type.or(inferred_type.value_type);
 					if inferred_type.assignable_to(&node_type) {
 						if self.should_expand(&node_type, &exp_type, true) {
 							if single {
@@ -419,22 +409,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_number(&mut self,
 			_value: &f64,
 			_loc: &dyn Location) -> Vec<TypeResult> {
-		let inferred_type = Type {
-			scope: None,
-			width: Some(Width::Mono),
-			value_type: Some(ValueType::Number),
-		};
+		let inferred_type = type_spec!(mono number);
 		vec![TypeResult::Type { inferred_type }]
 	}
 
 	fn infer_bool(&mut self,
 			_value: &bool,
 			_loc: &dyn Location) -> Vec<TypeResult> {
-		let inferred_type = Type {
-			scope: None,
-			width: Some(Width::Mono),
-			value_type: Some(ValueType::Bool),
-		};
+		let inferred_type = type_spec!(mono bool);
 		vec![TypeResult::Type { inferred_type }]
 	}
 

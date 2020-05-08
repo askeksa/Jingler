@@ -21,6 +21,7 @@ macro_rules! value_type {
 	{ typeless } => { ValueType::Typeless };
 }
 
+#[macro_export]
 macro_rules! type_spec {
 	{ $w:ident } => {
 		Type {
