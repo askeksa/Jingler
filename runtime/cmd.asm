@@ -52,6 +52,8 @@ _RunClinklang:
 	; Parameters: Bytecode+Constants, Length
 	pusha
 
+	call	ResetState
+
 	push	PAGE_EXECUTE_READWRITE
 	push	MEM_COMMIT | MEM_RESERVE
 	push	CODE_SPACE

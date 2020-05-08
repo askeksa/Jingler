@@ -2,13 +2,13 @@
 global ClinklangCompute
 
 
-MAX_STACK equ 256
-STATE_SPACE equ 256
-NOTE_SPACE equ 65536
-BUFFER_SPACE equ 65536
-MUSIC_SPACE equ 0x100000
-MAX_TRACKS equ 255
-MAX_NOTE_COUNT equ 65536
+MAX_STACK equ 0x100
+STATE_SPACE equ 0x100
+NOTE_SPACE equ 0x10000
+BUFFER_SPACE equ 0x100000
+MUSIC_SPACE equ 0x1000000
+MAX_TRACKS equ 0xFF
+MAX_NOTE_COUNT equ 0x10000
 
 LOWEST_IMPLICIT_INSTRUCTION equ 0x14
 
@@ -238,6 +238,14 @@ RunGeneratedCode:
 	cmp			[esp], ebp
 	jne			.sample
 	pop			eax
+	ret
+
+ResetState:
+	mov			edi, BufferSpace
+	mov			[BufferAllocPtr], edi
+	mov			ecx, BUFFER_SPACE*4
+	xor			eax, eax
+	rep stosd
 	ret
 
 ;; Snips
