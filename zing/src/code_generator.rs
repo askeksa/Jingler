@@ -414,13 +414,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Module, Declaration { proc_index }) => {
-								self.module_call.push((*proc_index, args));
 								let (_, inputs, _) = &self.signatures[*proc_index];
 								for (arg, input_type) in args.iter().zip(inputs.clone()) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.find_cells(arg);
 									}
 								}
+								self.module_call.push((*proc_index, args));
 							},
 							(Function, BuiltIn { .. }) => {
 								for arg in args {
