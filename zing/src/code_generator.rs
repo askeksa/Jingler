@@ -2,9 +2,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::mem::replace;
 
+use bytecode::bytecodes::*;
+
 use crate::ast::*;
 use crate::builtin::*;
-use crate::bytecodes::*;
 use crate::compiler::{CompileError, Compiler, Location};
 use crate::names::*;
 

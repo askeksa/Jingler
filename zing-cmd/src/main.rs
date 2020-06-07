@@ -1,4 +1,5 @@
 
+use bytecode::encode::encode_bytecodes;
 use zing::compiler;
 
 use std::error::Error;
@@ -13,10 +14,6 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::Sink;
-
-mod encode;
-
-use encode::encode_bytecodes;
 
 #[link(name = "clinklang_cmd")]
 extern "C" {

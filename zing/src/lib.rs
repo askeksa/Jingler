@@ -1,7 +1,8 @@
 
 #[macro_use] extern crate lalrpop_util;
 
-pub mod bytecodes;
+#[macro_use] extern crate bytecode;
+
 pub mod compiler;
 
 mod ast;

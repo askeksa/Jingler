@@ -1,6 +1,7 @@
 
+use bytecode::bytecodes::*;
+
 use crate::ast::{BinOp, BinOpKind, Scope, Type, UnOp, UnOpKind, ValueType, Width};
-use crate::bytecodes::*;
 use crate::names::Signature;
 
 macro_rules! scope {
@@ -54,20 +55,6 @@ macro_rules! sig {
 			outputs: &[$(type_spec!($($o)+)),*],
 		}
 	};
-}
-
-#[macro_export]
-macro_rules! bc {
-	{ $($b:expr),* } => {
-		{
-			#[allow(unused)] use Bytecode::*;
-			#[allow(unused)] use RoundingMode::*;
-			#[allow(unused)] use CompareOp::*;
-			#[allow(unused)] use NoteProperty::*;
-			#[allow(unused)] use Fopcode::*;
-			&[$($b),*]
-		}
-	}
 }
 
 pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Bytecode])] = &[

@@ -6,8 +6,9 @@ use regex::{Captures, Regex};
 
 use lalrpop_util::ParseError;
 
+use bytecode::bytecodes::Bytecode;
+
 use crate::ast::*;
-use crate::bytecodes::Bytecode;
 use crate::code_generator::generate_code;
 use crate::names::Names;
 use crate::type_inference::infer_types;

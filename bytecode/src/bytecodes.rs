@@ -3,6 +3,20 @@
 use std::f32;
 use std::fmt::{Display, Error, Formatter};
 
+#[macro_export]
+macro_rules! bc {
+	{ $($b:expr),* } => {
+		{
+			#[allow(unused)] use Bytecode::*;
+			#[allow(unused)] use RoundingMode::*;
+			#[allow(unused)] use CompareOp::*;
+			#[allow(unused)] use NoteProperty::*;
+			#[allow(unused)] use Fopcode::*;
+			&[$($b),*]
+		}
+	}
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Bytecode {
 	// Constants

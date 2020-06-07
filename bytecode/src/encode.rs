@@ -1,7 +1,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use zing::bytecodes::Bytecode;
+use crate::bytecodes::Bytecode;
 
 
 const fn implicit_code(opcode: u8) -> u8 {

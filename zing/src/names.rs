@@ -2,8 +2,9 @@
 use std::collections::HashMap;
 use std::iter::once;
 
+use bytecode::bytecodes::Bytecode;
+
 use crate::ast::*;
-use crate::bytecodes::*;
 use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES};
 use crate::compiler::{Compiler, CompileError};
 

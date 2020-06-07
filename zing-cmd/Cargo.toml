@@ -11,6 +11,8 @@ clap = "2.33.0"
 hound = "3.4.0"
 notify = "4.0.15"
 rodio = "0.11.0"
+
+bytecode = { path = "../bytecode" }
 zing = { path = "../zing" }
 
 [build-dependencies]
