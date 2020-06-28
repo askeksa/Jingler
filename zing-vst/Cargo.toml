@@ -1,0 +1,22 @@
+[package]
+name = "zing-vst"
+version = "0.1.0"
+authors = ["Aske Simon Christensen <askesc@gmail.com>"]
+edition = "2018"
+build = "build.rs"
+
+[dependencies]
+nfd = { git = "https://github.com/saurvs/nfd-rs.git" }
+notify = "4.0.15"
+simple-message-box = "0.0.2"
+vst = "0.2.0"
+
+bytecode = { path = "../bytecode" }
+zing = { path = "../zing" }
+
+[build-dependencies]
+nasm-rs = "= 0.1.3"
+
+[lib]
+name = "ClinklangZing"
+crate-type = ["cdylib"]
