@@ -17,12 +17,18 @@ use rodio::Sink;
 
 #[link(name = "clinklang_cmd")]
 extern "C" {
-    fn RunClinklang(bytecodes: *const u8, constants: *const u32, length: usize) -> *mut f32;
+	fn CompileBytecode(bytecodes: *const u8);
+	fn ReleaseBytecode();
+	fn RunStaticCode(constants: *const u32);
+    fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
 }
 
 fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	unsafe {
-		let music = RunClinklang(bytecodes.as_ptr(), constants.as_ptr(), length);
+		CompileBytecode(bytecodes.as_ptr());
+		RunStaticCode(constants.as_ptr());
+		let music = RenderSamples(constants.as_ptr(), length);
+		ReleaseBytecode();
 		slice::from_raw_parts(music, length * 2)
 	}
 }

@@ -5,7 +5,10 @@
 extern __imp__VirtualAlloc@16
 extern __imp__VirtualFree@12
 
-global _RunClinklang
+global _CompileBytecode
+global _ReleaseBytecode
+global _RunStaticCode
+global _RenderSamples
 
 %define CODE_SPACE 0x10000
 
@@ -14,36 +17,56 @@ global _RunClinklang
 %define MEM_RELEASE 0x00008000
 %define PAGE_EXECUTE_READWRITE 0x40
 
+section codemem bss align=4
+CodeMemory:
+	resd 1
+
 section cmd text align=1
 
-_RunClinklang:
-	; Parameters: Bytecode, Constants, Length
+_CompileBytecode:
+	; Parameters: Bytecode
 	pusha
-
-	call	ResetState
 
 	push	PAGE_EXECUTE_READWRITE
 	push	MEM_COMMIT | MEM_RESERVE
 	push	CODE_SPACE
 	push	0
 	call	[__imp__VirtualAlloc@16]
+	mov		[CodeMemory], eax
 
-	push	MEM_RELEASE
-	push	0
-	push	eax
-
-	mov		esi, [esp + (3+8+1)*4]
+	mov		esi, [esp + (8+1)*4]
 	mov		edi, eax
 	call	GenerateCode
 
-	mov		esi, [esp + (3+8+2)*4]
+	popa
+	ret
+
+_ReleaseBytecode:
+	push	MEM_RELEASE
+	push	0
+	push	dword [CodeMemory]
+	call	[__imp__VirtualFree@12]
+	ret
+
+_RunStaticCode:
+	; Parameters: Constants
+	pusha
+
+	call	ResetState
+
+	mov		esi, [esp + (8+1)*4]
 	call	RunStaticCode
 
-	mov		esi, [esp + (3+8+2)*4]
-	mov		eax, [esp + (3+8+3)*4]
-	call	RenderSamples
+	popa
+	ret
 
-	call	[__imp__VirtualFree@12]
+_RenderSamples:
+	; Parameters: Constants, Length
+	pusha
+
+	mov		esi, [esp + (8+1)*4]
+	mov		eax, [esp + (8+2)*4]
+	call	RenderSamples
 
 	popa
 	mov		eax, MusicBuffer
