@@ -114,15 +114,11 @@ section snipdead text align=1
 
 section ckmain text align=1
 
-ClinklangCompute:
-	mov			esi, [esp + 4]
-
 UnpackNotes:
-	mov			edx, 3 ; Component
-	xor			eax, eax
-	lodsb
-	xchg		ecx, eax ; Number of tracks
+	; ESI = Notes
+	; ECX = Number of tracks
 
+	mov			edx, 3 ; Component
 .componentloop:
 	lodsd
 	xchg		ebp, eax ; Value factor
@@ -158,18 +154,12 @@ UnpackNotes:
 
 	dec			edx
 	jns			.componentloop
-
-	mov			edi, GeneratedCode
-	lodsd
-
-RenderMusic:
-	; ESI = Bytecode, followed by constant pool
-	; EDI = Space for generated code
-	; EAX = Number of samples to render
-
-	push		eax ; Music length
+	ret
 
 GenerateCode:
+	; ESI = Bytecode
+	; EDI = Space for generated code
+
 	mov			edx, OUT_S >> 4
 .mainloop:
 	xor			eax, eax
@@ -214,15 +204,22 @@ GenerateCode:
 	call		ebp
 	jmp			.mainloop
 .decode_done:
+	ret
 
+RunStaticCode:
 	; ESI = Constant pool
-RunGeneratedCode:
-	xor			ebp, ebp
 
 	mov			edi, StateSpace
 	mov			ebx, edi
 	call		[ProcPointers + 0*4]
+	ret
 
+RenderSamples:
+	; EAX = Number of samples to render
+	; ESI = Constant pool
+
+	push		eax
+	xor			ebp, ebp
 .sample:
 	xor			eax, eax
 	mov			[InstrumentIndex], eax

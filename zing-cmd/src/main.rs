@@ -17,12 +17,12 @@ use rodio::Sink;
 
 #[link(name = "clinklang_cmd")]
 extern "C" {
-    fn RunClinklang(music_data: *const u8, length: usize) -> *mut f32;
+    fn RunClinklang(bytecodes: *const u8, constants: *const u32, length: usize) -> *mut f32;
 }
 
-fn run(music_data: &[u8], length: usize) -> &'static [f32] {
+fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	unsafe {
-		let music = RunClinklang(music_data.as_ptr(), length);
+		let music = RunClinklang(bytecodes.as_ptr(), constants.as_ptr(), length);
 		slice::from_raw_parts(music, length * 2)
 	}
 }
@@ -83,13 +83,8 @@ fn play_file(filename: &str, options: &PlayOptions) {
 				}
 				match encode_bytecodes(&program, options.sample_rate) {
 					Ok((bytecodes, constants)) => if options.run {
-						let mut music_data = bytecodes.clone();
-						music_data.push(0);
-						for constant in constants {
-							music_data.extend_from_slice(&constant.to_ne_bytes());
-						}
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
-						let output = run(&music_data[..], n_samples);
+						let output = run(&bytecodes[..], &constants[..], n_samples);
 
 						if let Some(ref wav_filename) = options.write_wav {
 							if let Err(e) = write_wav(wav_filename, options.sample_rate, output) {

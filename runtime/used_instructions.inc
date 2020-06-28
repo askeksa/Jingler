@@ -1,0 +1,33 @@
+
+; Used instructions
+%define I_STATE_ENTER 1
+%define I_STATE_LEAVE 1
+%define I_KILL 1
+%define I_CELL_INIT 1
+%define I_CELL_READ 1
+%define I_ADDSUB 1
+%define I_FPUTNEXT 1
+%define I_RANDOM 1
+%define I_BUFFER_STORE 1
+%define I_BUFFER_LOAD 1
+%define I_BUFFER_ALLOC 1
+%define I_CALL_INSTRUMENT 1
+%define I_EXP2_BODY 1
+%define I_FDONE 1
+%define I_FOP 15
+%define I_PROC 1
+%define I_PROC_CALL 50
+%define I_CONSTANT 50
+%define I_NOTE_PROPERTY 3
+%define I_STACK_LOAD 25
+%define I_STACK_STORE 25
+%define I_CELL_STORE 25
+%define I_LABEL 1
+%define I_IF 1
+%define I_LOOPJUMP 1
+%define I_ENDIF 1
+%define I_ELSE 1
+%define I_ROUND 4
+%define I_COMPARE 7
+
+%define COMPACT_IMPLICIT_OPCODES 1

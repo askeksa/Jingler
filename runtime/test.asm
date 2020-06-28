@@ -1,39 +1,6 @@
 
-; Used instructions
-%define I_STATE_ENTER 1
-%define I_STATE_LEAVE 1
-%define I_KILL 1
-%define I_CELL_INIT 1
-%define I_CELL_READ 1
-%define I_ADDSUB 1
-%define I_FPUTNEXT 1
-%define I_RANDOM 1
-%define I_BUFFER_STORE 1
-%define I_BUFFER_LOAD 1
-%define I_BUFFER_ALLOC 1
-%define I_CALL_INSTRUMENT 1
-%define I_EXP2_BODY 1
-%define I_FDONE 1
-%define I_FOP 15
-%define I_PROC 1
-%define I_PROC_CALL 50
-%define I_CONSTANT 50
-%define I_NOTE_PROPERTY 3
-%define I_STACK_LOAD 25
-%define I_STACK_STORE 25
-%define I_CELL_STORE 25
-%define I_LABEL 1
-%define I_IF 1
-%define I_LOOPJUMP 1
-%define I_ENDIF 1
-%define I_ELSE 1
-%define I_ROUND 4
-%define I_COMPARE 7
-
-%define COMPACT_IMPLICIT_OPCODES 1
-
+%include "used_instructions.inc"
 %include "clinklang.asm"
-
 
 global main
 
@@ -47,9 +14,18 @@ extern __imp__fclose
 section main text align=1
 
 main:
-	push	MusicData
-	call	ClinklangCompute
-	add		esp, byte 1*4
+	mov		esi, Notes
+	mov		ecx, 1
+	call	UnpackNotes
+
+	mov		edi, GeneratedCode
+	call	GenerateCode
+
+	call	RunStaticCode
+
+	mov		eax, TOTAL_SAMPLES
+	call	RenderSamples
+
 
 	push	filemode
 	push	filename
@@ -81,10 +57,7 @@ section musdat rdata align=1
 
 %define b(c) _snip_id_%+c
 
-MusicData:
-	; Number of tracks
-	db 1
-
+Notes:
 	; Velocity
 	dd 1
 	db 0x80
@@ -98,11 +71,7 @@ MusicData:
 	dd 5292
 	db 4, 1, 1, 1, 0x80
 
-
-	; Music length
-	dd MUSIC_SPACE
-
-
+Bytecodes:
 	; Global init
 	db b(proc)
 
@@ -130,6 +99,7 @@ MusicData:
 
 	db b(proc), 0
 
+ConstantPool:
 	; Constant pool
 	dd 0.0
 	dd 1.0
