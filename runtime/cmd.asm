@@ -9,6 +9,8 @@ global _CompileBytecode
 global _ReleaseBytecode
 global _RunStaticCode
 global _RenderSamples
+global _NoteOn
+global _NoteOff
 
 %define CODE_SPACE 0x10000
 
@@ -70,4 +72,29 @@ _RenderSamples:
 
 	popa
 	mov		eax, MusicBuffer
+	ret
+
+_NoteOn:
+	; Parameters: Channel, Sample offset, Key, Velocity
+	pusha
+
+	mov		eax, [esp + (8+1)*4]
+	mov		ebx, [esp + (8+2)*4]
+	mov		ecx, [esp + (8+3)*4]
+	mov		edx, [esp + (8+4)*4]
+	call	NoteOn
+
+	popa
+	ret
+
+_NoteOff:
+	; Parameters: Channel, Sample offset, Key
+	pusha
+
+	mov		eax, [esp + (8+1)*4]
+	mov		ebx, [esp + (8+2)*4]
+	mov		ecx, [esp + (8+3)*4]
+	call	NoteOff
+
+	popa
 	ret

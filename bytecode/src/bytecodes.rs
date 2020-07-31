@@ -110,7 +110,7 @@ pub enum CompareOp {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NoteProperty {
 	Length = 0,
-	Tone = 1,
+	Key = 1,
 	Velocity = 2,
 }
 

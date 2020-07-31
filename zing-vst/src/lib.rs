@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use nfd::{open_file_dialog, Response};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher, watcher};
+use vst::api::Events;
 use vst::buffer::AudioBuffer;
+use vst::event::{Event, MidiEvent};
 use vst::plugin::{Category, HostCallback, Info, Plugin};
 use vst::plugin_main;
 
@@ -20,6 +22,8 @@ extern "C" {
 	fn ReleaseBytecode();
 	fn RunStaticCode(constants: *const u32);
     fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
+    fn NoteOn(channel: u32, delta_frames: i32, key: u32, velocity: u32);
+    fn NoteOff(channel: u32, delta_frames: i32, key: u32);
 }
 
 struct ZingPlugin {
@@ -136,6 +140,30 @@ impl Plugin for ZingPlugin {
 		self.sample_rate = sample_rate;
 		self.release_program();
 		self.init_program();
+	}
+
+	fn process_events(&mut self, events: &Events) {
+		for event in events.events() {
+			match event {
+				Event::Midi(MidiEvent { data, delta_frames, .. }) => {
+					let channel = (data[0] & 0x0F) as u32;
+					let key = data[1] as u32;
+					let velocity = data[2] as u32;
+					match data[0] & 0xF0 {
+						0x90 => unsafe {
+							// Note On
+							NoteOn(channel, delta_frames, key, velocity);
+						},
+						0x80 => unsafe {
+							// Note Off
+							NoteOff(channel, delta_frames, key);
+						},
+						_ => {},
+					}
+				},
+				_ => {},
+			}
+		}
 	}
 
 	fn process(&mut self, buffer: &mut AudioBuffer<f32>) {

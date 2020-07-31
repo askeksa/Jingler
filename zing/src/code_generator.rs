@@ -39,6 +39,8 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	proc_for_id: Vec<usize>,
 	// The id of last called instrument
 	instrument_id: usize,
+	// The current procedure kind
+	current_kind: ProcedureKind,
 
 	bc: Vec<Bytecode>,
 	stack_height: usize,
@@ -77,6 +79,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			proc_id: vec![],
 			proc_for_id: vec![],
 			instrument_id: 0,
+			current_kind: ProcedureKind::Module,
 
 			bc: vec![],
 			stack_height: 0,
@@ -145,6 +148,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		for id in 0..self.proc_for_id.len() {
 			let proc_index = self.proc_for_id[id];
 			let Procedure { kind, inputs, outputs, body, .. } = &program.procedures[proc_index];
+			self.current_kind = *kind;
 			self.emit(bc![Proc]);
 			match kind {
 				ProcedureKind::Module => {
@@ -585,6 +589,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(bc![Call(proc_id)]);
 							},
 							(Function, BuiltIn { bc, .. }) => {
+								if bc.iter().any(|c| match c {
+									Bytecode::ReadNoteProperty(_) => true,
+									_ => false,
+								}) && self.current_kind != ProcedureKind::Instrument {
+									self.unsupported(exp, "Note property outside instrument");
+								}
 								for arg in args {
 									self.generate(arg);
 								}

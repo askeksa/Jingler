@@ -86,7 +86,6 @@ Bytecodes:
 	db b(fop)+(~0xfc), b(exp2_body), b(fdone) ; exp2
 	db b(constant)+3, b(mul), b(cell_init)
 	db b(constant)+5, b(cell_init)
-	db b(constant)+0, b(cell_init)
 
 	; Instrument 0 update
 	db b(proc)
@@ -94,8 +93,7 @@ Bytecodes:
 	db b(fop)+(~0xfe), b(fdone) ; sin
 	db b(cell_read), b(stack_load)+0, b(constant)+4, b(mul), b(cell_store)+2
 	db b(mul), b(expand), b(add)
-	db b(cell_read), b(stack_load)+0, b(constant)+1, b(add), b(cell_store)+3
-	db b(note_property)+NOTE_LENGTH, b(compare)+COMPARE_EQ, b(kill)
+	db b(note_property)+NOTE_LENGTH, b(constant)+0, b(compare)+COMPARE_GE, b(kill)
 
 	db b(proc), 0
 

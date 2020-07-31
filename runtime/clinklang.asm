@@ -238,12 +238,82 @@ RenderSamples:
 	ret
 
 ResetState:
+	; Clear buffer space
 	mov			edi, BufferSpace
 	mov			[BufferAllocPtr], edi
 	mov			ecx, BUFFER_SPACE*4
 	xor			eax, eax
 	rep stosd
+
+	; Clear note space
+	mov			edi, NoteHeaders
+	mov			ecx, MAX_NOTE_COUNT*4
+	xor			eax, eax
+	rep stosd
+
+	; Clear note chains
+	mov			edi, NoteChains
+	mov			ecx, MAX_TRACKS
+	xor			eax, eax
+	rep stosd
+
+	; Make space for notes
+	mov			edi, TrackStarts
+	mov			ebx, NoteHeaders
+	mov			ecx, MAX_TRACKS
+.trackloop:
+	add			ebx, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
+	mov			dword [ebx], 0x80000000 ; Track terminator
+	mov			[edi], ebx
+	scasd
+	loop		.trackloop
 	ret
+
+NoteOn:
+	; EAX = Channel
+	; EBX = Sample offset
+	; ECX = Key
+	; EDX = Velocity
+
+	mov			edi, [TrackStarts + eax*4]
+	sub			edi, byte 16
+	mov			[TrackStarts + eax*4], edi
+
+	jmp			.bubble
+.bubbleloop:
+	movapd		xmm0, [edi + 16]
+	movapd		[edi], xmm0
+	add			edi, byte 16
+.bubble:
+	cmp			[edi + 16], ebx
+	jbe			.bubbleloop
+
+	mov			[edi], ebx
+	mov			dword [edi + 4], 0xC0000000
+	mov			[edi + 8], ecx
+	mov			[edi + 12], edx
+	ret
+
+NoteOff:
+	; EAX = Channel
+	; EBX = Sample offset
+	; ECX = Key
+
+	lea			edi, [NoteChains + eax*4]
+
+.noteloop:
+	mov			edi, [edi]
+	test		edi, edi
+	jz			.done
+	cmp			[edi + 8], ecx
+	jne			.noteloop
+	cmp			dword [edi + 4], 0xC0000000
+	jg			.noteloop
+
+	mov			[edi + 4], ebx
+.done:
+	ret
+
 
 ;; Snips
 
@@ -345,9 +415,9 @@ ResetState:
 	movapd		[edi], xmm0
 
 	; Chain note object into note list
-	mov			eax, [NoteChain]
+	mov			eax, [NoteChains + ebp*4]
 	mov			[edi], eax
-	mov			[NoteChain], edi
+	mov			[NoteChains + ebp*4], edi
 
 	; Call instrument init procedure
 	add			edi, byte 16
@@ -359,7 +429,7 @@ ResetState:
 .no_more_notes:
 
 	; Process all active notes for this instrument
-	mov			eax, NoteChain
+	lea			eax, [NoteChains + ebp*4]
 .activeloop:
 	mov			edi, eax
 .killloop:
@@ -376,6 +446,7 @@ ResetState:
 	call		[ProcPointers + ebp*8 + 3*4]
 
 	pop			eax
+	dec			dword [eax + 4]
 	jmp			.activeloop
 .activedone:
 
@@ -613,16 +684,17 @@ section	bufferpt data align=4
 BufferAllocPtr:
 	dd BufferSpace
 
-section notech data align=4
-NoteChain:
-	dd 0
-
 section instidx bss align=4
 InstrumentIndex:
 	resd 1
 
 section tracks bss align=4
 TrackStarts:
+.align16:
+	resd MAX_TRACKS
+
+section notech bss align=4
+NoteChains:
 .align16:
 	resd MAX_TRACKS
 

@@ -63,6 +63,8 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Byt
 	("cos",        sig!([mono] [mono]),                bc![Fop(Fcos), Fdone]),
 	("exp2",       sig!([mono] [mono]),                bc![Fop(Frndint), Exp2Body, Fdone]),
 	("floor",      sig!([generic] [generic]),          bc![Round(Floor)]),
+	("gate",       sig!([] [mono bool]),               bc![Constant(0), ReadNoteProperty(Length), Compare(Greater)]),
+	("key",        sig!([] [mono]),                    bc![ReadNoteProperty(Key)]),
 	("max",        sig!([generic, generic] [generic]), bc![Max]),
 	("min",        sig!([generic, generic] [generic]), bc![Min]),
 	("mlog2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
@@ -73,6 +75,7 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Byt
 	("sqrt",       sig!([generic] [generic]),          bc![Sqrt]),
 	("tan",        sig!([mono] [mono]),                bc![Fop(Fptan), Fdone, Fdone]),
 	("trunc",      sig!([generic] [generic]),          bc![Round(Truncate)]),
+	("velocity",   sig!([] [mono]),                    bc![ReadNoteProperty(Velocity)]),
 ];
 
 pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
