@@ -289,7 +289,7 @@ NoteOn:
 	jbe			.bubbleloop
 
 	mov			[edi], ebx
-	mov			dword [edi + 4], 0xC0000000
+	mov			dword [edi + 4], 0x7FFFFFFF
 	mov			[edi + 8], ecx
 	mov			[edi + 12], edx
 	ret
@@ -307,8 +307,8 @@ NoteOff:
 	jz			.done
 	cmp			[edi + 8], ecx
 	jne			.noteloop
-	cmp			dword [edi + 4], 0xC0000000
-	jg			.noteloop
+	cmp			dword [edi + 4], 0x10000000
+	jl			.noteloop
 
 	mov			[edi + 4], ebx
 .done:
