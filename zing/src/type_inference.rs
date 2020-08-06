@@ -82,9 +82,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					},
 					// Instrument inputs default to dynamic stereo number, only
 					// inputs can be static, all static inputs must appear before all
-					// dynamic inputs, there must be the same number of dynamic inputs
-					// and outputs, the types of these must match up, and outputs
-					// default to the types of their corresponding inputs.
+					// dynamic inputs, there must be exactly one output, and the type
+					// of that output must be stereo number.
 					ProcedureKind::Instrument => {
 						if is_output {
 							match item_type.scope {
@@ -93,16 +92,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 										"Instrument outputs can't be static.");
 								},
 								Some(Scope::Dynamic) | None => {
-									if output_count < instrument_types.len() {
-										let input = &instrument_types[output_count];
-										item_type.inherit(input);
-										if item_type != input {
-											self.compiler.report_error(&*variable_name,
-												"Instrument output type doesn't match the corresponding input.");
-										}
-									} else if output_count == instrument_types.len() {
+									item_type.inherit(&type_spec!(dynamic stereo number));
+									if *item_type != type_spec!(dynamic stereo number) {
 										self.compiler.report_error(&*variable_name,
-											"Instrument has more outputs than dynamic inputs.");
+											"Instrument output type must be stereo number.");
 									}
 									output_count += 1;
 								},
@@ -134,8 +127,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 				}
 			}
-			if output_count < instrument_types.len() {
-				self.compiler.report_error(&proc.name, "Instrument has fewer outputs than dynamic inputs.");
+			if proc.kind == ProcedureKind::Instrument && output_count != 1 {
+				self.compiler.report_error(&proc.name, "Instruments must have exactly one output.");
 			}
 
 			// Extract signature

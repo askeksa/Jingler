@@ -127,7 +127,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							(inputs.len(), outputs.len())
 						},
 						ProcedureKind::Instrument => {
-							(inputs.len(), inputs.len())
+							(inputs.len() + 1, inputs.len() + 1)
 						},
 					}
 				},
@@ -176,6 +176,16 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.adjust_stack(&stack_adjust[..], self.stack_height);
 				},
 				ProcedureKind::Instrument => {
+					// Extra implicit input for accumulating instrument outputs.
+					let accumulator = Pattern {
+						items: vec![PatternItem {
+							name: Id {
+								text: "#acc#", before: outputs.before,
+							},
+							item_type: type_spec!(dynamic stereo number),
+						}],
+						..*inputs
+					};
 					let is_static = (id & 1) == 0;
 					if is_static {
 						let static_inputs = Pattern {
@@ -194,17 +204,24 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							..*inputs
 						};
 						self.initialize_stack(&static_inputs, None);
+						self.add_stack_indices(&accumulator, None, true);
 						self.find_cells_in_body(body)?;
 						self.mark_implicit_cells_from_outputs(outputs);
 						self.initialize_stack(inputs, None);
+						self.add_stack_indices(&accumulator, None, true);
 						self.generate_static_body(body)?;
-						self.adjust_stack(&[], self.stack_height - inputs.items.len());
+						// Leave only the inputs (including the accumulator) on the stack.
+						self.adjust_stack(&[], self.stack_height - (inputs.items.len() + 1));
 					} else {
 						self.initialize_stack(inputs, None);
+						self.add_stack_indices(&accumulator, None, true);
 						self.generate_dynamic_body(body)?;
-						let stack_adjust: Vec<usize> = (0..(inputs.items.len() - outputs.items.len()))
-							.chain(self.stack_adjust_from_outputs(outputs)).collect();
-						self.adjust_stack(&stack_adjust[..], self.stack_height);
+						// Leave the inputs (including the accumulator) and the output on the stack.
+						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
+						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
+						self.adjust_stack(&stack_adjust, self.stack_height);
+						// Add the output to the accumulator.
+						self.emit(bc![Add]);
 					}
 				},
 			}
@@ -589,10 +606,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(bc![Call(proc_id)]);
 							},
 							(Function, BuiltIn { bc, .. }) => {
-								if bc.iter().any(|c| match c {
-									Bytecode::ReadNoteProperty(_) => true,
-									_ => false,
-								}) && self.current_kind != ProcedureKind::Instrument {
+								let is_note_property = bc.iter().any(|c| matches!(c, Bytecode::ReadNoteProperty(_)));
+								if is_note_property && self.current_kind != ProcedureKind::Instrument {
 									self.unsupported(exp, "Note property outside instrument");
 								}
 								for arg in args {
@@ -610,10 +625,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
 								let (_, inputs, outputs) = &self.signatures[*proc_index];
-								let (in_count, out_count) = (inputs.len(), outputs.len());
+								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
 									self.generate(arg);
 								}
+								self.emit(bc![Constant(0), Expand]);
 								self.emit(bc![CallInstrument]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
