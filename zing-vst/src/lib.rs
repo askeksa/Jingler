@@ -163,6 +163,11 @@ impl Plugin for ZingPlugin {
 							// Note Off
 							NoteOff(channel, delta_frames, key);
 						},
+						0xB0 if data[1] == 120 => {
+							// All sound off
+							self.release_program();
+							self.init_program();
+						},
 						_ => {},
 					}
 				},
