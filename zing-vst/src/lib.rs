@@ -31,7 +31,7 @@ struct ZingPlugin {
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
-	program: Vec<Bytecode>,
+	program: Option<Vec<Bytecode>>,
 	constants: Vec<u32>,
 	bytecode_compiled: bool,
 }
@@ -46,7 +46,7 @@ impl Default for ZingPlugin {
 			watcher,
 			watcher_receiver: rx,
 			bytecode_compiled: false,
-			program: vec![],
+			program: None,
 			constants: vec![],
 		}
 	}
@@ -58,15 +58,17 @@ impl ZingPlugin {
 		match fs::read_to_string(&self.zing_filename) {
 			Ok(s) => match compiler::Compiler::new(&self.zing_filename, &s).compile() {
 				Ok(program) => {
-					self.program = program;
+					self.program = Some(program);
 					self.init_program();
 				},
 				Err(errors) => {
+					self.program = None;
 					let message = errors.into_iter().collect::<String>();
 					simple_message_box::create_message_box(&message, "Error");
 				},
 			},
 			Err(e) => {
+				self.program = None;
 				let message = format!("Error reading '{}': {}", self.zing_filename, e);
 				simple_message_box::create_message_box(&message, "Error");
 			},
@@ -75,18 +77,20 @@ impl ZingPlugin {
 
 	fn init_program(&mut self) {
 		debug_assert!(!self.bytecode_compiled);
-		match encode_bytecodes(&self.program, self.sample_rate) {
-			Ok((bytecodes, constants)) => unsafe {
-				CompileBytecode(bytecodes.as_ptr());
-				self.bytecode_compiled = true;
+		if let Some(ref program) = self.program {
+			match encode_bytecodes(program, self.sample_rate) {
+				Ok((bytecodes, constants)) => unsafe {
+					CompileBytecode(bytecodes.as_ptr());
+					self.bytecode_compiled = true;
 
-				RunStaticCode(constants.as_ptr());
-				self.constants = constants;
-			},
-			Err(message) => {
-				let message = format!("Encoding error: {}", message);
-				simple_message_box::create_message_box(&message, "Error");
-			},
+					RunStaticCode(constants.as_ptr());
+					self.constants = constants;
+				},
+				Err(message) => {
+					let message = format!("Encoding error: {}", message);
+					simple_message_box::create_message_box(&message, "Error");
+				},
+			}
 		}
 	}
 
@@ -143,6 +147,7 @@ impl Plugin for ZingPlugin {
 	}
 
 	fn process_events(&mut self, events: &Events) {
+		if !self.bytecode_compiled { return; }
 		for event in events.events() {
 			match event {
 				Event::Midi(MidiEvent { data, delta_frames, .. }) => {
