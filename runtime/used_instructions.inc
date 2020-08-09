@@ -16,12 +16,12 @@
 %define I_FDONE 1
 %define I_FOP 15
 %define I_PROC 1
-%define I_PROC_CALL 50
+%define I_PROC_CALL 75
 %define I_CONSTANT 50
 %define I_NOTE_PROPERTY 3
-%define I_STACK_LOAD 25
-%define I_STACK_STORE 25
-%define I_CELL_STORE 25
+%define I_STACK_LOAD 20
+%define I_STACK_STORE 20
+%define I_CELL_STORE 10
 %define I_LABEL 1
 %define I_IF 1
 %define I_LOOPJUMP 1
