@@ -158,21 +158,21 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				ProcedureKind::Module => {
 					let is_static = (id & 1) == 0;
 					if is_static {
-						self.initialize_stack(inputs, Some(Scope::Static));
+						self.initialize_stack(inputs, Some(Scope::Static), false);
 						self.find_cells_in_body(body)?;
 						self.mark_implicit_cells_from_outputs(outputs);
-						self.initialize_stack(inputs, Some(Scope::Static));
+						self.initialize_stack(inputs, Some(Scope::Static), false);
 						self.generate_static_body(body)?;
 						self.adjust_stack(&[], self.stack_height);
 					} else {
-						self.initialize_stack(inputs, Some(Scope::Dynamic));
+						self.initialize_stack(inputs, Some(Scope::Dynamic), false);
 						self.generate_dynamic_body(body)?;
 						let stack_adjust = self.stack_adjust_from_outputs(outputs);
 						self.adjust_stack(&stack_adjust[..], self.stack_height);
 					}
 				},
 				ProcedureKind::Function => {
-					self.initialize_stack(inputs, None);
+					self.initialize_stack(inputs, None, false);
 					for statement in body {
 						self.generate_code_for_statement(statement)?;
 					}
@@ -181,45 +181,25 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				},
 				ProcedureKind::Instrument => {
 					// Extra implicit input for accumulating instrument outputs.
-					let accumulator = Pattern {
-						items: vec![PatternItem {
-							name: Id {
-								text: "#acc#", before: outputs.before,
-							},
-							item_type: type_spec!(dynamic stereo number),
-						}],
-						..*inputs
-					};
+					let mut real_inputs = inputs.clone();
+					real_inputs.items.push(PatternItem {
+						name: Id {
+							text: "#acc#", before: outputs.before,
+						},
+						item_type: type_spec!(dynamic stereo number),
+					});
 					let is_static = (id & 1) == 0;
 					if is_static {
-						let static_inputs = Pattern {
-							items: inputs.items.iter().map(|item| {
-								if item.item_type.scope == Some(Scope::Static) {
-									item.clone()
-								} else {
-									PatternItem {
-										name: Id {
-											text: "#dummy#", before: item.name.pos_before()
-										},
-										item_type: item.item_type,
-									}
-								}
-							}).collect(),
-							..*inputs
-						};
-						self.initialize_stack(&static_inputs, None);
-						self.add_stack_indices(&accumulator, None, true);
+						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
 						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT));
 						self.mark_implicit_cells_from_outputs(outputs);
-						self.initialize_stack(inputs, None);
-						self.add_stack_indices(&accumulator, None, true);
+						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.generate_static_body(body)?;
 						// Leave only the inputs (including the accumulator) on the stack.
-						self.adjust_stack(&[], self.stack_height - (inputs.items.len() + 1));
+						self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 					} else {
-						self.initialize_stack(inputs, None);
-						self.add_stack_indices(&accumulator, None, true);
+						self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 						self.generate_dynamic_body(body)?;
 						// Run autokill code
 						let counter_stack_index = self.cell_stack_index;
@@ -355,21 +335,23 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn generate_code_for_statement(&mut self, statement: &'ast Statement<'ast>) -> Result<(), CompileError> {
 		let Statement::Assign { node, exp } = statement;
 		self.generate(exp);
-		self.add_stack_indices(node, None, false);
+		self.add_stack_indices(node, None, false, false);
 		self.compiler.check_errors()
 	}
 
-	fn initialize_stack(&mut self, inputs: &Pattern<'ast>, scope: Option<Scope>) {
+	fn initialize_stack(&mut self, inputs: &Pattern<'ast>, scope: Option<Scope>, all_scopes: bool) {
 		self.stack_index.clear();
 		self.next_stack_index = 0;
 		self.stack_height = 0;
-		self.add_stack_indices(inputs, scope, true);
+		self.add_stack_indices(inputs, scope, true, all_scopes);
 	}
 
-	fn add_stack_indices(&mut self, pattern: &Pattern<'ast>, scope: Option<Scope>, adjust_stack: bool) {
+	fn add_stack_indices(&mut self, pattern: &Pattern<'ast>, scope: Option<Scope>, adjust_stack: bool, all_scopes: bool) {
 		for item in &pattern.items {
 			if scope.is_none() || item.item_type.scope == scope {
 				self.stack_index.insert(item.name.text, self.next_stack_index);
+			}
+			if scope.is_none() || item.item_type.scope == scope || all_scopes {
 				self.next_stack_index += 1;
 				if adjust_stack {
 					self.stack_height += 1;
@@ -385,7 +367,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		debug_assert!(self.update_queue.is_empty());
 
 		for Statement::Assign { node, .. } in body {
-			self.add_stack_indices(node, Some(Scope::Static), false);
+			self.add_stack_indices(node, Some(Scope::Static), false, false);
 		}
 
 		for Statement::Assign { node, exp } in body {
