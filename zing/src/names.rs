@@ -126,6 +126,7 @@ impl<'ast> Names<'ast> {
 	fn insert_variable(&mut self,
 			program: &Program<'ast>, compiler: &mut Compiler,
 			proc_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
+		if name.text == "_" { return; }
 		self.variables[proc_index].entry(name.text).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let proc = &program.procedures[proc_index];

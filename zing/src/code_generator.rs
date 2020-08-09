@@ -348,7 +348,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 	fn add_stack_indices(&mut self, pattern: &Pattern<'ast>, scope: Option<Scope>, adjust_stack: bool, all_scopes: bool) {
 		for item in &pattern.items {
-			if scope.is_none() || item.item_type.scope == scope {
+			if (scope.is_none() || item.item_type.scope == scope) && item.name.text != "_" {
 				self.stack_index.insert(item.name.text, self.next_stack_index);
 			}
 			if scope.is_none() || item.item_type.scope == scope || all_scopes {
