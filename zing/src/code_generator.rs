@@ -9,6 +9,10 @@ use crate::builtin::*;
 use crate::compiler::{CompileError, Compiler, Location};
 use crate::names::*;
 
+const AUTOKILL_CELL_INIT: Expression<'static> = Expression::Number {
+	before: 0, value: 0.0, after: 0
+};
+
 pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
@@ -206,6 +210,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.initialize_stack(&static_inputs, None);
 						self.add_stack_indices(&accumulator, None, true);
 						self.find_cells_in_body(body)?;
+						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT));
 						self.mark_implicit_cells_from_outputs(outputs);
 						self.initialize_stack(inputs, None);
 						self.add_stack_indices(&accumulator, None, true);
@@ -216,6 +221,20 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.initialize_stack(inputs, None);
 						self.add_stack_indices(&accumulator, None, true);
 						self.generate_dynamic_body(body)?;
+						// Run autokill code
+						let counter_stack_index = self.cell_stack_index;
+						let counter_offset = self.stack_height - counter_stack_index;
+						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
+						self.emit(bc![
+							StackLoad(0), SplitLR, Add, // Mono of output
+							Constant(0x46000000), Mul, Round(Nearest), // 0 when small
+							Constant(0), Compare(Eq), // True when small
+							StackLoad(counter_offset as u16), And, // Preserve counter when small
+							Constant(0x3F800000), Add, // Increment counter
+							StackLoad(0), CellStore(counter_cell_index as u16), // Update counter
+							Constant(0x46000000), Compare(Less), // Has counter reached threshold?
+							Kill // Kill when counter reaches threshold
+						]);
 						// Leave the inputs (including the accumulator) and the output on the stack.
 						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
 						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
