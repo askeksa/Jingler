@@ -148,6 +148,7 @@ impl Plugin for ZingPlugin {
 
 	fn process_events(&mut self, events: &Events) {
 		if !self.bytecode_compiled { return; }
+		let mut dirty = true;
 		for event in events.events() {
 			match event {
 				Event::Midi(MidiEvent { data, delta_frames, .. }) => {
@@ -158,6 +159,7 @@ impl Plugin for ZingPlugin {
 						0x90 => unsafe {
 							// Note On
 							NoteOn(channel, delta_frames, key, velocity);
+							dirty = true;
 						},
 						0x80 => unsafe {
 							// Note Off
@@ -165,8 +167,11 @@ impl Plugin for ZingPlugin {
 						},
 						0xB0 if data[1] == 120 => {
 							// All sound off
-							self.release_program();
-							self.init_program();
+							if dirty {
+								self.release_program();
+								self.init_program();
+								dirty = false;
+							}
 						},
 						_ => {},
 					}
