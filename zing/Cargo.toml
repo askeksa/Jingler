@@ -11,10 +11,8 @@ regex = "0.2.0"
 
 bytecode = { path = "../bytecode" }
 
-[build-dependencies]
-lalrpop = "0.18.1"
-
-[dependencies.lalrpop]
+[build-dependencies.lalrpop]
+version = "0.18.1"
 features = ["lexer"]
 
 [lib]
