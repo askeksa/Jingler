@@ -1,6 +1,14 @@
 
-global ClinklangCompute
+extern __imp__OpenFile@12
+extern __imp__ReadFile@20
+extern __imp__CloseHandle@4
 
+OF_READ equ 0x00000000
+
+GMDLS_SIZE equ 0x350000 ; Real size 0x348014
+GMDLS_OFFSETS equ 0x43E3A
+GMDLS_DATA equ 0x4462C
+GMDLS_COUNT equ 495
 
 MAX_STACK equ 0x100
 STATE_SPACE equ 0x1000
@@ -154,6 +162,25 @@ UnpackNotes:
 
 	dec			edx
 	jns			.componentloop
+	ret
+
+LoadGmDls:
+	mov			edi, GmDls
+
+	push		byte OF_READ
+	push		edi
+	push		GmDlsName
+	call		[__imp__OpenFile@12]
+	push		eax ; for CloseFile
+
+	push		byte 0
+	push		edi
+	push		GMDLS_SIZE
+	push		edi
+	push		eax
+	call		[__imp__ReadFile@20]
+
+	call		[__imp__CloseHandle@4]
 	ret
 
 GenerateCode:
@@ -368,6 +395,22 @@ NoteOff:
 	mul			ecx
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
+
+	snip		gmdls, rt, I_GMDLS
+	xor			edx, edx
+	cvtsd2si	eax, xmm0
+	cmp			eax, GMDLS_COUNT
+	jae			.out_of_range
+	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
+	add			eax, GmDls + GMDLS_DATA
+	add			eax, [eax]
+	cvtsd2si	ecx, [ebx]
+	add			ecx, ecx
+	cmp			[eax + 8], ecx
+	jbe			.out_of_range
+	movsx		edx, word [eax + 12 + ecx]
+.out_of_range:
+	cvtsi2sd	xmm0, edx
 
 	snip		buffer_store, rt, I_BUFFER_STORE
 	xor			edx, edx
@@ -733,3 +776,12 @@ section music bss align=8
 MusicBuffer:
 .align24:
 	resq MUSIC_SPACE
+
+section gmdls bss align=4
+GmDls:
+.align16:
+	resb GMDLS_SIZE
+
+section gmdlsnam rdata align=1
+GmDlsName:
+	db "drivers/gm.dls",0

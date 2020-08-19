@@ -44,6 +44,7 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 	let ADDSUB = next(1);
 	let FPUTNEXT = next(1);
 	let RANDOM = next(1);
+	let GMDLS = next(1);
 	let BUFFER_STORE = next(1);
 	let BUFFER_LOAD = next(1);
 	let BUFFER_ALLOC = next(1);
@@ -87,6 +88,7 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 			Bytecode::AddSub => ADDSUB,
 			Bytecode::Fputnext => FPUTNEXT,
 			Bytecode::Random => RANDOM,
+			Bytecode::GmDls => GMDLS,
 			Bytecode::BufferStore => BUFFER_STORE,
 			Bytecode::BufferLoad => BUFFER_LOAD,
 			Bytecode::BufferAlloc => BUFFER_ALLOC,

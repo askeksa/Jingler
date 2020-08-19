@@ -29,6 +29,8 @@ _CompileBytecode:
 	; Parameters: Bytecode
 	pusha
 
+	call	LoadGmDls
+
 	push	PAGE_EXECUTE_READWRITE
 	push	MEM_COMMIT | MEM_RESERVE
 	push	CODE_SPACE

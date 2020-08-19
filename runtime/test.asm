@@ -14,6 +14,8 @@ extern __imp__fclose
 section main text align=1
 
 main:
+	call	LoadGmDls
+
 	mov		esi, Notes
 	mov		ecx, 1
 	call	UnpackNotes

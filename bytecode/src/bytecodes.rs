@@ -87,6 +87,7 @@ pub enum Bytecode {
 
 	// Misc
 	Random,
+	GmDls,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +175,7 @@ impl Bytecode {
 			Else => panic!("stack_change on 'else'"),
 
 			Random => (2, 1),
+			GmDls => (2, 1),
 		}
 	}
 }
