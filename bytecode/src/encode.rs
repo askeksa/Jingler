@@ -41,10 +41,11 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 	let KILL = next(1);
 	let CELL_INIT = next(1);
 	let CELL_READ = next(1);
+	let GMDLS_LENGTH = next(1);
+	let GMDLS_SAMPLE = next(1);
 	let ADDSUB = next(1);
 	let FPUTNEXT = next(1);
 	let RANDOM = next(1);
-	let GMDLS = next(1);
 	let BUFFER_STORE = next(1);
 	let BUFFER_LOAD = next(1);
 	let BUFFER_ALLOC = next(1);
@@ -85,10 +86,11 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 			Bytecode::Kill => KILL,
 			Bytecode::CellInit => CELL_INIT,
 			Bytecode::CellRead => CELL_READ,
+			Bytecode::GmDlsLength => GMDLS_LENGTH,
+			Bytecode::GmDlsSample => GMDLS_SAMPLE,
 			Bytecode::AddSub => ADDSUB,
 			Bytecode::Fputnext => FPUTNEXT,
 			Bytecode::Random => RANDOM,
-			Bytecode::GmDls => GMDLS,
 			Bytecode::BufferStore => BUFFER_STORE,
 			Bytecode::BufferLoad => BUFFER_LOAD,
 			Bytecode::BufferAlloc => BUFFER_ALLOC,

@@ -377,6 +377,35 @@ NoteOff:
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
+	snip		gmdls_length, st, I_GMDLS_LENGTH
+	xor			edx, edx
+	cvtsd2si	eax, [ebx]
+	cmp			eax, GMDLS_COUNT
+	jae			.out_of_range
+	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
+	add			eax, GmDls + GMDLS_DATA
+	add			eax, [eax]
+	mov			edx, [eax + 8]
+	sar			edx, 1
+.out_of_range:
+	cvtsi2sd	xmm0, edx
+
+	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
+	xor			edx, edx
+	cvtsd2si	eax, [ebx]
+	cmp			eax, GMDLS_COUNT
+	jae			.out_of_range
+	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
+	add			eax, GmDls + GMDLS_DATA
+	add			eax, [eax]
+	cvtsd2si	ecx, xmm0
+	add			ecx, ecx
+	cmp			[eax + 8], ecx
+	jbe			.out_of_range
+	movsx		edx, word [eax + 12 + ecx]
+.out_of_range:
+	cvtsi2sd	xmm0, edx
+
 	snip		addsub, rt, I_ADDSUB
 	addsubpd	xmm0, [ebx]
 
@@ -395,22 +424,6 @@ NoteOff:
 	mul			ecx
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
-
-	snip		gmdls, rt, I_GMDLS
-	xor			edx, edx
-	cvtsd2si	eax, xmm0
-	cmp			eax, GMDLS_COUNT
-	jae			.out_of_range
-	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
-	add			eax, GmDls + GMDLS_DATA
-	add			eax, [eax]
-	cvtsd2si	ecx, [ebx]
-	add			ecx, ecx
-	cmp			[eax + 8], ecx
-	jbe			.out_of_range
-	movsx		edx, word [eax + 12 + ecx]
-.out_of_range:
-	cvtsi2sd	xmm0, edx
 
 	snip		buffer_store, rt, I_BUFFER_STORE
 	xor			edx, edx

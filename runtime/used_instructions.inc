@@ -5,10 +5,11 @@
 %define I_KILL 1
 %define I_CELL_INIT 1
 %define I_CELL_READ 1
+%define I_GMDLS_LENGTH 1
+%define I_GMDLS_SAMPLE 1
 %define I_ADDSUB 1
 %define I_FPUTNEXT 1
 %define I_RANDOM 1
-%define I_GMDLS 1
 %define I_BUFFER_STORE 1
 %define I_BUFFER_LOAD 1
 %define I_BUFFER_ALLOC 1
