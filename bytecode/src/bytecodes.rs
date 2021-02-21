@@ -1,4 +1,3 @@
-#![allow(unused)]
 
 use std::f32;
 use std::fmt::{Display, Error, Formatter};
