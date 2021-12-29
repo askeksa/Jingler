@@ -140,7 +140,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			//println!("{:4}  {:2}  {:?}", self.bc.len(), self.stack_height, code);
 			self.bc.push(code);
 			if popped > self.stack_height {
-				panic!(format!("Stack underflow: {:?}", self.bc));
+				panic!("Stack underflow: {:?}", self.bc);
 			}
 			self.stack_height -= popped;
 			self.stack_height += pushed;
