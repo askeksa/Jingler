@@ -429,6 +429,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										self.cell_init.push((StateKind::Delay, &args[0]));
 										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
+									"dyndelay" => {
+										self.cell_init.push((StateKind::Delay, &args[0]));
+										self.find_cells(&args[1]);
+										self.update_queue.push_back((StateKind::Delay, &args[2]));
+									},
 									_ => panic!("Unknown built-in module"),
 								}
 							},
@@ -588,6 +593,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										self.cell_stack_index += 1;
 										self.emit(bc![StackLoad(offset as u16), BufferLoad]);
 										self.update_queue.push_back((StateKind::Delay, &args[1]));
+									},
+									"dyndelay" => {
+										let offset = self.stack_height - self.cell_stack_index - 1;
+										self.cell_stack_index += 1;
+										self.emit(bc![StackLoad(offset as u16)]);
+										self.generate(&args[1]);
+										self.emit(bc![BufferLoadWithOffset]);
+										self.update_queue.push_back((StateKind::Delay, &args[2]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}

@@ -81,8 +81,9 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Byt
 ];
 
 pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
-	("cell",  sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
-	("delay", sig!([static mono number, dynamic generic typeless] [dynamic generic typeless]))
+	("cell",     sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
+	("delay",    sig!([static mono number, dynamic generic typeless] [dynamic generic typeless])),
+	("dyndelay", sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
 ];
 
 pub trait OperatorSemantics {
