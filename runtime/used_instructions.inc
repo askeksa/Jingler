@@ -10,8 +10,9 @@
 %define I_ADDSUB 1
 %define I_FPUTNEXT 1
 %define I_RANDOM 1
-%define I_BUFFER_STORE 1
+%define I_BUFFER_LOAD_WITH_OFFSET 1
 %define I_BUFFER_LOAD 1
+%define I_BUFFER_STORE_AND_STEP 1
 %define I_BUFFER_ALLOC 1
 %define I_CALL_INSTRUMENT 1
 %define I_EXP2_BODY 1

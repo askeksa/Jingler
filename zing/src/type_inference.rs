@@ -549,8 +549,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				},
 				_ => vec![TypeResult::Error],
 			}
-		} else if name.text == "length" {
-			match self.expect_single(exp, "operand of 'length' property") {
+		} else if name.text == "index" || name.text == "length" {
+			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
 				TypeResult::Type {
 					inferred_type: Type {
 						scope,
@@ -559,7 +559,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 				} => {
 					if value_type != ValueType::Buffer {
-						self.compiler.report_error(loc, "Can only take 'length' property on buffer.");
+						self.compiler.report_error(loc,
+							format!("Can only take '{}' property on buffer.", name.text));
 						vec![TypeResult::Error]
 					} else {
 						vec![TypeResult::Type {

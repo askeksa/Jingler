@@ -425,31 +425,43 @@ NoteOff:
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
-	snip		buffer_store, rt, I_BUFFER_STORE
-	xor			edx, edx
-	cvtsd2si	eax, [ebx]
-	add			ebx, byte 16
-	div			dword [ebx]
-	shl			edx, 4
-	add			edx, [ebx + 4]
-	movapd		[edx], xmm0
+	snip		buffer_load_with_offset, rt, I_BUFFER_LOAD_WITH_OFFSET
+	cvtsd2si	eax, xmm0
+	add			eax, [ebx]
+	cmp			eax, [ebx + 4]
+	jb			.no_wrap
+	sub			eax, [ebx + 4]
+.no_wrap:
+	shl			eax, 4
+	add			eax, [ebx + 8]
+	movapd		xmm0, [eax]
 
 	snip		buffer_load, st, I_BUFFER_LOAD
-	xor			edx, edx
-	cvtsd2si	eax, [ebx]
-	add			ebx, byte 16
-	div			dword [ebx]
-	shl			edx, 4
-	add			edx, [ebx + 4]
-	movapd		xmm0, [edx]
+	mov			eax, [ebx]
+	shl			eax, 4
+	add			eax, [ebx + 8]
+	movapd		xmm0, [eax]
+
+	snip		buffer_store_and_step, rs, I_BUFFER_STORE_AND_STEP
+	mov			eax, [ebx]
+	shl			eax, 4
+	add			eax, [ebx + 8]
+	movapd		[eax], xmm0
+
+	dec			dword [ebx]
+	jns			.no_step_wrap
+	mov			eax, [ebx + 4]
+	add			[ebx], eax
+.no_step_wrap:
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
 	mov			eax, [BufferAllocPtr]
-	mov			[ebx + 4], eax
+	mov			[ebx + 8], eax
 	cvtsd2si	eax, xmm0
-	mov			[ebx], eax
+	mov			[ebx + 4], eax
 	shl			eax, 4
 	add			[BufferAllocPtr], eax
+	and			dword [ebx], byte 0
 
 	snip		call_instrument, ss, I_CALL_INSTRUMENT
 	pusha
@@ -706,7 +718,7 @@ InoutCodes:
 	iinstr	split_lr, tr, 0x17 ; movhpd r -> m
 	iinstr	pop, rb, 0x28 ; movapd m -> r
 	iinstr	popnext, rb, 0x29 ; movapd r -> m
-	iinstr	buffer_length, st, 0x2a ; cvtpi2pd
+	iinstr	buffer_index_and_length, st, 0x2a ; cvtpi2pd
 	iinstr	cmp, rr, 0x2e ; ucomisd
 	iinstr	sqrt, st, 0x51
 	iinstr	and, rt, 0x54

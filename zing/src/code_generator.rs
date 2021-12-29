@@ -273,7 +273,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.emit(bc![CellInit]);
 				},
 				StateKind::Delay => {
-					self.emit(bc![BufferAlloc, Constant(0), MergeLR, CellInit]);
+					self.emit(bc![BufferAlloc, CellInit]);
 				},
 			}
 		}
@@ -318,13 +318,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				StateKind::Delay => {
 					let stack_index = cell_stack_index_base + cell_index;
 					let offset = self.stack_height - stack_index - 1;
-					self.emit(bc![StackLoad(offset as u16), SplitLR]);
+					self.emit(bc![StackLoad(offset as u16)]);
 					self.generate(exp);
-					self.emit(bc![
-						BufferStore, Pop,
-						StackLoad(offset as u16), SplitLR, Constant(1f32.to_bits()), Add, MergeLR,
-						CellStore(cell_index as u16)
-					]);
+					self.emit(bc![BufferStoreAndStep, CellStore(cell_index as u16)]);
 				}
 			}
 			cell_index += 1;
@@ -590,7 +586,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									"delay" => {
 										let offset = self.stack_height - self.cell_stack_index - 1;
 										self.cell_stack_index += 1;
-										self.emit(bc![StackLoad(offset as u16), SplitLR, BufferLoad]);
+										self.emit(bc![StackLoad(offset as u16), BufferLoad]);
 										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
 									_ => panic!("Unknown built-in module"),
@@ -662,8 +658,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					"right" => {
 						self.emit(bc![SplitRL, PopNext]);
 					},
+					"index" => {
+						self.emit(bc![BufferIndexAndLength]);
+					},
 					"length" => {
-						self.emit(bc![BufferLength]);
+						self.emit(bc![BufferIndexAndLength, SplitRL, PopNext]);
 					},
 					_ => panic!("Unknown property"),
 				}
@@ -674,7 +673,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			BufferIndex { exp, index, .. } => {
 				self.generate(exp);
 				self.generate(index);
-				self.emit(bc![BufferLoad]);
+				self.emit(bc![StackLoad(1), BufferIndexAndLength, Sub, BufferLoadWithOffset]);
 			},
 			Expand { exp } => {
 				self.generate(exp);

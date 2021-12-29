@@ -46,8 +46,9 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 	let ADDSUB = next(1);
 	let FPUTNEXT = next(1);
 	let RANDOM = next(1);
-	let BUFFER_STORE = next(1);
+	let BUFFER_LOAD_WITH_OFFSET = next(1);
 	let BUFFER_LOAD = next(1);
+	let BUFFER_STORE_AND_STEP = next(1);
 	let BUFFER_ALLOC = next(1);
 	let CALL_INSTRUMENT = next(1);
 	let EXP2_BODY = next(1);
@@ -91,8 +92,9 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 			Bytecode::AddSub => ADDSUB,
 			Bytecode::Fputnext => FPUTNEXT,
 			Bytecode::Random => RANDOM,
-			Bytecode::BufferStore => BUFFER_STORE,
+			Bytecode::BufferLoadWithOffset => BUFFER_LOAD_WITH_OFFSET,
 			Bytecode::BufferLoad => BUFFER_LOAD,
+			Bytecode::BufferStoreAndStep => BUFFER_STORE_AND_STEP,
 			Bytecode::BufferAlloc => BUFFER_ALLOC,
 			Bytecode::CallInstrument => CALL_INSTRUMENT,
 			Bytecode::Exp2Body => EXP2_BODY,
@@ -120,7 +122,7 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 			Bytecode::SplitLR => implicit_code(0x17),
 			Bytecode::Pop => implicit_code(0x28),
 			Bytecode::PopNext => implicit_code(0x29),
-			Bytecode::BufferLength => implicit_code(0x2A),
+			Bytecode::BufferIndexAndLength => implicit_code(0x2A),
 			Bytecode::Cmp => implicit_code(0x2E),
 			Bytecode::Sqrt => implicit_code(0x51),
 			Bytecode::And => implicit_code(0x54),

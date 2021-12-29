@@ -66,8 +66,9 @@ pub enum Bytecode {
 	// Buffers
 	BufferAlloc,
 	BufferLoad,
-	BufferStore,
-	BufferLength,
+	BufferLoadWithOffset,
+	BufferStoreAndStep,
+	BufferIndexAndLength,
 
 	// Procedures/instruments/notes
 	Proc,
@@ -160,9 +161,10 @@ impl Bytecode {
 			StateEnter | StateLeave => (0, 0),
 
 			BufferAlloc => (1, 1),
-			BufferLoad => (2, 1),
-			BufferStore => (3, 1),
-			BufferLength => (1, 1),
+			BufferLoad => (1, 1),
+			BufferLoadWithOffset => (2, 1),
+			BufferStoreAndStep => (2, 1),
+			BufferIndexAndLength => (1, 1),
 
 			Proc => panic!("stack_change on 'proc'"),
 			Call(..) => panic!("stack_change on 'call'"),
