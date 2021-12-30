@@ -2,17 +2,20 @@
 name = "zing"
 version = "0.1.0"
 authors = ["Aske Simon Christensen <askesc@gmail.com>"]
-edition = "2018"
+edition = "2021"
 build = "build.rs" # LALRPOP preprocessing
 
 [dependencies]
-lalrpop-util = "0.18.1"
-regex = "0.2.0"
+regex = "1.5.4"
 
 bytecode = { path = "../bytecode" }
 
+[dependencies.lalrpop-util]
+version = "0.19.6"
+features = ["lexer"]
+
 [build-dependencies.lalrpop]
-version = "0.18.1"
+version = "0.19.6"
 features = ["lexer"]
 
 [lib]
