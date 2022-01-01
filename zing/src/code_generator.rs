@@ -206,8 +206,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						let counter_offset = self.stack_height - counter_stack_index;
 						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
 						self.emit(bc![
-							StackLoad(0), SplitLR, Add, // Mono of output
-							Constant(0x46000000), Mul, Round(Nearest), // 0 when small
+							StackLoad(0), // Copy of output
+							Constant(0x46000000), Expand, Mul, Round(Nearest), // 0 when small
+							SplitLR, Or, // 0 when both channels small
 							Constant(0), Compare(Eq), // True when small
 							StackLoad(counter_offset as u16), And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
