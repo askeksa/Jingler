@@ -71,6 +71,8 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Byt
 	("min",        sig!([generic, generic] [generic]), bc![Min]),
 	("mlog2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
 	("random",     sig!([mono] [mono]),                bc![Constant(0x3F800000), Random, Constant(0x30000000), Mul]),
+	("random2",    sig!([mono, mono] [mono]),          bc![Constant(0x3F800000), Random, Random, Constant(0x30000000), Mul]),
+	("random3",    sig!([mono, mono, mono] [mono]),    bc![Constant(0x3F800000), Random, Random, Random, Constant(0x30000000), Mul]),
 	("round",      sig!([generic] [generic]),          bc![Round(Nearest)]),
 	("samplerate", sig!([] [mono]),                    bc![SampleRate]),
 	("sin",        sig!([mono] [mono]),                bc![Fop(Fsin), Fdone]),
