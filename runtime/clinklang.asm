@@ -98,6 +98,7 @@ section snipdead text align=1
 		%define _snip_prev_id _snip_id_%1
 	%else
 		section snipdead
+		_snip_%1:
 	%endif
 %endmacro
 
@@ -111,6 +112,7 @@ section snipdead text align=1
 		section snips
 	%else
 		section snipdead
+		_snipcode_%1:
 	%endif
 %endmacro
 
@@ -449,10 +451,10 @@ NoteOff:
 	movapd		[eax], xmm0
 
 	dec			dword [ebx]
-	jns			.no_step_wrap
+	jns			.no_wrap
 	mov			eax, [ebx + 4]
 	add			[ebx], eax
-.no_step_wrap:
+.no_wrap:
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
 	mov			eax, [BufferAllocPtr]
@@ -673,7 +675,7 @@ OUT_S	equ	0x30
 	%elif _in == 's'
 		%xdefine _inkind IN_S
 	%else
-		%error "Invalid input kind" _in
+		%error Invalid input kind: _in
 	%endif
 	%if _out == 'r'
 		%xdefine _outkind OUT_R
@@ -684,7 +686,7 @@ OUT_S	equ	0x30
 	%elif _out == 's'
 		%xdefine _outkind OUT_S
 	%else
-		%error "Invalid output kind" _out
+		%error Invalid output kind: _out
 	%endif
 	%xdefine _last_inout _inkind | _outkind
 	db _last_inout
@@ -695,7 +697,7 @@ OUT_S	equ	0x30
 %macro iinstr 3 ; name, inout, repr
 	%if COMPACT_IMPLICIT_OPCODES
 		%if ((%3) & 0xfc != 0x14 && (%3) & 0xf8 != 0x28 && (%3) & 0xf0 != 0x50)
-			%error "Uncompactable implicit opcode"
+			%error Uncompactable implicit opcode: %3
 		%endif
 	%endif
 	%xdefine _code (IMPLICIT_CODE(%3) - IMPLICIT_CODE(LOWEST_IMPLICIT_INSTRUCTION) + 1)
@@ -734,7 +736,11 @@ InoutCodes:
 
 	%strlen _inout_length _inout_string
 	%define _n_instructions (_inout_length / 2)
-	%rep 256 - _n_instructions - _implicit_index
+	%assign _opcode_count (_implicit_index + _n_instructions)
+	%if _opcode_count > 256
+		%error Too many opcodes: _opcode_count
+	%endif
+	%rep 256 - _opcode_count
 		db _last_inout
 	%endrep
 	%xdefine _index 0
