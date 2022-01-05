@@ -247,6 +247,7 @@ RenderSamples:
 	; EAX = Number of samples to render
 	; ESI = Constant pool
 
+	ldmxcsr		[MXCSR]
 	push		eax
 	xor			ebp, ebp
 .sample:
@@ -749,6 +750,10 @@ InoutCodes:
 		inout _inout
 		%xdefine _index (_index + 1)
 	%endrep
+
+section mxcsr data align=4
+MXCSR:
+	dd 0x9fc0
 
 section	notept data align=4
 NoteAllocPtr:
