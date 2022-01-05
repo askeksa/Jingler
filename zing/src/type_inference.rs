@@ -296,8 +296,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		exp.traverse_pre(&mut |exp| {
 			if let Expression::Variable { name: variable_name } = exp {
 				match self.names.lookup_variable(self.current_proc_index, variable_name.text) {
-					Some(..) => {
-						dependencies.insert(variable_name.text);
+					Some(VariableRef { kind, .. }) => {
+						match kind {
+							VariableKind::For { .. } => {},
+							_ => {
+								dependencies.insert(variable_name.text);
+							},
+						}
 					},
 					None => {
 						self.compiler.report_error(variable_name,
@@ -383,6 +388,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			Property { exp, name } => self.infer_property(exp, name, loc),
 			TupleIndex { exp, index, .. } => self.infer_tuple_index(exp, *index, loc),
 			BufferIndex { exp, index, .. } => self.infer_buffer_index(exp, index, loc),
+			For { name, start, end, combinator, body, .. }
+				=> self.infer_for(name, start, end, combinator, body, loc),
 			Expand { .. } => panic!(),
 		}
 	}
@@ -599,6 +606,26 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let index_operand = self.expect_single(index, "index operand of indexing");
 		let index_sig = sig!([generic buffer, mono number] [generic number]);
 		self.check_signature(&index_sig, &[buffer_operand, index_operand], loc)
+	}
+
+	fn infer_for(&mut self,
+			name: &Id<'ast>,
+			start: &mut Expression<'ast>, end: &mut Expression<'ast>,
+			combinator: &Id<'ast>, body: &mut Expression<'ast>,
+			loc: &dyn Location) -> Vec<TypeResult> {
+		if let None = self.names.lookup_combinator(combinator.text) {
+			self.compiler.report_error(combinator,
+				format!("Permitted repetition combinators are {}", self.names.combinator_list()));
+		}
+		let start_operand = self.expect_single(start, "start value of repetition");
+		let end_operand = self.expect_single(end, "end value of repetition");
+		self.ready.insert(name.text, TypeResult::Type {
+			inferred_type: type_spec!(static mono number),
+		});
+		let body_operand = self.expect_single(body, "body of repetition");
+		self.ready.remove(name.text);
+		let for_sig = sig!([static mono number, static mono number, dynamic generic number] [dynamic generic number]);
+		self.check_signature(&for_sig, &[start_operand, end_operand, body_operand], loc)
 	}
 
 	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression<'ast>>,

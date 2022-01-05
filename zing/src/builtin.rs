@@ -88,6 +88,13 @@ pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
 	("dyndelay", sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
 ];
 
+pub static REPETITION_COMBINATORS: &[(&'static str, f32, &'static [Bytecode])] = &[
+	("add", 0.0,               bc![Add]),
+	("max", f32::NEG_INFINITY, bc![Max]),
+	("min", f32::INFINITY,     bc![Min]),
+	("mul", 1.0,               bc![Mul]),
+];
+
 pub trait OperatorSemantics {
 	fn signature(&self) -> &'static Signature<'static>;
 	fn bytecodes(&self) -> &'static [Bytecode];

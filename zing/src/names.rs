@@ -1,18 +1,18 @@
 
 use std::collections::HashMap;
-use std::iter::once;
 
 use bytecode::bytecodes::Bytecode;
 
 use crate::ast::*;
-use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES};
-use crate::compiler::{Compiler, CompileError};
+use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES, REPETITION_COMBINATORS};
+use crate::compiler::{Compiler, CompileError, Location, PosRange};
 
 /// Mapping of names in the program to their definitions.
 #[derive(Clone, Debug)]
 pub struct Names<'ast> {
 	procedures: HashMap<&'ast str, ProcedureRef>,
 	variables: Vec<HashMap<&'ast str, VariableRef>>,
+	combinators: HashMap<&'ast str, Combinator>,
 }
 
 /// A reference to a named entry in a pattern.
@@ -27,6 +27,7 @@ pub struct VariableRef {
 pub enum VariableKind {
 	Input,
 	Node { body_index: usize },
+	For { variable_pos: PosRange },
 }
 
 /// A reference to a top-level module, function or instrument.
@@ -53,12 +54,20 @@ pub struct Signature<'sig> {
 	pub outputs: &'sig [Type],
 }
 
+// Description of a repetition combinator
+#[derive(Clone, Debug)]
+pub struct Combinator {
+	pub neutral: f32,
+	pub bc: &'static [Bytecode],
+}
+
 impl<'ast> Names<'ast> {
 	/// Find all named entities in the program and build a map for locating them.
 	pub fn find(program: &Program<'ast>, compiler: &mut Compiler) -> Result<Names<'ast>, CompileError> {
 		let mut names = Names {
 			procedures: HashMap::new(),
 			variables: vec![HashMap::new(); program.procedures.len()],
+			combinators: HashMap::new(),
 		};
 
 		// Insert built-in functions and modules
@@ -74,6 +83,9 @@ impl<'ast> Names<'ast> {
 				definition: ProcedureDefinition::BuiltIn { sig, bc: &[] },
 			});
 		}
+		for &(name, neutral, bc) in REPETITION_COMBINATORS {
+			names.combinators.insert(name, Combinator { neutral, bc });
+		}
 
 		// Run through all procedures in the program
 		for (proc_index, proc) in program.procedures.iter().enumerate() {
@@ -85,19 +97,31 @@ impl<'ast> Names<'ast> {
 
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
-			let input = (VariableKind::Input, &proc.inputs);
-			let nodes = (0..proc.body.len()).map(|body_index| {
-				let Statement::Assign { ref node, .. } = proc.body[body_index];
-				(VariableKind::Node { body_index }, node)
-			});
-			for (variable_kind, node) in once(input).chain(nodes) {
+			for (tuple_index, item) in proc.inputs.items.iter().enumerate() {
+				let var_ref = VariableRef {
+					kind: VariableKind::Input,
+					tuple_index,
+				};
+				names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
+			}
+			for (body_index, Statement::Assign { ref node, exp }) in proc.body.iter().enumerate() {
 				for (tuple_index, item) in node.items.iter().enumerate() {
 					let var_ref = VariableRef {
-						kind: variable_kind,
+						kind: VariableKind::Node { body_index },
 						tuple_index,
 					};
 					names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
 				}
+				// Add any repetition variables in the right-hand side.
+				exp.traverse_pre(&mut |exp| {
+					if let Expression::For { name, .. } = exp {
+						let var_ref = VariableRef {
+							kind: VariableKind::For { variable_pos: PosRange::from(name) },
+							tuple_index: 0,
+						};
+						names.insert_variable(program, compiler, proc_index, &name, var_ref);
+					}
+				});
 			}
 		}
 
@@ -130,14 +154,14 @@ impl<'ast> Names<'ast> {
 		self.variables[proc_index].entry(name.text).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let proc = &program.procedures[proc_index];
-			let pattern = match existing.kind {
-				VariableKind::Input => &proc.inputs,
+			let loc: &dyn Location = match existing.kind {
+				VariableKind::Input => &proc.inputs.items[existing.tuple_index].name,
 				VariableKind::Node { body_index } => match proc.body[body_index] {
-					Statement::Assign { ref node, .. } => node,
+					Statement::Assign { ref node, .. } => &node.items[existing.tuple_index].name,
 				},
+				VariableKind::For { ref variable_pos } => variable_pos,
 			};
-			let existing_name = &pattern.items[existing.tuple_index].name;
-			compiler.report_context(existing_name, "Previously defined here.");
+			compiler.report_context(loc, "Previously defined here.");
 		}).or_insert(var_ref);
 	}
 
@@ -149,5 +173,20 @@ impl<'ast> Names<'ast> {
 	/// Look up a variable by name inside a specific procedure.
 	pub fn lookup_variable(&self, proc_index: usize, name: &str) -> Option<&VariableRef> {
 		self.variables[proc_index].get(name)
+	}
+
+	pub fn lookup_combinator(&self, combinator: &str) -> Option<&Combinator> {
+		self.combinators.get(combinator)
+	}
+
+	pub fn combinator_list(&self) -> String {
+		let mut combinators: Vec<&'ast str> = self.combinators.keys().cloned().collect();
+		combinators.sort();
+		let mut list = format!("'{}'", combinators[0]);
+		for i in 1 .. combinators.len() - 1 {
+			list += &format!(", '{}'", combinators[i]);
+		}
+		list += &format!(" and '{}'", combinators.last().unwrap());
+		list
 	}
 }

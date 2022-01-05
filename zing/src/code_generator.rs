@@ -32,6 +32,20 @@ fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
 #[derive(Clone)]
 enum StateKind { Cell, Delay }
 
+#[derive(Clone)]
+enum ModuleCall<'ast> {
+	Call {
+		proc_index: usize,
+		args: &'ast Vec<Expression<'ast>>,
+	},
+	For {
+		name: &'ast Id<'ast>,
+		start: &'ast Expression<'ast>,
+		end: &'ast Expression<'ast>,
+		nested_calls: Vec<ModuleCall<'ast>>,
+	},
+}
+
 struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
@@ -59,10 +73,12 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	name_in_cell: HashMap<usize, &'ast str>,
 	// Stack index of next cell in execution order
 	cell_stack_index: usize,
+	// Nesting depth of repetitions
+	repetition_depth: usize,
 	// Static expression to initialize explicit cell
 	cell_init: Vec<(StateKind, &'ast Expression<'ast>)>,
 	// Module calls in execution order
-	module_call: Vec<(usize, &'ast Vec<Expression<'ast>>)>,
+	module_call: Vec<ModuleCall<'ast>>,
 	// Instruments in execution order
 	instrument_order: Vec<usize>,
 	// Queue for dynamic cell update expressions
@@ -93,6 +109,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			stack_index_in_cell: vec![],
 			name_in_cell: HashMap::new(),
 			cell_stack_index: 0,
+			repetition_depth: 0,
 			cell_init: vec![],
 			module_call: vec![],
 			instrument_order: vec![],
@@ -278,16 +295,35 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				},
 			}
 		}
-		for (proc_index, args) in self.module_call.clone() {
-			let (_, inputs, _) = &self.signatures[proc_index];
-			for (input_type, arg) in inputs.clone().iter().zip(args) {
-				if input_type.scope == Some(Scope::Static) {
-					self.generate(arg);
-				}
-			}
-			self.emit(bc![Call(self.proc_id[proc_index])]);
-		}
+		self.generate_static_module_calls(&self.module_call.clone());
 		Ok(())
+	}
+
+	fn generate_static_module_calls(&mut self, module_call: &Vec<ModuleCall<'ast>>) {
+		for call in module_call {
+			match call {
+				&ModuleCall::Call { proc_index, args } => {
+					let (_, inputs, _) = &self.signatures[proc_index];
+					for (input_type, arg) in inputs.clone().iter().zip(args) {
+						if input_type.scope == Some(Scope::Static) {
+							self.generate(arg);
+						}
+					}
+					self.emit(bc![Call(self.proc_id[proc_index])]);
+				},
+				ModuleCall::For { name, start, end, nested_calls } => {
+					self.generate(end);
+					self.emit(bc![StackLoad(0), CellInit]);
+					let counter_stack_index = self.stack_height;
+					self.generate(start);
+					self.emit(bc![StackLoad(0), CellInit, Label]);
+					self.stack_index.insert(name.text, counter_stack_index);
+					self.generate_static_module_calls(nested_calls);
+					self.stack_index.remove(name.text);
+					self.emit(bc![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
+				},
+			}
+		}
 	}
 
 	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
@@ -421,6 +457,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						use ProcedureDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
+								if self.repetition_depth > 0 {
+									self.unsupported(exp, "Built-in module in repetition body");
+								}
 								match name.text {
 									"cell" => {
 										self.cell_init.push((StateKind::Cell, &args[0]));
@@ -445,7 +484,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										self.find_cells(arg);
 									}
 								}
-								self.module_call.push((*proc_index, args));
+								self.module_call.push(ModuleCall::Call { proc_index: *proc_index, args });
 							},
 							(Function, BuiltIn { .. }) => {
 								for arg in args {
@@ -487,6 +526,16 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			BufferIndex { exp, index, .. } => {
 				self.find_cells(exp);
 				self.find_cells(index);
+			},
+			For { name, start, end, body, .. } => {
+				let module_call_temp = replace(&mut self.module_call, vec![]);
+				self.repetition_depth += 1;
+				self.find_cells(body);
+				self.repetition_depth -= 1;
+				let module_call = ModuleCall::For {
+					name, start, end, nested_calls: replace(&mut self.module_call, module_call_temp)
+				};
+				self.module_call.push(module_call);
 			},
 			Expand { exp } => {
 				self.find_cells(exp);
@@ -688,6 +737,20 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.generate(exp);
 				self.generate(index);
 				self.emit(bc![StackLoad(1), BufferIndexAndLength, Sub, BufferLoadWithOffset]);
+			},
+			For { name, body, combinator, .. } => {
+				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
+				self.emit(bc![Constant(combinator.neutral.to_bits()), Expand]); // accumulator
+				self.emit(bc![CellRead]); // end
+				let counter_stack_index = self.stack_height;
+				self.emit(bc![CellRead, Label]); // counter
+				self.stack_index.insert(name.text, counter_stack_index);
+				self.generate(body);
+				self.stack_index.remove(name.text);
+				self.emit(bc![StackLoad(3)]); // accumulator
+				self.emit(combinator.bc);
+				self.emit(bc![StackStore(2)]); // accumulator
+				self.emit(bc![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
 			},
 			Expand { exp } => {
 				self.generate(exp);

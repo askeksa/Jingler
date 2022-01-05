@@ -111,6 +111,14 @@ pub enum Expression<'input> {
 	Property { exp: Box<Expression<'input>>, name: Id<'input> },
 	TupleIndex { exp: Box<Expression<'input>>, index: u64, after: Pos },
 	BufferIndex { exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
+	For {
+		before: Pos,
+		name: Id<'input>,
+		start: Box<Expression<'input>>,
+		end: Box<Expression<'input>>,
+		combinator: Id<'input>,
+		body: Box<Expression<'input>>,
+	},
 	Expand { exp: Box<Expression<'input>> },
 }
 
@@ -158,6 +166,7 @@ impl<'input> Expression<'input> {
 			Property { ref exp, .. } => exp.pos_before(),
 			TupleIndex { ref exp, .. } => exp.pos_before(),
 			BufferIndex { ref exp, .. } => exp.pos_before(),
+			For { before, .. } => before,
 			Expand { ref exp } => exp.pos_before(),
 		}
 	}
@@ -177,6 +186,7 @@ impl<'input> Expression<'input> {
 			Property { ref name, .. } => name.before + name.text.len(),
 			TupleIndex { after, .. } => after,
 			BufferIndex { after, .. } => after,
+			For { ref body, .. } => body.pos_after(),
 			Expand { ref exp } => exp.pos_after(),
 		}
 	}
@@ -225,6 +235,11 @@ impl<'input> Expression<'input> {
 			BufferIndex { exp, index, .. } => {
 				exp.traverse(pre, post);
 				index.traverse(pre, post);
+			},
+			For { start, end, body, .. } => {
+				start.traverse(pre, post);
+				end.traverse(pre, post);
+				body.traverse(pre, post);
 			},
 			Expand { exp } => {
 				exp.traverse(pre, post);

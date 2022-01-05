@@ -118,6 +118,7 @@ pub trait Location {
 	fn pos_after(&self) -> usize;
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct PosRange {
 	before: usize,
 	after: usize,
