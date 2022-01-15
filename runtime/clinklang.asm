@@ -247,6 +247,7 @@ GenerateCode:
 RunStaticCode:
 	; ESI = Constant pool
 
+	ldmxcsr		[MXCSR]
 	mov			edi, StateSpace
 	mov			ebx, edi
 	call		[ProcPointers + 0*4]
@@ -279,8 +280,10 @@ RenderSamples:
 ResetState:
 	; Clear buffer space
 	mov			edi, BufferSpace
+	mov			ecx, [BufferAllocPtr]
+	sub			ecx, edi
+	shr			ecx, 2
 	mov			[BufferAllocPtr], edi
-	mov			ecx, BUFFER_SPACE*4
 	xor			eax, eax
 	rep stosd
 
@@ -314,6 +317,7 @@ NoteOn:
 	; ECX = Key
 	; EDX = Velocity
 
+	; Push note onto stack of notes to be triggered
 	mov			edi, [TrackStarts + eax*4]
 	sub			edi, byte 16
 	mov			[TrackStarts + eax*4], edi
@@ -338,8 +342,23 @@ NoteOff:
 	; EBX = Sample offset
 	; ECX = Key
 
-	lea			edi, [NoteChains + eax*4]
+	; First look through notes that haven't been triggered yet
+	mov			edi, [TrackStarts + eax*4]
+	jmp			.prenote
+.prenoteloop:
+	add			edi, byte 16
+.prenote:
+	cmp			[edi], ebx
+	ja			.live
+	cmp			[edi + 8], ecx
+	jne			.prenoteloop
 
+	sub			ebx, [edi]
+	jmp			.write
+
+.live:
+	; Then look through live notes
+	lea			edi, [NoteChains + eax*4]
 .noteloop:
 	mov			edi, [edi]
 	test		edi, edi
@@ -349,6 +368,7 @@ NoteOff:
 	cmp			dword [edi + 4], 0x10000000
 	jl			.noteloop
 
+.write:
 	mov			[edi + 4], ebx
 .done:
 	ret

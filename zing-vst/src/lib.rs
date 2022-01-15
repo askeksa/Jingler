@@ -3,6 +3,7 @@ use bytecode::bytecodes::Bytecode;
 use bytecode::encode::encode_bytecodes;
 use zing::compiler;
 
+use std::collections::{VecDeque};
 use std::fs;
 use std::slice;
 use std::sync::mpsc::{channel, Receiver};
@@ -28,6 +29,9 @@ extern "C" {
 
 struct ZingPlugin {
 	sample_rate: f32,
+	time: i32,
+	events: VecDeque<MidiEvent>,
+
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
@@ -42,6 +46,8 @@ impl Default for ZingPlugin {
 		let watcher = watcher(tx, Duration::from_secs_f32(0.1)).unwrap();
 		ZingPlugin {
 			sample_rate: 44100.0,
+			time: 0,
+			events: VecDeque::new(),
 			zing_filename: "".to_string(),
 			watcher,
 			watcher_receiver: rx,
@@ -147,23 +153,39 @@ impl Plugin for ZingPlugin {
 	}
 
 	fn process_events(&mut self, events: &Events) {
-		if !self.bytecode_compiled { return; }
-		let mut dirty = true;
 		for event in events.events() {
-			match event {
-				Event::Midi(MidiEvent { data, delta_frames, .. }) => {
+			if let Event::Midi(mut midi) = event {
+				midi.delta_frames += self.time;
+				self.events.push_back(midi);
+			}
+		}
+	}
+
+	fn process(&mut self, buffer: &mut AudioBuffer<f32>) {
+		let end_time = self.time + buffer.samples() as i32;
+		let (_, mut out) = buffer.split();
+		if let Ok(DebouncedEvent::Write(_)) = self.watcher_receiver.try_recv() {
+			self.compile();
+		}
+		if self.bytecode_compiled {
+			let mut base = 0usize;
+			while self.time < end_time {
+				let mut dirty = true;
+				let mut next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
+				while next_time <= self.time {
+					let data = self.events.pop_front().unwrap().data;
 					let channel = (data[0] & 0x0F) as u32;
 					let key = data[1] as u32;
 					let velocity = data[2] as u32;
 					match data[0] & 0xF0 {
 						0x90 => unsafe {
 							// Note On
-							NoteOn(channel, delta_frames, key, velocity);
+							NoteOn(channel, 0, key, velocity);
 							dirty = true;
 						},
 						0x80 => unsafe {
 							// Note Off
-							NoteOff(channel, delta_frames, key);
+							NoteOff(channel, 0, key);
 						},
 						0xB0 if data[1] == 120 => {
 							// All sound off
@@ -175,27 +197,22 @@ impl Plugin for ZingPlugin {
 						},
 						_ => {},
 					}
-				},
-				_ => {},
+					next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
+				}
+				let length = (next_time - self.time) as usize;
+				let rendered = unsafe {
+					let samples = RenderSamples(self.constants.as_ptr(), length);
+					slice::from_raw_parts(samples, length * 2)
+				};
+				for i in 0..length {
+					out[0][base + i] = rendered[i * 2 + 0];
+					out[1][base + i] = rendered[i * 2 + 1];
+				}
+				base += length;
+				self.time = next_time;
 			}
-		}
-	}
-
-	fn process(&mut self, buffer: &mut AudioBuffer<f32>) {
-		let length = buffer.samples();
-		let (_, mut out) = buffer.split();
-		if let Ok(DebouncedEvent::Write(_)) = self.watcher_receiver.try_recv() {
-			self.compile();
-		}
-		if self.bytecode_compiled {
-			let rendered = unsafe {
-				let samples = RenderSamples(self.constants.as_ptr(), length);
-				slice::from_raw_parts(samples, length * 2)
-			};
-			for i in 0..length {
-				out[0][i] = rendered[i * 2 + 0];
-				out[1][i] = rendered[i * 2 + 1];
-			}
+		} else {
+			self.time = end_time;
 		}
 	}
 }
