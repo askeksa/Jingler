@@ -6,8 +6,8 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-nfd = { git = "https://github.com/saurvs/nfd-rs.git" }
 notify = "4.0.15"
+rfd = "0.6.3"
 simple-message-box = "0.0.2"
 vst = "0.2.0"
 

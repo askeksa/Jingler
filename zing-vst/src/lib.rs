@@ -8,8 +8,8 @@ use std::slice;
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
-use nfd::{open_file_dialog, Response};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher, watcher};
+use rfd::FileDialog;
 use vst::api::Events;
 use vst::buffer::AudioBuffer;
 use vst::event::{Event, MidiEvent};
@@ -108,12 +108,12 @@ impl Plugin for ZingPlugin {
 	fn new(_host: HostCallback) -> ZingPlugin {
 		loop {
 			let filename = loop {
-				if let Ok(Response::Okay(path)) = open_file_dialog(None, None) {
+				if let Some(path) = FileDialog::new().pick_file() {
 					break path;
 				}
 			};
 			let mut plugin = ZingPlugin::default();
-			plugin.zing_filename = filename.to_string();
+			plugin.zing_filename = filename.to_string_lossy().into_owned();
 			if let Ok(()) = plugin.watcher.watch(&plugin.zing_filename, RecursiveMode::NonRecursive) {
 				plugin.compile();
 				return plugin;
