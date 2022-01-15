@@ -3,6 +3,15 @@ extern __imp__OpenFile@12
 extern __imp__ReadFile@20
 extern __imp__CloseHandle@4
 
+global UnpackNotes
+global LoadGmDls
+global GenerateCode
+global RunStaticCode
+global RenderSamples
+global ResetState
+global NoteOn
+global NodeOff
+
 OF_READ equ 0x00000000
 
 GMDLS_SIZE equ 0x350000 ; Real size 0x348014
