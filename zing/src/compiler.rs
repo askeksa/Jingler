@@ -179,7 +179,12 @@ impl<'input> Location for Expression<'input> {
 	}
 }
 
-type CompilerOutput = Vec<Bytecode>;
+pub struct CompilerOutput {
+	// Bytecodes for all procedures
+	pub code: Vec<Bytecode>,
+	// Instruments in execution order
+	pub instrument_order: Vec<usize>,
+}
 
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
@@ -215,9 +220,9 @@ impl<'input> Compiler<'input> {
 		let mut program = self.parse(&processed_input)?;
 		let names = Names::find(&program, self)?;
 		let signatures = infer_types(&mut program, &names, self)?;
-		let code = generate_code(&program, &names, signatures, self)?;
+		let (code, instrument_order) = generate_code(&program, &names, signatures, self)?;
 
-		Ok(code)
+		Ok(CompilerOutput { code, instrument_order })
 	}
 
 	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {

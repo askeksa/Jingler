@@ -1,6 +1,6 @@
 
 use std::collections::{HashMap, VecDeque};
-use std::mem::replace;
+use std::mem::{replace, take};
 
 use bytecode::bytecodes::*;
 
@@ -17,10 +17,10 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-		compiler: &mut Compiler<'input>) -> Result<Vec<Bytecode>, CompileError> {
+		compiler: &mut Compiler<'input>) -> Result<(Vec<Bytecode>, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures);
 	cg.generate_code_for_program(program)?;
-	Ok(replace(&mut cg.bc, vec![]))
+	Ok((take(&mut cg.bc), take(&mut cg.instrument_order)))
 }
 
 fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
@@ -498,7 +498,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index, .. }) => {
-								self.instrument_order.push(*proc_index);
+								self.instrument_order.push((self.proc_id[*proc_index] as usize - 2) / 2);
 								for arg in args {
 									self.find_cells(arg);
 								}

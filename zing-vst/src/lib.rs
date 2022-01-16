@@ -1,5 +1,4 @@
 
-use bytecode::bytecodes::Bytecode;
 use bytecode::encode::encode_bytecodes;
 use zing::compiler;
 
@@ -35,8 +34,9 @@ struct ZingPlugin {
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
-	program: Option<Vec<Bytecode>>,
+	program: Option<compiler::CompilerOutput>,
 	constants: Vec<u32>,
+	midi_channel_mapping: [Option<u32>; 16],
 	bytecode_compiled: bool,
 }
 
@@ -54,6 +54,7 @@ impl Default for ZingPlugin {
 			bytecode_compiled: false,
 			program: None,
 			constants: vec![],
+			midi_channel_mapping: [None; 16],
 		}
 	}
 }
@@ -84,13 +85,20 @@ impl ZingPlugin {
 	fn init_program(&mut self) {
 		debug_assert!(!self.bytecode_compiled);
 		if let Some(ref program) = self.program {
-			match encode_bytecodes(program, self.sample_rate) {
+			match encode_bytecodes(&program.code, self.sample_rate) {
 				Ok((bytecodes, constants)) => unsafe {
 					CompileBytecode(bytecodes.as_ptr());
 					self.bytecode_compiled = true;
 
 					RunStaticCode(constants.as_ptr());
 					self.constants = constants;
+
+					self.midi_channel_mapping.fill(None);
+					for (index, &inst) in program.instrument_order.iter().enumerate() {
+						if inst < 16 {
+							self.midi_channel_mapping[inst] = Some(index as u32);
+						}
+					}
 				},
 				Err(message) => {
 					let message = format!("Encoding error: {}", message);
@@ -174,18 +182,22 @@ impl Plugin for ZingPlugin {
 				let mut next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
 				while next_time <= self.time {
 					let data = self.events.pop_front().unwrap().data;
-					let channel = (data[0] & 0x0F) as u32;
+					let channel = (data[0] & 0x0F) as usize;
 					let key = data[1] as u32;
 					let velocity = data[2] as u32;
 					match data[0] & 0xF0 {
 						0x90 => unsafe {
 							// Note On
-							NoteOn(channel, 0, key, velocity);
-							dirty = true;
+							if let Some(inst) = self.midi_channel_mapping[channel] {
+								NoteOn(inst, 0, key, velocity);
+								dirty = true;
+							}
 						},
 						0x80 => unsafe {
 							// Note Off
-							NoteOff(channel, 0, key);
+							if let Some(inst) = self.midi_channel_mapping[channel] {
+								NoteOff(inst, 0, key);
+							}
 						},
 						0xB0 if data[1] == 120 => {
 							// All sound off
