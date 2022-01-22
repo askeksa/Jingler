@@ -43,6 +43,34 @@ enum EncodedBytecode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EncodedFop {
+	Fyl2x = 0xF1,
+	Fptan = 0xF2,
+	Fpatan = 0xF3,
+	Frndint = 0xFC,
+	Fsin = 0xFE,
+	Fcos = 0xFF,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EncodedRoundingMode {
+	Nearest = 0,
+	Floor = 1,
+	Ceil = 2,
+	Truncate = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EncodedCompareOp {
+	Eq = 0,
+	Less = 1,
+	LessEq = 2,
+	Neq = 4,
+	GreaterEq = 5,
+	Greater = 6,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EncodedImplicit {
 	Expand = 0x14,
 	SplitRL = 0x15,
@@ -65,6 +93,19 @@ enum EncodedImplicit {
 	Max = 0x5F,
 }
 
+fn encode_fop(fop: EncodedFop, encode: &mut impl FnMut(EncodedBytecode, u16)) {
+	let encoding = 0xFF - fop as u16;
+	encode(EncodedBytecode::Fop, encoding);
+}
+
+fn encode_rounding(mode: EncodedRoundingMode, encode: &mut impl FnMut(EncodedBytecode, u16)) {
+	encode(EncodedBytecode::Round, mode as u16);
+}
+
+fn encode_comparison(op: EncodedCompareOp, encode: &mut impl FnMut(EncodedBytecode, u16)) {
+	encode(EncodedBytecode::Compare, op as u16);
+}
+
 fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedBytecode, u16)) {
 	let opcode = implicit as u16;
 	let encoding = opcode - (1 << (15 - opcode.leading_zeros())) - 4;
@@ -74,6 +115,9 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate: f32,
                    encode: &mut impl FnMut(EncodedBytecode, u16)) {
 	use EncodedBytecode::*;
+	use EncodedFop::*;
+	use EncodedRoundingMode::*;
+	use EncodedCompareOp::*;
 	use EncodedImplicit::*;
 	match bc {
 		Bytecode::StateEnter => encode(StateEnter, 0),
@@ -84,16 +128,12 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		Bytecode::GmDlsLength => encode(GmDlsLength, 0),
 		Bytecode::GmDlsSample => encode(GmDlsSample, 0),
 		Bytecode::AddSub => encode(AddSub, 0),
-		Bytecode::Fputnext => encode(Fputnext, 0),
 		Bytecode::Random => encode(Random, 0),
 		Bytecode::BufferLoadWithOffset => encode(BufferLoadWithOffset, 0),
 		Bytecode::BufferLoad => encode(BufferLoad, 0),
 		Bytecode::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
 		Bytecode::BufferAlloc => encode(BufferAlloc, 0),
 		Bytecode::CallInstrument => encode(CallInstrument, 0),
-		Bytecode::Exp2Body => encode(Exp2Body, 0),
-		Bytecode::Fdone => encode(Fdone, 0),
-		Bytecode::Fop(op) => encode(Fop, 0xFF - op as u16),
 		Bytecode::Proc => encode(Proc, 0),
 		Bytecode::Call(proc) => encode(ProcCall, proc),
 		Bytecode::Constant(constant) => encode(Constant, constant_map[&constant]),
@@ -107,8 +147,47 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		Bytecode::Loop => encode(LoopJump, 0),
 		Bytecode::EndIf => encode(EndIf, 0),
 		Bytecode::Else => encode(Else, 0),
-		Bytecode::Round(mode) => encode(Round, mode as u16),
-		Bytecode::Compare(op) => encode(Compare, op as u16),
+
+		Bytecode::Ceil => encode_rounding(Ceil, encode),
+		Bytecode::Floor => encode_rounding(Floor, encode),
+		Bytecode::Round => encode_rounding(Nearest, encode),
+		Bytecode::Trunc => encode_rounding(Truncate, encode),
+
+		Bytecode::Eq => encode_comparison(Eq, encode),
+		Bytecode::Greater => encode_comparison(Greater, encode),
+		Bytecode::GreaterEq => encode_comparison(GreaterEq, encode),
+		Bytecode::Less => encode_comparison(Less, encode),
+		Bytecode::LessEq => encode_comparison(LessEq, encode),
+		Bytecode::Neq => encode_comparison(Neq, encode),
+
+		Bytecode::Atan2 => {
+			encode(Fputnext, 0);
+			encode_fop(Fpatan, encode);
+			encode(Fdone, 0);
+		},
+		Bytecode::Cos => {
+			encode_fop(Fcos, encode);
+			encode(Fdone, 0);
+		},
+		Bytecode::Exp2 => {
+			encode_fop(Frndint, encode);
+			encode(Exp2Body, 0);
+			encode(Fdone, 0);
+		},
+		Bytecode::Mlog2 => {
+			encode(Fputnext, 0);
+			encode_fop(Fyl2x, encode);
+			encode(Fdone, 0);
+		},
+		Bytecode::Sin => {
+			encode_fop(Fsin, encode);
+			encode(Fdone, 0);
+		},
+		Bytecode::Tan => {
+			encode_fop(Fptan, encode);
+			encode(Fdone, 0);
+			encode(Fdone, 0);
+		},
 
 		Bytecode::Expand => encode_implicit(Expand, encode),
 		Bytecode::SplitRL => encode_implicit(SplitRL, encode),

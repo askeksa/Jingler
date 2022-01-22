@@ -7,10 +7,7 @@ macro_rules! bc {
 	{ $($b:expr),* } => {
 		{
 			#[allow(unused)] use Bytecode::*;
-			#[allow(unused)] use RoundingMode::*;
-			#[allow(unused)] use CompareOp::*;
 			#[allow(unused)] use NoteProperty::*;
-			#[allow(unused)] use Fopcode::*;
 			&[$($b),*]
 		}
 	}
@@ -22,7 +19,7 @@ pub enum Bytecode {
 	Constant(u32),
 	SampleRate,
 
-	// Operations
+	// Binary operations
 	Add,
 	Sub,
 	AddSub,
@@ -34,15 +31,29 @@ pub enum Bytecode {
 	Xor,
 	Min,
 	Max,
-	Sqrt,
-	Round(RoundingMode),
-	Compare(CompareOp),
 
-	// FPU stack ops
-	Fputnext,
-	Fop(Fopcode),
-	Exp2Body,
-	Fdone,
+	// Comparisons
+	Eq,
+	Greater,
+	GreaterEq,
+	Less,
+	LessEq,
+	Neq,
+
+	// Rounding
+	Ceil,
+	Floor,
+	Round,
+	Trunc,
+
+	// Math
+	Atan2,
+	Cos,
+	Exp2,
+	Mlog2,
+	Sin,
+	Sqrt,
+	Tan,
 
 	// Channels
 	Expand,
@@ -92,38 +103,10 @@ pub enum Bytecode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RoundingMode {
-	Nearest = 0,
-	Floor = 1,
-	Ceil = 2,
-	Truncate = 3,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CompareOp {
-	Eq = 0,
-	Less = 1,
-	LessEq = 2,
-	Neq = 4,
-	GreaterEq = 5,
-	Greater = 6,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NoteProperty {
 	Length = 0,
 	Key = 1,
 	Velocity = 2,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Fopcode {
-	Fyl2x = 0xF1,
-	Fptan = 0xF2,
-	Fpatan = 0xF3,
-	Frndint = 0xFC,
-	Fsin = 0xFE,
-	Fcos = 0xFF,
 }
 
 impl Bytecode {
@@ -134,11 +117,13 @@ impl Bytecode {
 
 			Add | Sub | AddSub | Mul | Div => (2, 1),
 			And | AndNot | Or | Xor => (2, 1),
-			Min | Max | Compare(..) => (2, 1),
-			Sqrt | Round(..) => (1, 1),
+			Min | Max => (2, 1),
 
-			Fputnext => (2, 1),
-			Fop(..) | Exp2Body | Fdone => (1, 1),
+			Eq | Greater | GreaterEq | Less | LessEq | Neq => (2, 1),
+			Ceil | Floor | Round | Trunc => (1, 1),
+
+			Atan2 | Mlog2 => (2, 1),
+			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
 
 			Expand => (1, 1),
 			SplitRL | SplitLR => (1, 2),

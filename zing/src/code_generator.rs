@@ -224,13 +224,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
 						self.emit(bc![
 							StackLoad(0), // Copy of output
-							Constant(0x46000000), Expand, Mul, Round(Nearest), // 0 when small
+							Constant(0x46000000), Expand, Mul, Round, // 0 when small
 							SplitLR, Or, // 0 when both channels small
-							Constant(0), Compare(Eq), // True when small
+							Constant(0), Eq, // True when small
 							StackLoad(counter_offset as u16), And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
 							StackLoad(0), CellStore(counter_cell_index as u16), // Update counter
-							Constant(0x46000000), Compare(Less), // Has counter reached threshold?
+							Constant(0x46000000), Less, // Has counter reached threshold?
 							Kill // Kill when counter reaches threshold
 						]);
 						// Leave the inputs (including the accumulator) and the output on the stack.
@@ -594,7 +594,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		match exp {
 			Number { value, .. } => self.emit(bc![Constant((*value as f32).to_bits())]),
 			Bool { value, .. } => if *value {
-				self.emit(bc![Constant(0), Constant(0), Compare(Eq)]);
+				self.emit(bc![Constant(0), Constant(0), Eq]);
 			} else {
 				self.emit(bc![Constant(0)]);
 			},

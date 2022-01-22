@@ -58,25 +58,25 @@ macro_rules! sig {
 }
 
 pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Bytecode])] = &[
-	("atan2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fpatan), Fdone]),
-	("ceil",       sig!([generic] [generic]),          bc![Round(Ceil)]),
-	("cos",        sig!([mono] [mono]),                bc![Fop(Fcos), Fdone]),
-	("exp2",       sig!([mono] [mono]),                bc![Fop(Frndint), Exp2Body, Fdone]),
-	("floor",      sig!([generic] [generic]),          bc![Round(Floor)]),
-	("gate",       sig!([] [mono bool]),               bc![Constant(0), ReadNoteProperty(Length), Compare(Greater)]),
+	("atan2",      sig!([mono, mono] [mono]),          bc![Atan2]),
+	("ceil",       sig!([generic] [generic]),          bc![Ceil]),
+	("cos",        sig!([mono] [mono]),                bc![Cos]),
+	("exp2",       sig!([mono] [mono]),                bc![Exp2]),
+	("floor",      sig!([generic] [generic]),          bc![Floor]),
+	("gate",       sig!([] [mono bool]),               bc![Constant(0), ReadNoteProperty(Length), Greater]),
 	("gmdls",      sig!([mono, mono] [mono]),          bc![GmDlsSample, Constant(0x38000000), Mul]),
 	("gmdlslen",   sig!([mono] [mono]),                bc![GmDlsLength]),
 	("key",        sig!([] [mono]),                    bc![ReadNoteProperty(Key)]),
 	("max",        sig!([generic, generic] [generic]), bc![Max]),
 	("min",        sig!([generic, generic] [generic]), bc![Min]),
-	("mlog2",      sig!([mono, mono] [mono]),          bc![Fputnext, Fop(Fyl2x), Fdone]),
+	("mlog2",      sig!([mono, mono] [mono]),          bc![Mlog2]),
 	("random",     sig!([mono, mono] [mono]),          bc![Random, Constant(0x30000000), Mul]),
-	("round",      sig!([generic] [generic]),          bc![Round(Nearest)]),
+	("round",      sig!([generic] [generic]),          bc![Round]),
 	("samplerate", sig!([] [mono]),                    bc![SampleRate]),
-	("sin",        sig!([mono] [mono]),                bc![Fop(Fsin), Fdone]),
+	("sin",        sig!([mono] [mono]),                bc![Sin]),
 	("sqrt",       sig!([generic] [generic]),          bc![Sqrt]),
-	("tan",        sig!([mono] [mono]),                bc![Fop(Fptan), Fdone, Fdone]),
-	("trunc",      sig!([generic] [generic]),          bc![Round(Truncate)]),
+	("tan",        sig!([mono] [mono]),                bc![Tan]),
+	("trunc",      sig!([generic] [generic]),          bc![Trunc]),
 	("velocity",   sig!([] [mono]),                    bc![ReadNoteProperty(Velocity)]),
 ];
 
@@ -121,7 +121,7 @@ impl OperatorSemantics for UnOpKind {
 		use UnOpKind::*;
 		match self {
 			Neg => bc![Constant(0), Expand, Sub],
-			Not => bc![Constant(0), Expand, Compare(Eq)],
+			Not => bc![Constant(0), Expand, Eq],
 		}
 
 	}
@@ -167,12 +167,12 @@ impl OperatorSemantics for BinOpKind {
 			And       => bc![And],
 			Or        => bc![Or],
 			Xor       => bc![Xor],
-			Eq        => bc![Compare(Eq)],
-			Neq       => bc![Compare(Neq)],
-			Less      => bc![Compare(Less)],
-			LessEq    => bc![Compare(LessEq)],
-			Greater   => bc![Compare(Greater)],
-			GreaterEq => bc![Compare(GreaterEq)],
+			Eq        => bc![Eq],
+			Neq       => bc![Neq],
+			Less      => bc![Less],
+			LessEq    => bc![LessEq],
+			Greater   => bc![Greater],
+			GreaterEq => bc![GreaterEq],
 		}
 	}
 }
