@@ -6,7 +6,7 @@ use bytecode::bytecodes::*;
 
 use crate::ast::*;
 use crate::builtin::*;
-use crate::compiler::{CompileError, Compiler, Location};
+use crate::compiler::*;
 use crate::names::*;
 
 const AUTOKILL_CELL_INIT: Expression<'static> = Expression::Number {
@@ -17,10 +17,10 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-		compiler: &mut Compiler<'input>) -> Result<(Vec<Bytecode>, Vec<usize>), CompileError> {
+		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures);
 	cg.generate_code_for_program(program)?;
-	Ok((take(&mut cg.bc), take(&mut cg.instrument_order)))
+	Ok((take(&mut cg.procedures), take(&mut cg.instrument_order)))
 }
 
 fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
@@ -60,6 +60,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// The current procedure kind
 	current_kind: ProcedureKind,
 
+	procedures: Vec<ZingProcedure>,
 	bc: Vec<Bytecode>,
 	stack_height: usize,
 
@@ -101,6 +102,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			instrument_id: 0,
 			current_kind: ProcedureKind::Module,
 
+			procedures: vec![],
 			bc: vec![],
 			stack_height: 0,
 
@@ -124,10 +126,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn emit(&mut self, bc: &[Bytecode]) {
 		for &code in bc {
 			let (popped, pushed) = match code {
-				Bytecode::Proc => {
-					// Assume stack height has been set
-					(0, 0)
-				},
 				Bytecode::Call(id) => {
 					let proc_index = self.proc_for_id[id as usize];
 					let (kind, inputs, outputs) = &self.signatures[proc_index];
@@ -168,13 +166,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
 			let proc_index = self.proc_for_id[id];
-			let Procedure { kind, inputs, outputs, body, .. } = &program.procedures[proc_index];
+			let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
 			self.current_kind = *kind;
-			self.emit(bc![Proc]);
+			let proc_kind;
 			match kind {
 				ProcedureKind::Module => {
 					let is_static = (id & 1) == 0;
 					if is_static {
+						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
 						self.initialize_stack(inputs, Some(Scope::Static), false);
 						self.find_cells_in_body(body)?;
 						self.mark_implicit_cells_from_outputs(outputs);
@@ -182,6 +181,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.generate_static_body(body)?;
 						self.adjust_stack(&[], self.stack_height);
 					} else {
+						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Dynamic };
 						self.initialize_stack(inputs, Some(Scope::Dynamic), false);
 						self.generate_dynamic_body(body)?;
 						let stack_adjust = self.stack_adjust_from_outputs(outputs);
@@ -189,6 +189,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					}
 				},
 				ProcedureKind::Function => {
+					proc_kind = ZingProcedureKind::Function;
 					self.initialize_stack(inputs, None, false);
 					for statement in body {
 						self.generate_code_for_statement(statement)?;
@@ -207,6 +208,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					});
 					let is_static = (id & 1) == 0;
 					if is_static {
+						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
 						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT));
@@ -216,6 +218,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						// Leave only the inputs (including the accumulator) on the stack.
 						self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 					} else {
+						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Dynamic };
 						self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 						self.generate_dynamic_body(body)?;
 						// Run autokill code
@@ -242,8 +245,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					}
 				},
 			}
+			self.procedures.push(ZingProcedure {
+				name: name.text.into(),
+				kind: proc_kind,
+				code: take(&mut self.bc),
+			});
 		}
-		self.emit(bc![Proc]);
 
 		self.compiler.check_errors()
 	}

@@ -83,11 +83,15 @@ fn play_file(filename: &str, options: &PlayOptions) {
 		Ok(s) => match compiler::Compiler::new(&filename, &s).compile() {
 			Ok(program) => {
 				if options.dump_bytecodes {
-					for (i, bc) in program.code.iter().enumerate() {
-						println!("{:5}  {}", i, bc);
+					for (p, proc) in program.procedures.iter().enumerate() {
+						println!("{:2}: {} ({})", p, proc.name, proc.kind);
+						for (i, bc) in proc.code.iter().enumerate() {
+							println!("{:5}  {}", i, bc);
+						}
+						println!();
 					}
 				}
-				match encode_bytecodes(&program.code, options.sample_rate) {
+				match encode_bytecodes(&program.procedures, options.sample_rate) {
 					Ok((bytecodes, constants)) => if options.run {
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
 						let output = run(&bytecodes[..], &constants[..], n_samples);

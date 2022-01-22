@@ -34,7 +34,7 @@ struct ZingPlugin {
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
-	program: Option<compiler::CompilerOutput>,
+	program: Option<compiler::ZingProgram>,
 	constants: Vec<u32>,
 	midi_channel_mapping: [Option<u32>; 16],
 	bytecode_compiled: bool,
@@ -85,7 +85,7 @@ impl ZingPlugin {
 	fn init_program(&mut self) {
 		debug_assert!(!self.bytecode_compiled);
 		if let Some(ref program) = self.program {
-			match encode_bytecodes(&program.code, self.sample_rate) {
+			match encode_bytecodes(&program.procedures, self.sample_rate) {
 				Ok((bytecodes, constants)) => unsafe {
 					CompileBytecode(bytecodes.as_ptr());
 					self.bytecode_compiled = true;

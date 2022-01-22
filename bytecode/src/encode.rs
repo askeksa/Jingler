@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::bytecodes::{Bytecode, NoteProperty};
+use crate::bytecodes::{Bytecode, HasBytecodes, NoteProperty};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,7 +145,6 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		Bytecode::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
 		Bytecode::BufferAlloc => encode(BufferAlloc, 0),
 		Bytecode::CallInstrument => encode(CallInstrument, 0),
-		Bytecode::Proc => encode(Proc, 0),
 		Bytecode::Call(proc) => encode(ProcCall, proc),
 		Bytecode::Constant(constant) => encode(Constant, constant_map[&constant]),
 		Bytecode::SampleRate => encode(Constant, constant_map[&sample_rate.to_bits()]),
@@ -233,11 +232,11 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 	}
 }
 
-pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
+pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
 	// Build constant list
 	let mut constant_set = BTreeSet::new();
 	constant_set.insert(0);
-	for bc in bytecodes {
+	for bc in procedures.iter().map(|p| p.get_bytecodes()).flatten() {
 		match bc {
 			Bytecode::Constant(v) => {
 				constant_set.insert(*v);
@@ -261,7 +260,7 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 		let capacity = &mut opcode_capacity[opcode as usize];
 		*capacity = (*capacity).max(arg + 1);
 	};
-	for &bc in bytecodes {
+	for &bc in procedures.iter().map(|p| p.get_bytecodes()).flatten() {
 		encode_bytecode(bc, &constant_map, sample_rate, &mut discover_opcode);
 	}
 
@@ -287,9 +286,13 @@ pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec
 	let mut encode_opcode = |opcode: EncodedBytecode, arg: u16| {
 		encoded.push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
 	};
-	for &bc in bytecodes {
-		encode_bytecode(bc, &constant_map, sample_rate, &mut encode_opcode);
+	for procedure in procedures {
+		encode_opcode(EncodedBytecode::Proc, 0);
+		for &bc in procedure.get_bytecodes() {
+			encode_bytecode(bc, &constant_map, sample_rate, &mut encode_opcode);
+		}
 	}
+	encode_opcode(EncodedBytecode::Proc, 0);
 
 	Ok((encoded, constants))
 }

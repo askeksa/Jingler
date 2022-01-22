@@ -1,4 +1,5 @@
 
+use std::fmt::{Display, Error, Formatter};
 use std::mem::replace;
 use std::rc::Rc;
 
@@ -6,7 +7,7 @@ use regex::{Captures, Regex};
 
 use lalrpop_util::ParseError;
 
-use bytecode::bytecodes::Bytecode;
+use bytecode::bytecodes::{Bytecode, HasBytecodes};
 
 use crate::ast::*;
 use crate::code_generator::generate_code;
@@ -179,11 +180,57 @@ impl<'input> Location for Expression<'input> {
 	}
 }
 
-pub struct CompilerOutput {
-	// Bytecodes for all procedures
-	pub code: Vec<Bytecode>,
+#[derive(Clone, Debug)]
+pub struct ZingProgram {
+	// Procedures
+	pub procedures: Vec<ZingProcedure>,
 	// Instruments in execution order
 	pub instrument_order: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ZingProcedure {
+	pub name: String,
+	pub kind: ZingProcedureKind,
+	pub code: Vec<Bytecode>,
+}
+
+impl HasBytecodes for ZingProcedure {
+	fn get_bytecodes(&self) -> &[Bytecode] {
+		&self.code
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZingProcedureKind {
+	Function,
+	Module { scope: ZingScope },
+	Instrument { scope: ZingScope },
+}
+
+impl Display for ZingProcedureKind {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match *self {
+			ZingProcedureKind::Function => write!(f, "function"),
+			ZingProcedureKind::Module { scope } => write!(f, "module, {} part", scope),
+			ZingProcedureKind::Instrument { scope } => write!(f, "instrument, {} part", scope),
+		}
+	}
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZingScope {
+	Static,
+	Dynamic,
+}
+
+impl Display for ZingScope {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match *self {
+			ZingScope::Static => write!(f, "static"),
+			ZingScope::Dynamic => write!(f, "dynamic"),
+		}
+	}
 }
 
 impl<'input> Compiler<'input> {
@@ -215,14 +262,14 @@ impl<'input> Compiler<'input> {
 		}
 	}
 
-	pub fn compile(&mut self) -> Result<CompilerOutput, CompileError> {
+	pub fn compile(&mut self) -> Result<ZingProgram, CompileError> {
 		let processed_input = Rc::clone(&self.processed_input);
 		let mut program = self.parse(&processed_input)?;
 		let names = Names::find(&program, self)?;
 		let signatures = infer_types(&mut program, &names, self)?;
-		let (code, instrument_order) = generate_code(&program, &names, signatures, self)?;
+		let (procedures, instrument_order) = generate_code(&program, &names, signatures, self)?;
 
-		Ok(CompilerOutput { code, instrument_order })
+		Ok(ZingProgram { procedures, instrument_order })
 	}
 
 	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {

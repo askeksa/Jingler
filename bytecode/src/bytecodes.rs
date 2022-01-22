@@ -83,7 +83,6 @@ pub enum Bytecode {
 	BufferLength,
 
 	// Procedures/instruments/notes
-	Proc,
 	Call(u16),
 	CallInstrument,
 	Kill,
@@ -152,7 +151,6 @@ impl Bytecode {
 			BufferStoreAndStep => (2, 1),
 			BufferIndex | BufferLength => (1, 1),
 
-			Proc => panic!("stack_change on 'proc'"),
 			Call(..) => panic!("stack_change on 'call'"),
 			CallInstrument => (0, 0),
 			Kill => (1, 0),
@@ -180,5 +178,27 @@ impl Display for Bytecode {
 			},
 		}
 		Ok(())
+	}
+}
+
+pub trait HasBytecodes {
+	fn get_bytecodes(&self) -> &[Bytecode];
+}
+
+impl HasBytecodes for [Bytecode] {
+	fn get_bytecodes(&self) -> &[Bytecode] {
+		&self
+	}
+}
+
+impl HasBytecodes for &[Bytecode] {
+	fn get_bytecodes(&self) -> &[Bytecode] {
+		self
+	}
+}
+
+impl HasBytecodes for Vec<Bytecode> {
+	fn get_bytecodes(&self) -> &[Bytecode] {
+		&self[..]
 	}
 }
