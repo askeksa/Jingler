@@ -94,7 +94,7 @@ Bytecodes:
 	db b(cell_read), b(stack_load)+0, b(cell_read), b(add), b(cell_store)+0
 	db b(fop)+(~0xfe), b(fdone) ; sin
 	db b(cell_read), b(stack_load)+0, b(constant)+4, b(mul), b(cell_store)+2
-	db b(mul), b(expand), b(add)
+	db b(mul), b(expand_l), b(add)
 	db b(note_property)+NOTE_LENGTH, b(constant)+0, b(compare)+COMPARE_GE, b(kill)
 
 	db b(proc), 0

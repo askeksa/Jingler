@@ -56,9 +56,9 @@ pub enum Bytecode {
 	Tan,
 
 	// Channels
-	Expand,
+	ExpandL,
+	ExpandR,
 	SplitRL,
-	SplitLR,
 	MergeLR,
 
 	// Stack manipulation
@@ -125,8 +125,8 @@ impl Bytecode {
 			Atan2 | Mlog2 => (2, 1),
 			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
 
-			Expand => (1, 1),
-			SplitRL | SplitLR => (1, 2),
+			ExpandL | ExpandR => (1, 1),
+			SplitRL => (1, 2),
 			MergeLR => (2, 1),
 
 			Pop => (1, 0),

@@ -120,8 +120,8 @@ impl OperatorSemantics for UnOpKind {
 	fn bytecodes(&self) -> &'static [Bytecode] {
 		use UnOpKind::*;
 		match self {
-			Neg => bc![Constant(0), Expand, Sub],
-			Not => bc![Constant(0), Expand, Eq],
+			Neg => bc![Constant(0), ExpandL, Sub],
+			Not => bc![Constant(0), ExpandL, Eq],
 		}
 
 	}

@@ -744,10 +744,10 @@ section inout rdata align=1
 
 InoutCodes:
 	; Inout for implicit instructions
-	iinstr	expand, bt, 0x14 ; unpcklpd
-	iinstr	split_rl, sr, 0x15 ; unpckhpd
-	iinstr	merge_lr, rt, 0x16 ; movhpd m -> r
-	iinstr	split_lr, tr, 0x17 ; movhpd r -> m
+	iinstr	merge_lr, rt, 0x14 ; unpcklpd (r.y = m.x)
+	iinstr	split_rl, sr, 0x15 ; unpckhpd (r.x = m.y)
+	iinstr	expand_l, bt, 0x16 ; movhpd m -> r (r.y = m.x)
+	iinstr	expand_r, bs, 0x17 ; movhpd r -> m (m.x = r.y)
 	iinstr	pop, rb, 0x28 ; movapd m -> r
 	iinstr	popnext, rb, 0x29 ; movapd r -> m
 	iinstr	buffer_index_and_length, st, 0x2a ; cvtpi2pd

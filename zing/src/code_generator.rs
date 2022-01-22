@@ -224,8 +224,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
 						self.emit(bc![
 							StackLoad(0), // Copy of output
-							Constant(0x46000000), Expand, Mul, Round, // 0 when small
-							SplitLR, Or, // 0 when both channels small
+							Constant(0x46000000), ExpandL, Mul, Round, // 0 when small
+							SplitRL, Or, // 0 when both channels small
 							Constant(0), Eq, // True when small
 							StackLoad(counter_offset as u16), And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
@@ -689,7 +689,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(bc![Constant(0), Expand]);
+								self.emit(bc![Constant(0), ExpandL]);
 								self.emit(bc![CallInstrument]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
@@ -719,13 +719,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				match name.text {
 					"left" => {},
 					"right" => {
-						self.emit(bc![SplitRL, PopNext]);
+						self.emit(bc![ExpandR]);
 					},
 					"index" => {
 						self.emit(bc![BufferIndexAndLength]);
 					},
 					"length" => {
-						self.emit(bc![BufferIndexAndLength, SplitRL, PopNext]);
+						self.emit(bc![BufferIndexAndLength, ExpandR]);
 					},
 					_ => panic!("Unknown property"),
 				}
@@ -740,7 +740,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
-				self.emit(bc![Constant(combinator.neutral.to_bits()), Expand]); // accumulator
+				self.emit(bc![Constant(combinator.neutral.to_bits()), ExpandL]); // accumulator
 				self.emit(bc![CellRead]); // end
 				let counter_stack_index = self.stack_height;
 				self.emit(bc![CellRead, Label]); // counter
@@ -754,7 +754,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			Expand { exp } => {
 				self.generate(exp);
-				self.emit(bc![Expand]);
+				self.emit(bc![ExpandL]);
 			},
 		}
 	}

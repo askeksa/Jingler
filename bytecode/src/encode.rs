@@ -72,10 +72,10 @@ pub enum EncodedCompareOp {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EncodedImplicit {
-	Expand = 0x14,
+	MergeLR = 0x14,
 	SplitRL = 0x15,
-	MergeLR = 0x16,
-	SplitLR = 0x17,
+	ExpandL = 0x16,
+	ExpandR = 0x17,
 	Pop = 0x28,
 	PopNext = 0x29,
 	BufferIndexAndLength = 0x2A,
@@ -189,10 +189,10 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 			encode(Fdone, 0);
 		},
 
-		Bytecode::Expand => encode_implicit(Expand, encode),
-		Bytecode::SplitRL => encode_implicit(SplitRL, encode),
 		Bytecode::MergeLR => encode_implicit(MergeLR, encode),
-		Bytecode::SplitLR => encode_implicit(SplitLR, encode),
+		Bytecode::SplitRL => encode_implicit(SplitRL, encode),
+		Bytecode::ExpandL => encode_implicit(ExpandL, encode),
+		Bytecode::ExpandR => encode_implicit(ExpandR, encode),
 		Bytecode::Pop => encode_implicit(Pop, encode),
 		Bytecode::PopNext => encode_implicit(PopNext, encode),
 		Bytecode::BufferIndexAndLength => encode_implicit(BufferIndexAndLength, encode),
