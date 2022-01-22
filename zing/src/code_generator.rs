@@ -722,10 +722,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.emit(bc![ExpandR]);
 					},
 					"index" => {
-						self.emit(bc![BufferIndexAndLength]);
+						self.emit(bc![BufferIndex]);
 					},
 					"length" => {
-						self.emit(bc![BufferIndexAndLength, ExpandR]);
+						self.emit(bc![BufferLength]);
 					},
 					_ => panic!("Unknown property"),
 				}
@@ -736,7 +736,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			BufferIndex { exp, index, .. } => {
 				self.generate(exp);
 				self.generate(index);
-				self.emit(bc![StackLoad(1), BufferIndexAndLength, Sub, BufferLoadWithOffset]);
+				self.emit(bc![StackLoad(1), BufferIndex, Sub, BufferLoadWithOffset]);
 			},
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();

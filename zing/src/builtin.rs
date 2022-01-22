@@ -63,7 +63,7 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Byt
 	("cos",        sig!([mono] [mono]),                bc![Cos]),
 	("exp2",       sig!([mono] [mono]),                bc![Exp2]),
 	("floor",      sig!([generic] [generic]),          bc![Floor]),
-	("gate",       sig!([] [mono bool]),               bc![Constant(0), ReadNoteProperty(Length), Greater]),
+	("gate",       sig!([] [mono bool]),               bc![ReadNoteProperty(Gate)]),
 	("gmdls",      sig!([mono, mono] [mono]),          bc![GmDlsSample, Constant(0x38000000), Mul]),
 	("gmdlslen",   sig!([mono] [mono]),                bc![GmDlsLength]),
 	("key",        sig!([] [mono]),                    bc![ReadNoteProperty(Key)]),

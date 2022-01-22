@@ -79,7 +79,8 @@ pub enum Bytecode {
 	BufferLoad,
 	BufferLoadWithOffset,
 	BufferStoreAndStep,
-	BufferIndexAndLength,
+	BufferIndex,
+	BufferLength,
 
 	// Procedures/instruments/notes
 	Proc,
@@ -104,9 +105,9 @@ pub enum Bytecode {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NoteProperty {
-	Length = 0,
-	Key = 1,
-	Velocity = 2,
+	Gate,
+	Key,
+	Velocity,
 }
 
 impl Bytecode {
@@ -149,7 +150,7 @@ impl Bytecode {
 			BufferLoad => (1, 1),
 			BufferLoadWithOffset => (2, 1),
 			BufferStoreAndStep => (2, 1),
-			BufferIndexAndLength => (1, 1),
+			BufferIndex | BufferLength => (1, 1),
 
 			Proc => panic!("stack_change on 'proc'"),
 			Call(..) => panic!("stack_change on 'call'"),

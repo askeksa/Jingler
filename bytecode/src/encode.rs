@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::bytecodes::Bytecode;
+use crate::bytecodes::{Bytecode, NoteProperty};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,7 +28,7 @@ enum EncodedBytecode {
 	Proc,
 	ProcCall,
 	Constant,
-	NoteProperty,
+	ReadNoteProperty,
 	StackLoad,
 	StackStore,
 	CellStore,
@@ -50,6 +50,12 @@ enum EncodedFop {
 	Frndint = 0xFC,
 	Fsin = 0xFE,
 	Fcos = 0xFF,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EncodedNoteProperty {
+	Length = 0,
+	Key = 1,
+	Velocity = 2,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,6 +104,10 @@ fn encode_fop(fop: EncodedFop, encode: &mut impl FnMut(EncodedBytecode, u16)) {
 	encode(EncodedBytecode::Fop, encoding);
 }
 
+fn encode_note_property(property: EncodedNoteProperty, encode: &mut impl FnMut(EncodedBytecode, u16)) {
+	encode(EncodedBytecode::ReadNoteProperty, property as u16);
+}
+
 fn encode_rounding(mode: EncodedRoundingMode, encode: &mut impl FnMut(EncodedBytecode, u16)) {
 	encode(EncodedBytecode::Round, mode as u16);
 }
@@ -116,6 +126,7 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
                    encode: &mut impl FnMut(EncodedBytecode, u16)) {
 	use EncodedBytecode::*;
 	use EncodedFop::*;
+	use EncodedNoteProperty::*;
 	use EncodedRoundingMode::*;
 	use EncodedCompareOp::*;
 	use EncodedImplicit::*;
@@ -138,7 +149,6 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		Bytecode::Call(proc) => encode(ProcCall, proc),
 		Bytecode::Constant(constant) => encode(Constant, constant_map[&constant]),
 		Bytecode::SampleRate => encode(Constant, constant_map[&sample_rate.to_bits()]),
-		Bytecode::ReadNoteProperty(property) => encode(NoteProperty, property as u16),
 		Bytecode::StackLoad(offset) => encode(StackLoad, offset),
 		Bytecode::StackStore(offset) => encode(StackStore, offset),
 		Bytecode::CellStore(offset) => encode(CellStore, offset),
@@ -189,13 +199,25 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 			encode(Fdone, 0);
 		},
 
+		Bytecode::ReadNoteProperty(NoteProperty::Gate) => {
+			encode(Constant, constant_map[&0]);
+			encode_note_property(Length, encode);
+			encode_comparison(Greater, encode);
+		},
+		Bytecode::ReadNoteProperty(NoteProperty::Key) => encode_note_property(Key, encode),
+		Bytecode::ReadNoteProperty(NoteProperty::Velocity) => encode_note_property(Velocity, encode),
+
 		Bytecode::MergeLR => encode_implicit(MergeLR, encode),
 		Bytecode::SplitRL => encode_implicit(SplitRL, encode),
 		Bytecode::ExpandL => encode_implicit(ExpandL, encode),
 		Bytecode::ExpandR => encode_implicit(ExpandR, encode),
 		Bytecode::Pop => encode_implicit(Pop, encode),
 		Bytecode::PopNext => encode_implicit(PopNext, encode),
-		Bytecode::BufferIndexAndLength => encode_implicit(BufferIndexAndLength, encode),
+		Bytecode::BufferIndex => encode_implicit(BufferIndexAndLength, encode),
+		Bytecode::BufferLength => {
+			encode_implicit(BufferIndexAndLength, encode);
+			encode_implicit(ExpandR, encode);
+		},
 		Bytecode::Cmp => encode_implicit(Cmp, encode),
 		Bytecode::Sqrt => encode_implicit(Sqrt, encode),
 		Bytecode::And => encode_implicit(And, encode),
@@ -214,6 +236,7 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 pub fn encode_bytecodes(bytecodes: &[Bytecode], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
 	// Build constant list
 	let mut constant_set = BTreeSet::new();
+	constant_set.insert(0);
 	for bc in bytecodes {
 		match bc {
 			Bytecode::Constant(v) => {
@@ -289,7 +312,7 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<(), Stri
 	adjust(EncodedBytecode::Fop, 15, "fop");
 	adjust(EncodedBytecode::ProcCall, 75, "procedure");
 	adjust(EncodedBytecode::Constant, 50, "constant");
-	adjust(EncodedBytecode::NoteProperty, 3, "note property");
+	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
 	adjust(EncodedBytecode::StackLoad, 20, "stack load");
 	adjust(EncodedBytecode::StackStore, 20, "stack store");
 	adjust(EncodedBytecode::CellStore, 10, "cell store");
