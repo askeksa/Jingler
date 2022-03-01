@@ -117,11 +117,12 @@ impl OperatorSemantics for UnOpKind {
 		}
 	}
 
+	// Instruction to execute with 0 and the unary operand as its binary operands
 	fn bytecodes(&self) -> &'static [Bytecode] {
 		use UnOpKind::*;
 		match self {
-			Neg => bc![Constant(0), ExpandL, Sub],
-			Not => bc![Constant(0), ExpandL, Eq],
+			Neg => bc![Sub],
+			Not => bc![Eq],
 		}
 
 	}

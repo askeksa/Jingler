@@ -267,7 +267,7 @@ impl<'input> Expression<'input> {
 				write!(f, " {} ", combinator)?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},
-			Expand { exp } => {
+			Expand { exp, .. } => {
 				write!(f, "[{}]", exp)?;
 			},
 		}

@@ -208,8 +208,10 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 
 		Bytecode::MergeLR => encode_implicit(MergeLR, encode),
 		Bytecode::SplitRL => encode_implicit(SplitRL, encode),
-		Bytecode::ExpandL => encode_implicit(ExpandL, encode),
-		Bytecode::ExpandR => encode_implicit(ExpandR, encode),
+		Bytecode::Left => {},
+		Bytecode::Right => encode_implicit(ExpandR, encode),
+		Bytecode::ExpandStereo => encode_implicit(ExpandL, encode),
+		Bytecode::ExpandGeneric => encode_implicit(ExpandL, encode),
 		Bytecode::Pop => encode_implicit(Pop, encode),
 		Bytecode::PopNext => encode_implicit(PopNext, encode),
 		Bytecode::BufferIndex => encode_implicit(BufferIndexAndLength, encode),

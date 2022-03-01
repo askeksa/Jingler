@@ -17,8 +17,9 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+		stored_types: HashMap<*const Expression<'ast>, Type>,
 		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
-	let mut cg = CodeGenerator::new(names, compiler, signatures);
+	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_types);
 	cg.generate_code_for_program(program)?;
 	Ok((take(&mut cg.procedures), take(&mut cg.instrument_order)))
 }
@@ -50,6 +51,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+	stored_types: HashMap<*const Expression<'ast>, Type>,
 
 	/// Lowest id (of two for modules and instruments) for procedure
 	proc_id: Vec<u16>,
@@ -90,12 +92,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	pub fn new(
 			names: &'ast Names<'ast>,
 			compiler: &'comp mut Compiler<'input>,
-			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>)
+			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+			stored_types: HashMap<*const Expression<'ast>, Type>)
 			-> CodeGenerator<'ast, 'input, 'comp> {
 		CodeGenerator {
 			names,
 			compiler,
 			signatures,
+			stored_types,
 
 			proc_id: vec![],
 			proc_for_id: vec![],
@@ -117,6 +121,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			instrument_order: vec![],
 			update_queue: VecDeque::new(),
 		}
+	}
+
+	fn retrieve_type(&self, exp: &Expression<'ast>) -> Type {
+		self.stored_types[&(exp as *const Expression<'ast>)]
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -227,7 +235,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
 						self.emit(bc![
 							StackLoad(0), // Copy of output
-							Constant(0x46000000), ExpandL, Mul, Round, // 0 when small
+							Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
 							SplitRL, Or, // 0 when both channels small
 							Constant(0), Eq, // True when small
 							StackLoad(counter_offset as u16), And, // Preserve counter when small
@@ -544,7 +552,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				};
 				self.module_call.push(module_call);
 			},
-			Expand { exp } => {
+			Expand { exp, .. } => {
 				self.find_cells(exp);
 			}
 		}
@@ -617,6 +625,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			UnOp { op, exp } => {
 				self.generate(exp);
+				self.emit(bc![Constant(0)]);
+				self.expand(self.retrieve_type(exp).width.unwrap());
 				self.emit(op.bytecodes());
 			},
 			BinOp { left, op, right } => {
@@ -696,7 +706,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(bc![Constant(0), ExpandL]);
+								self.emit(bc![Constant(0), ExpandStereo]);
 								self.emit(bc![CallInstrument]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
@@ -724,16 +734,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			Property { exp, name } => {
 				self.generate(exp);
 				match name.text {
-					"left" => {},
-					"right" => {
-						self.emit(bc![ExpandR]);
-					},
-					"index" => {
-						self.emit(bc![BufferIndex]);
-					},
-					"length" => {
-						self.emit(bc![BufferLength]);
-					},
+					"left" => self.emit(bc![Left]),
+					"right" => self.emit(bc![Right]),
+					"index" => self.emit(bc![BufferIndex]),
+					"length" => self.emit(bc![BufferLength]),
 					_ => panic!("Unknown property"),
 				}
 			},
@@ -747,7 +751,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
-				self.emit(bc![Constant(combinator.neutral.to_bits()), ExpandL]); // accumulator
+				self.emit(bc![Constant(combinator.neutral.to_bits())]); // accumulator
+				self.expand(self.retrieve_type(body).width.unwrap());
 				self.emit(bc![CellRead]); // end
 				let counter_stack_index = self.stack_height;
 				self.emit(bc![CellRead, Label]); // counter
@@ -759,10 +764,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(bc![StackStore(2)]); // accumulator
 				self.emit(bc![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
 			},
-			Expand { exp } => {
+			Expand { exp, width } => {
 				self.generate(exp);
-				self.emit(bc![ExpandL]);
+				self.expand(*width);
 			},
+		}
+	}
+
+	fn expand(&mut self, width: Width) {
+		match width {
+			Width::Mono => {},
+			Width::Stereo => self.emit(bc![ExpandStereo]),
+			Width::Generic => self.emit(bc![ExpandGeneric]),
 		}
 	}
 }

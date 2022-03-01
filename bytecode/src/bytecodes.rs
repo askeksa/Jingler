@@ -56,8 +56,10 @@ pub enum Bytecode {
 	Tan,
 
 	// Channels
-	ExpandL,
-	ExpandR,
+	Left,
+	Right,
+	ExpandStereo,
+	ExpandGeneric,
 	SplitRL,
 	MergeLR,
 
@@ -125,7 +127,7 @@ impl Bytecode {
 			Atan2 | Mlog2 => (2, 1),
 			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
 
-			ExpandL | ExpandR => (1, 1),
+			Left | Right | ExpandStereo | ExpandGeneric => (1, 1),
 			SplitRL => (1, 2),
 			MergeLR => (2, 1),
 

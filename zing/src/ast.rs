@@ -119,7 +119,7 @@ pub enum Expression<'input> {
 		combinator: Id<'input>,
 		body: Box<Expression<'input>>,
 	},
-	Expand { exp: Box<Expression<'input>> },
+	Expand { exp: Box<Expression<'input>>, width: Width },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,7 +167,7 @@ impl<'input> Expression<'input> {
 			TupleIndex { ref exp, .. } => exp.pos_before(),
 			BufferIndex { ref exp, .. } => exp.pos_before(),
 			For { before, .. } => before,
-			Expand { ref exp } => exp.pos_before(),
+			Expand { ref exp, .. } => exp.pos_before(),
 		}
 	}
 
@@ -187,7 +187,7 @@ impl<'input> Expression<'input> {
 			TupleIndex { after, .. } => after,
 			BufferIndex { after, .. } => after,
 			For { ref body, .. } => body.pos_after(),
-			Expand { ref exp } => exp.pos_after(),
+			Expand { ref exp, .. } => exp.pos_after(),
 		}
 	}
 
@@ -241,7 +241,7 @@ impl<'input> Expression<'input> {
 				end.traverse(pre, post);
 				body.traverse(pre, post);
 			},
-			Expand { exp } => {
+			Expand { exp, .. } => {
 				exp.traverse(pre, post);
 			},
 		}

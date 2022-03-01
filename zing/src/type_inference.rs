@@ -12,11 +12,11 @@ pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
-		-> Result<Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, CompileError> {
+		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Type>), CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
 	type_inferrer.infer_bodies(program)?;
-	Ok(type_inferrer.signatures)
+	Ok((type_inferrer.signatures, type_inferrer.stored_types))
 }
 
 
@@ -24,6 +24,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+	stored_types: HashMap<*const Expression<'ast>, Type>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
@@ -44,6 +45,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			names,
 			compiler,
 			signatures: vec![],
+			stored_types: HashMap::new(),
 			ready: HashMap::new(),
 			current_proc_index: 0,
 			current_is_main: false,
@@ -341,9 +343,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						}
 					}
 					if inferred_type.assignable_to(&node_type) {
-						if self.should_expand(&node_type, &exp_type, true) {
+						if let Some(width) = self.should_expand(&node_type, &exp_type, Width::Generic) {
 							if single {
-								self.expand(exp);
+								self.expand(exp, width);
 							} else {
 								self.compiler.report_error(&item.name,
 									"Values inside a tuple can't be auto-expanded from mono.");
@@ -406,6 +408,16 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 	}
 
+	fn expect_single_and_store(&mut self,
+			exp: &mut Expression<'ast>,
+			title: &str) -> TypeResult {
+		let result = self.expect_single(exp, title);
+		if let TypeResult::Type { inferred_type } = result {
+			self.stored_types.insert(exp as *const Expression<'ast>, inferred_type);
+		}
+		result
+	}
+
 	fn infer_number(&mut self,
 			_value: &f64,
 			_loc: &dyn Location) -> Vec<TypeResult> {
@@ -429,7 +441,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_unop(&mut self,
 			op: &UnOp, exp: &mut Expression<'ast>,
 			loc: &dyn Location) -> Vec<TypeResult> {
-		let operand = self.expect_single(exp, "operand of unary operator");
+		let operand = self.expect_single_and_store(exp, "operand of unary operator");
 		self.check_signature_expand(op.signature(), &[operand], &mut [exp], loc)
 	}
 
@@ -622,7 +634,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.ready.insert(name.text, TypeResult::Type {
 			inferred_type: type_spec!(static mono number),
 		});
-		let body_operand = self.expect_single(body, "body of repetition");
+		let body_operand = self.expect_single_and_store(body, "body of repetition");
 		self.ready.remove(name.text);
 		let for_sig = sig!([static mono number, static mono number, dynamic generic number] [dynamic generic number]);
 		self.check_signature(&for_sig, &[start_operand, end_operand, body_operand], loc)
@@ -639,13 +651,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 		if sig.inputs.len() == arg_types.len() {
 			let result = self.check_signature(sig, &arg_types, loc);
-			let generic_stereo = self.is_generic_stereo(sig, &result);
+			let generic_width = self.generic_instantiation(sig, &result);
 			let mut type_index = 0;
 			for (arg, multiplicity) in args.iter_mut().zip(arg_multiplicity) {
 				for i in type_index .. type_index + multiplicity {
-					if self.should_expand(&sig.inputs[i], &arg_types[i], generic_stereo) {
+					if let Some(width) = self.should_expand(&sig.inputs[i], &arg_types[i], generic_width) {
 						if multiplicity == 1 {
-							self.expand(arg);
+							self.expand(arg, width);
 						} else {
 							self.compiler.report_error(loc,
 								"Values inside a tuple can't be auto-expanded from mono.");
@@ -665,17 +677,17 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn check_signature_expand(&mut self, sig: &Signature, args: &[TypeResult],
 			inputs: &mut [&mut Expression<'ast>], loc: &dyn Location) -> Vec<TypeResult> {
 		let result = self.check_signature(sig, args, loc);
-		let generic_stereo = self.is_generic_stereo(sig, &result);
+		let generic_width = self.generic_instantiation(sig, &result);
 		for ((sig_type, arg_type), input) in sig.inputs.iter().zip(args).zip(inputs) {
-			if self.should_expand(sig_type, arg_type, generic_stereo) {
-				self.expand(input);
+			if let Some(width) = self.should_expand(sig_type, arg_type, generic_width) {
+				self.expand(input, width);
 			}
 		}
 		result
 	}
 
-	fn is_generic_stereo(&self, sig: &Signature, result: &Vec<TypeResult>) -> bool {
-		sig.outputs.iter().zip(result).any(|(sig_out, result_out)| {
+	fn generic_instantiation(&self, sig: &Signature, result: &Vec<TypeResult>) -> Width {
+		for (sig_out, result_out) in sig.outputs.iter().zip(result) {
 			if let (Type {
 				width: Some(sig_width), ..
 			},
@@ -685,17 +697,16 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 			}) = (sig_out, result_out) {
 				match (sig_width, result_width) {
-					(Width::Generic, Width::Generic) => true,
-					(Width::Generic, Width::Stereo) => true,
-					_ => false,
+					(Width::Generic, Width::Stereo) => return Width::Stereo,
+					(Width::Generic, Width::Generic) => return Width::Generic,
+					_ => {},
 				}
-			} else {
-				false
 			}
-		})
+		}
+		Width::Mono
 	}
 
-	fn should_expand(&self, sig_type: &Type, arg_type: &TypeResult, generic_stereo: bool) -> bool {
+	fn should_expand(&self, sig_type: &Type, arg_type: &TypeResult, generic_width: Width) -> Option<Width> {
 		if let (Type {
 			width: Some(sig_width), ..
 		},
@@ -704,13 +715,14 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				width: Some(arg_width), ..
 			}
 		}) = (sig_type, arg_type) {
-			match (sig_width, arg_width, generic_stereo) {
-				(Width::Stereo, Width::Mono, _) => true,
-				(Width::Generic, Width::Mono, true) => true,
-				_ => false,
+			match (sig_width, arg_width, generic_width) {
+				(Width::Stereo, Width::Mono, _) => Some(Width::Stereo),
+				(Width::Generic, Width::Mono, Width::Stereo) => Some(Width::Stereo),
+				(Width::Generic, Width::Mono, Width::Generic) => Some(Width::Generic),
+				_ => None,
 			}
 		} else {
-			false
+			None
 		}
 	}
 
@@ -809,7 +821,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}).collect()
 	}
 
-	fn expand(&self, exp: &mut Expression<'ast>) {
+	fn expand(&self, exp: &mut Expression<'ast>, width: Width) {
 		let dummy = Expression::Bool {
 			before: exp.pos_before(),
 			value: true,
@@ -817,6 +829,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let node = replace(exp, dummy);
 		*exp = Expression::Expand {
 			exp: Box::new(node),
+			width,
 		};
 	}
 }
