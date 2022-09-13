@@ -1,4 +1,5 @@
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
@@ -122,8 +123,9 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 	encode(EncodedBytecode::Implicit, encoding);
 }
 
-fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate: f32,
-                   encode: &mut impl FnMut(EncodedBytecode, u16)) {
+fn encode_bytecode(bc: Bytecode, sample_rate: f32,
+                   encode: &mut impl FnMut(EncodedBytecode, u16),
+                   encode_constant: &mut impl FnMut(u32)) {
 	use EncodedBytecode::*;
 	use EncodedFop::*;
 	use EncodedNoteProperty::*;
@@ -146,8 +148,8 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		Bytecode::BufferAlloc => encode(BufferAlloc, 0),
 		Bytecode::CallInstrument => encode(CallInstrument, 0),
 		Bytecode::Call(proc) => encode(ProcCall, proc),
-		Bytecode::Constant(constant) => encode(Constant, constant_map[&constant]),
-		Bytecode::SampleRate => encode(Constant, constant_map[&sample_rate.to_bits()]),
+		Bytecode::Constant(constant) => encode_constant(constant),
+		Bytecode::SampleRate => encode_constant(sample_rate.to_bits()),
 		Bytecode::StackLoad(offset) => encode(StackLoad, offset),
 		Bytecode::StackStore(offset) => encode(StackStore, offset),
 		Bytecode::CellStore(offset) => encode(CellStore, offset),
@@ -199,7 +201,7 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 		},
 
 		Bytecode::ReadNoteProperty(NoteProperty::Gate) => {
-			encode(Constant, constant_map[&0]);
+			encode_constant(0);
 			encode_note_property(Length, encode);
 			encode_comparison(Greater, encode);
 		},
@@ -235,35 +237,26 @@ fn encode_bytecode(bc: Bytecode, constant_map: &BTreeMap<u32, u16>, sample_rate:
 }
 
 pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
-	// Build constant list
-	let mut constant_set = BTreeSet::new();
-	constant_set.insert(0);
-	for bc in procedures.iter().map(|p| p.get_bytecodes()).flatten() {
-		match bc {
-			Bytecode::Constant(v) => {
-				constant_set.insert(*v);
-			},
-			Bytecode::SampleRate => {
-				constant_set.insert(sample_rate.to_bits());
-			},
-			_ => {},
-		}
-	}
-	let constants: Vec<u32> = constant_set.into_iter().collect();
-
-	let mut constant_map = BTreeMap::new();
-	for (i, &v) in constants.iter().enumerate() {
-		constant_map.insert(v, i as u16);
-	}
-
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
 		let capacity = &mut opcode_capacity[opcode as usize];
 		*capacity = (*capacity).max(arg + 1);
 	};
+	let mut constant_set = BTreeSet::new();
+	let mut discover_constant = |value: u32| {
+		constant_set.insert(value);
+	};
 	for &bc in procedures.iter().map(|p| p.get_bytecodes()).flatten() {
-		encode_bytecode(bc, &constant_map, sample_rate, &mut discover_opcode);
+		encode_bytecode(bc, sample_rate, &mut discover_opcode, &mut discover_constant);
+	}
+	opcode_capacity[EncodedBytecode::Constant as usize] = constant_set.len() as u16 + 1;
+
+	// Build constant list
+	let constants: Vec<u32> = constant_set.into_iter().collect();
+	let mut constant_map = BTreeMap::new();
+	for (i, &v) in constants.iter().enumerate() {
+		constant_map.insert(v, i as u16);
 	}
 
 	adjust_to_fixed_capacities(&mut opcode_capacity)?;
@@ -284,19 +277,24 @@ pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> R
 	opcode_base[EncodedBytecode::Implicit as usize] = 0x01;
 
 	// Perform the encoding
-	let mut encoded: Vec<u8> = vec![];
+	let encoded = RefCell::new(vec![]);
 	let mut encode_opcode = |opcode: EncodedBytecode, arg: u16| {
-		encoded.push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
+		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
+	};
+	let mut encode_constant = |value: u32| {
+		let opcode = EncodedBytecode::Constant;
+		let arg = constant_map[&value];
+		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
 	};
 	for procedure in procedures {
 		encode_opcode(EncodedBytecode::Proc, 0);
 		for &bc in procedure.get_bytecodes() {
-			encode_bytecode(bc, &constant_map, sample_rate, &mut encode_opcode);
+			encode_bytecode(bc, sample_rate, &mut encode_opcode, &mut encode_constant);
 		}
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);
 
-	Ok((encoded, constants))
+	Ok((encoded.into_inner(), constants))
 }
 
 fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<(), String> {
