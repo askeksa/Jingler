@@ -14,6 +14,8 @@ pub struct ZingProgram {
 pub struct ZingProcedure {
 	pub name: String,
 	pub kind: ZingProcedureKind,
+	pub inputs: Vec<ZingType>,
+	pub outputs: Vec<ZingType>,
 	pub code: Vec<Instruction>,
 }
 
@@ -28,6 +30,34 @@ pub enum ZingProcedureKind {
 pub enum ZingScope {
 	Static,
 	Dynamic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZingWidth {
+	Mono,
+	Stereo,
+	Generic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZingValueType {
+	Number,
+	Buffer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZingType {
+	pub width: ZingWidth,
+	pub value_type: ZingValueType,
+}
+
+impl Display for ZingProcedure {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		write!(f, "{} [{}]: ", self.name, self.kind)?;
+		write_list(f, &self.inputs)?;
+		write!(f, " -> ")?;
+		write_list(f, &self.outputs)
+	}
 }
 
 impl Display for ZingProcedureKind {
@@ -47,4 +77,42 @@ impl Display for ZingScope {
 			ZingScope::Dynamic => write!(f, "dynamic"),
 		}
 	}
+}
+
+impl Display for ZingWidth {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match *self {
+			ZingWidth::Mono => write!(f, "mono"),
+			ZingWidth::Stereo => write!(f, "stereo"),
+			ZingWidth::Generic => write!(f, "generic"),
+		}
+	}
+}
+
+impl Display for ZingValueType {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match *self {
+			ZingValueType::Number => write!(f, "number"),
+			ZingValueType::Buffer => write!(f, "buffer"),
+		}
+	}
+}
+
+impl Display for ZingType {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		write!(f, "{} {}", self.width, self.value_type)
+	}
+}
+
+fn write_list(f: &mut Formatter, list: &Vec<impl Display>) -> Result<(), Error> {
+	write!(f, "(")?;
+	let mut first = true;
+	for item in list {
+		if !first {
+			write!(f, ", ")?;
+		}
+		write!(f, "{}", item)?;
+		first = false;
+	}
+	write!(f, ")")
 }

@@ -178,11 +178,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
 			self.current_kind = *kind;
 			let proc_kind;
+			let proc_inputs;
+			let proc_outputs;
 			match kind {
 				ProcedureKind::Module => {
 					let is_static = (id & 1) == 0;
 					if is_static {
 						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
+						proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
+						proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
 						self.initialize_stack(inputs, Some(Scope::Static), false);
 						self.find_cells_in_body(body)?;
 						self.mark_implicit_cells_from_outputs(outputs);
@@ -191,6 +195,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.adjust_stack(&[], self.stack_height);
 					} else {
 						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Dynamic };
+						proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
+						proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
 						self.initialize_stack(inputs, Some(Scope::Dynamic), false);
 						self.generate_dynamic_body(body)?;
 						let stack_adjust = self.stack_adjust_from_outputs(outputs);
@@ -199,6 +205,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				},
 				ProcedureKind::Function => {
 					proc_kind = ZingProcedureKind::Function;
+					proc_inputs = self.make_proc_type_list(inputs, None);
+					proc_outputs = self.make_proc_type_list(outputs, None);
 					self.initialize_stack(inputs, None, false);
 					for statement in body {
 						self.generate_code_for_statement(statement)?;
@@ -252,11 +260,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						// Add the output to the accumulator.
 						self.emit(code![Add]);
 					}
+					proc_inputs = self.make_proc_type_list(inputs, None);
+					proc_outputs = self.make_proc_type_list(inputs, None);
 				},
 			}
 			self.procedures.push(ZingProcedure {
 				name: name.text.into(),
 				kind: proc_kind,
+				inputs: proc_inputs,
+				outputs: proc_outputs,
 				code: take(&mut self.code),
 			});
 		}
@@ -407,6 +419,27 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				}
 			}
 		}
+	}
+
+	fn make_proc_type_list(&self, types: &Pattern, scope: Option<Scope>) -> Vec<ZingType> {
+		let mut result = vec![];
+		for PatternItem { item_type, .. } in &types.items {
+			if scope.is_none() || item_type.scope == scope {
+				let width = match item_type.width.unwrap() {
+					Width::Mono => ZingWidth::Mono,
+					Width::Stereo => ZingWidth::Stereo,
+					Width::Generic => ZingWidth::Generic,
+				};
+				let value_type = match item_type.value_type.unwrap() {
+					ValueType::Number => ZingValueType::Number,
+					ValueType::Bool => ZingValueType::Number,
+					ValueType::Buffer => ZingValueType::Buffer,
+					ValueType::Typeless => panic!("Typeless parameter in signature"),
+				};
+				result.push(ZingType { width, value_type });
+			}
+		}
+		result
 	}
 
 	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {

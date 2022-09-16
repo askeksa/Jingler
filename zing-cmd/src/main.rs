@@ -93,7 +93,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 			Ok(program) => {
 				if options.dump_instructions {
 					for (p, proc) in program.procedures.iter().enumerate() {
-						println!("{:2}: {} ({})", p, proc.name, proc.kind);
+						println!("{:2}: {}", p, proc);
 						for (i, inst) in proc.code.iter().enumerate() {
 							println!("{:5}  {}", i, inst);
 						}
