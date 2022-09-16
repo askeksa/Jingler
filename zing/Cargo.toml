@@ -8,7 +8,7 @@ build = "build.rs" # LALRPOP preprocessing
 [dependencies]
 regex = "1.5.4"
 
-bytecode = { path = "../bytecode" }
+program = { path = "../program" }
 
 [dependencies.lalrpop-util]
 version = "0.19.6"

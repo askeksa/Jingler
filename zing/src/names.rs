@@ -1,7 +1,7 @@
 
 use std::collections::HashMap;
 
-use bytecode::bytecodes::Bytecode;
+use program::bytecodes::Bytecode;
 
 use crate::ast::*;
 use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES, REPETITION_COMBINATORS};

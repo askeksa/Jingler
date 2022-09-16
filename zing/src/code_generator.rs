@@ -2,7 +2,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::mem::{replace, take};
 
-use bytecode::bytecodes::*;
+use program::bytecodes::*;
 
 use crate::ast::*;
 use crate::builtin::*;

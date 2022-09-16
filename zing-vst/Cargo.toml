@@ -11,7 +11,7 @@ rfd = "0.6.3"
 simple-message-box = "0.0.2"
 vst = "0.2.0"
 
-bytecode = { path = "../bytecode" }
+program = { path = "../program" }
 zing = { path = "../zing" }
 
 [build-dependencies]
