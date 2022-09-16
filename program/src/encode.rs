@@ -3,7 +3,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::instructions::{Instruction, HasInstructions, NoteProperty};
+use crate::program::ZingProgram;
+use crate::instructions::{Instruction, NoteProperty};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -236,7 +237,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 	}
 }
 
-pub fn encode_bytecodes(procedures: &[impl HasInstructions], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
+pub fn encode_bytecodes(program: &ZingProgram, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
@@ -247,7 +248,7 @@ pub fn encode_bytecodes(procedures: &[impl HasInstructions], sample_rate: f32) -
 	let mut discover_constant = |value: u32| {
 		constant_set.insert(value);
 	};
-	for &inst in procedures.iter().map(|p| p.get_instructions()).flatten() {
+	for &inst in program.procedures.iter().map(|p| &p.code).flatten() {
 		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant);
 	}
 	opcode_capacity[EncodedBytecode::Constant as usize] = constant_set.len() as u16 + 1;
@@ -286,9 +287,9 @@ pub fn encode_bytecodes(procedures: &[impl HasInstructions], sample_rate: f32) -
 		let arg = constant_map[&value];
 		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
 	};
-	for procedure in procedures {
+	for procedure in &program.procedures {
 		encode_opcode(EncodedBytecode::Proc, 0);
-		for &inst in procedure.get_instructions() {
+		for &inst in &procedure.code {
 			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant);
 		}
 	}

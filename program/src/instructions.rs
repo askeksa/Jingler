@@ -182,25 +182,3 @@ impl Display for Instruction {
 		Ok(())
 	}
 }
-
-pub trait HasInstructions {
-	fn get_instructions(&self) -> &[Instruction];
-}
-
-impl HasInstructions for [Instruction] {
-	fn get_instructions(&self) -> &[Instruction] {
-		&self
-	}
-}
-
-impl HasInstructions for &[Instruction] {
-	fn get_instructions(&self) -> &[Instruction] {
-		self
-	}
-}
-
-impl HasInstructions for Vec<Instruction> {
-	fn get_instructions(&self) -> &[Instruction] {
-		&self[..]
-	}
-}

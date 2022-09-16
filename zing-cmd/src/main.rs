@@ -91,7 +91,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 						println!();
 					}
 				}
-				match encode_bytecodes(&program.procedures, options.sample_rate) {
+				match encode_bytecodes(&program, options.sample_rate) {
 					Ok((bytecodes, constants)) => if options.run {
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
 						let output = run(&bytecodes[..], &constants[..], n_samples);
