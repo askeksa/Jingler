@@ -57,27 +57,27 @@ macro_rules! sig {
 	};
 }
 
-pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Bytecode])] = &[
-	("atan2",      sig!([mono, mono] [mono]),          bc![Atan2]),
-	("ceil",       sig!([generic] [generic]),          bc![Ceil]),
-	("cos",        sig!([mono] [mono]),                bc![Cos]),
-	("exp2",       sig!([mono] [mono]),                bc![Exp2]),
-	("floor",      sig!([generic] [generic]),          bc![Floor]),
-	("gate",       sig!([] [mono bool]),               bc![ReadNoteProperty(Gate)]),
-	("gmdls",      sig!([mono, mono] [mono]),          bc![GmDlsSample, Constant(0x38000000), Mul]),
-	("gmdlslen",   sig!([mono] [mono]),                bc![GmDlsLength]),
-	("key",        sig!([] [mono]),                    bc![ReadNoteProperty(Key)]),
-	("max",        sig!([generic, generic] [generic]), bc![Max]),
-	("min",        sig!([generic, generic] [generic]), bc![Min]),
-	("mlog2",      sig!([mono, mono] [mono]),          bc![Mlog2]),
-	("random",     sig!([mono, mono] [mono]),          bc![Random, Constant(0x30000000), Mul]),
-	("round",      sig!([generic] [generic]),          bc![Round]),
-	("samplerate", sig!([] [mono]),                    bc![SampleRate]),
-	("sin",        sig!([mono] [mono]),                bc![Sin]),
-	("sqrt",       sig!([generic] [generic]),          bc![Sqrt]),
-	("tan",        sig!([mono] [mono]),                bc![Tan]),
-	("trunc",      sig!([generic] [generic]),          bc![Trunc]),
-	("velocity",   sig!([] [mono]),                    bc![ReadNoteProperty(Velocity)]),
+pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Instruction])] = &[
+	("atan2",      sig!([mono, mono] [mono]),          code![Atan2]),
+	("ceil",       sig!([generic] [generic]),          code![Ceil]),
+	("cos",        sig!([mono] [mono]),                code![Cos]),
+	("exp2",       sig!([mono] [mono]),                code![Exp2]),
+	("floor",      sig!([generic] [generic]),          code![Floor]),
+	("gate",       sig!([] [mono bool]),               code![ReadNoteProperty(Gate)]),
+	("gmdls",      sig!([mono, mono] [mono]),          code![GmDlsSample, Constant(0x38000000), Mul]),
+	("gmdlslen",   sig!([mono] [mono]),                code![GmDlsLength]),
+	("key",        sig!([] [mono]),                    code![ReadNoteProperty(Key)]),
+	("max",        sig!([generic, generic] [generic]), code![Max]),
+	("min",        sig!([generic, generic] [generic]), code![Min]),
+	("mlog2",      sig!([mono, mono] [mono]),          code![Mlog2]),
+	("random",     sig!([mono, mono] [mono]),          code![Random, Constant(0x30000000), Mul]),
+	("round",      sig!([generic] [generic]),          code![Round]),
+	("samplerate", sig!([] [mono]),                    code![SampleRate]),
+	("sin",        sig!([mono] [mono]),                code![Sin]),
+	("sqrt",       sig!([generic] [generic]),          code![Sqrt]),
+	("tan",        sig!([mono] [mono]),                code![Tan]),
+	("trunc",      sig!([generic] [generic]),          code![Trunc]),
+	("velocity",   sig!([] [mono]),                    code![ReadNoteProperty(Velocity)]),
 ];
 
 pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
@@ -86,16 +86,16 @@ pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
 	("dyndelay", sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
 ];
 
-pub static REPETITION_COMBINATORS: &[(&'static str, f32, &'static [Bytecode])] = &[
-	("add", 0.0,               bc![Add]),
-	("max", f32::NEG_INFINITY, bc![Max]),
-	("min", f32::INFINITY,     bc![Min]),
-	("mul", 1.0,               bc![Mul]),
+pub static REPETITION_COMBINATORS: &[(&'static str, f32, &'static [Instruction])] = &[
+	("add", 0.0,               code![Add]),
+	("max", f32::NEG_INFINITY, code![Max]),
+	("min", f32::INFINITY,     code![Min]),
+	("mul", 1.0,               code![Mul]),
 ];
 
 pub trait OperatorSemantics {
 	fn signature(&self) -> &'static Signature<'static>;
-	fn bytecodes(&self) -> &'static [Bytecode];
+	fn instructions(&self) -> &'static [Instruction];
 }
 
 impl OperatorSemantics for UnOp {
@@ -103,8 +103,8 @@ impl OperatorSemantics for UnOp {
 		self.kind.signature()
 	}
 
-	fn bytecodes(&self) -> &'static [Bytecode] {
-		self.kind.bytecodes()
+	fn instructions(&self) -> &'static [Instruction] {
+		self.kind.instructions()
 	}
 }
 
@@ -118,11 +118,11 @@ impl OperatorSemantics for UnOpKind {
 	}
 
 	// Instruction to execute with 0 and the unary operand as its binary operands
-	fn bytecodes(&self) -> &'static [Bytecode] {
+	fn instructions(&self) -> &'static [Instruction] {
 		use UnOpKind::*;
 		match self {
-			Neg => bc![Sub],
-			Not => bc![Eq],
+			Neg => code![Sub],
+			Not => code![Eq],
 		}
 
 	}
@@ -133,8 +133,8 @@ impl OperatorSemantics for BinOp {
 		self.kind.signature()
 	}
 
-	fn bytecodes(&self) -> &'static [Bytecode] {
-		self.kind.bytecodes()
+	fn instructions(&self) -> &'static [Instruction] {
+		self.kind.instructions()
 	}
 }
 
@@ -158,22 +158,22 @@ impl OperatorSemantics for BinOpKind {
 		}
 	}
 
-	fn bytecodes(&self) -> &'static [Bytecode] {
+	fn instructions(&self) -> &'static [Instruction] {
 		use BinOpKind::*;
 		match self {
-			Add       => bc![Add],
-			Sub       => bc![Sub],
-			Mul       => bc![Mul],
-			Div       => bc![Div],
-			And       => bc![And],
-			Or        => bc![Or],
-			Xor       => bc![Xor],
-			Eq        => bc![Eq],
-			Neq       => bc![Neq],
-			Less      => bc![Less],
-			LessEq    => bc![LessEq],
-			Greater   => bc![Greater],
-			GreaterEq => bc![GreaterEq],
+			Add       => code![Add],
+			Sub       => code![Sub],
+			Mul       => code![Mul],
+			Div       => code![Div],
+			And       => code![And],
+			Or        => code![Or],
+			Xor       => code![Xor],
+			Eq        => code![Eq],
+			Neq       => code![Neq],
+			Less      => code![Less],
+			LessEq    => code![LessEq],
+			Greater   => code![Greater],
+			GreaterEq => code![GreaterEq],
 		}
 	}
 }

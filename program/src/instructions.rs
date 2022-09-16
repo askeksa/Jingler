@@ -3,10 +3,10 @@ use std::f32;
 use std::fmt::{Display, Error, Formatter};
 
 #[macro_export]
-macro_rules! bc {
+macro_rules! code {
 	{ $($b:expr),* } => {
 		{
-			#[allow(unused)] use Bytecode::*;
+			#[allow(unused)] use Instruction::*;
 			#[allow(unused)] use NoteProperty::*;
 			&[$($b),*]
 		}
@@ -14,7 +14,7 @@ macro_rules! bc {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Bytecode {
+pub enum Instruction {
 	// Constants
 	Constant(u32),
 	SampleRate,
@@ -111,9 +111,9 @@ pub enum NoteProperty {
 	Velocity,
 }
 
-impl Bytecode {
+impl Instruction {
 	pub fn stack_change(&self) -> (usize, usize) { // pops, pushes
-		use Bytecode::*;
+		use Instruction::*;
 		match self {
 			Constant(..) | SampleRate => (0, 1),
 
@@ -169,38 +169,38 @@ impl Bytecode {
 	}
 }
 
-impl Display for Bytecode {
+impl Display for Instruction {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match *self {
-			Bytecode::Constant(c) => {
+			Instruction::Constant(c) => {
 				write!(f, "Constant({})", f32::from_bits(c))?;
 			},
-			bc => {
-				write!(f, "{:?}", bc)?;
+			inst => {
+				write!(f, "{:?}", inst)?;
 			},
 		}
 		Ok(())
 	}
 }
 
-pub trait HasBytecodes {
-	fn get_bytecodes(&self) -> &[Bytecode];
+pub trait HasInstructions {
+	fn get_instructions(&self) -> &[Instruction];
 }
 
-impl HasBytecodes for [Bytecode] {
-	fn get_bytecodes(&self) -> &[Bytecode] {
+impl HasInstructions for [Instruction] {
+	fn get_instructions(&self) -> &[Instruction] {
 		&self
 	}
 }
 
-impl HasBytecodes for &[Bytecode] {
-	fn get_bytecodes(&self) -> &[Bytecode] {
+impl HasInstructions for &[Instruction] {
+	fn get_instructions(&self) -> &[Instruction] {
 		self
 	}
 }
 
-impl HasBytecodes for Vec<Bytecode> {
-	fn get_bytecodes(&self) -> &[Bytecode] {
+impl HasInstructions for Vec<Instruction> {
+	fn get_instructions(&self) -> &[Instruction] {
 		&self[..]
 	}
 }

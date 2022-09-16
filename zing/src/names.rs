@@ -1,7 +1,7 @@
 
 use std::collections::HashMap;
 
-use program::instructions::Bytecode;
+use program::instructions::Instruction;
 
 use crate::ast::*;
 use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES, REPETITION_COMBINATORS};
@@ -42,7 +42,7 @@ pub struct ProcedureRef {
 pub enum ProcedureDefinition {
 	BuiltIn {
 		sig: &'static Signature<'static>,
-		bc: &'static [Bytecode],
+		code: &'static [Instruction],
 	},
 	Declaration { proc_index: usize },
 }
@@ -58,7 +58,7 @@ pub struct Signature<'sig> {
 #[derive(Clone, Debug)]
 pub struct Combinator {
 	pub neutral: f32,
-	pub bc: &'static [Bytecode],
+	pub code: &'static [Instruction],
 }
 
 impl<'ast> Names<'ast> {
@@ -71,20 +71,20 @@ impl<'ast> Names<'ast> {
 		};
 
 		// Insert built-in functions and modules
-		for (name, sig, bc) in BUILTIN_FUNCTIONS {
+		for (name, sig, code) in BUILTIN_FUNCTIONS {
 			names.procedures.insert(name, ProcedureRef {
 				kind: ProcedureKind::Function,
-				definition: ProcedureDefinition::BuiltIn { sig, bc },
+				definition: ProcedureDefinition::BuiltIn { sig, code },
 			});
 		}
 		for (name, sig) in BUILTIN_MODULES {
 			names.procedures.insert(name, ProcedureRef {
 				kind: ProcedureKind::Module,
-				definition: ProcedureDefinition::BuiltIn { sig, bc: &[] },
+				definition: ProcedureDefinition::BuiltIn { sig, code: &[] },
 			});
 		}
-		for &(name, neutral, bc) in REPETITION_COMBINATORS {
-			names.combinators.insert(name, Combinator { neutral, bc });
+		for &(name, neutral, code) in REPETITION_COMBINATORS {
+			names.combinators.insert(name, Combinator { neutral, code });
 		}
 
 		// Run through all procedures in the program

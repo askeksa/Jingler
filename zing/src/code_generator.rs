@@ -63,7 +63,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	current_kind: ProcedureKind,
 
 	procedures: Vec<ZingProcedure>,
-	bc: Vec<Bytecode>,
+	code: Vec<Instruction>,
 	stack_height: usize,
 
 	/// Next stack index
@@ -107,7 +107,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			current_kind: ProcedureKind::Module,
 
 			procedures: vec![],
-			bc: vec![],
+			code: vec![],
 			stack_height: 0,
 
 			next_stack_index: 0,
@@ -131,10 +131,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.compiler.report_error(loc, format!("Not supported yet: {}.", what));
 	}
 
-	fn emit(&mut self, bc: &[Bytecode]) {
-		for &code in bc {
-			let (popped, pushed) = match code {
-				Bytecode::Call(id) => {
+	fn emit(&mut self, code: &[Instruction]) {
+		for &inst in code {
+			let (popped, pushed) = match inst {
+				Instruction::Call(id) => {
 					let proc_index = self.proc_for_id[id as usize];
 					let (kind, inputs, outputs) = &self.signatures[proc_index];
 					let is_static = (id & 1) == 0;
@@ -158,12 +158,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						},
 					}
 				},
-				_ => code.stack_change(),
+				_ => inst.stack_change(),
 			};
-			//println!("{:4}  {:2}  {:?}", self.bc.len(), self.stack_height, code);
-			self.bc.push(code);
+			//println!("{:4}  {:2}  {:?}", self.code.len(), self.stack_height, inst);
+			self.code.push(inst);
 			if popped > self.stack_height {
-				panic!("Stack underflow: {:?}", self.bc);
+				panic!("Stack underflow: {:?}", self.code);
 			}
 			self.stack_height -= popped;
 			self.stack_height += pushed;
@@ -233,7 +233,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						let counter_stack_index = self.cell_stack_index;
 						let counter_offset = self.stack_height - counter_stack_index;
 						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
-						self.emit(bc![
+						self.emit(code![
 							StackLoad(0), // Copy of output
 							Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
 							SplitRL, Or, // 0 when both channels small
@@ -249,14 +249,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
 						self.adjust_stack(&stack_adjust, self.stack_height);
 						// Add the output to the accumulator.
-						self.emit(bc![Add]);
+						self.emit(code![Add]);
 					}
 				},
 			}
 			self.procedures.push(ZingProcedure {
 				name: name.text.into(),
 				kind: proc_kind,
-				code: take(&mut self.bc),
+				code: take(&mut self.code),
 			});
 		}
 
@@ -294,7 +294,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 		for (cell_index, stack_index) in self.stack_index_in_cell.clone().iter().enumerate() {
 			let offset = self.stack_height - stack_index - 1;
-			self.emit(bc![StackLoad(offset as u16), CellInit]);
+			self.emit(code![StackLoad(offset as u16), CellInit]);
 			if let Some((name, _)) = self.stack_index.iter().find(|(_, i)| *i == stack_index) {
 				self.name_in_cell.insert(cell_index, name);
 			}
@@ -303,10 +303,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			self.generate(exp);
 			match kind {
 				StateKind::Cell => {
-					self.emit(bc![CellInit]);
+					self.emit(code![CellInit]);
 				},
 				StateKind::Delay => {
-					self.emit(bc![BufferAlloc, CellInit]);
+					self.emit(code![BufferAlloc, CellInit]);
 				},
 			}
 		}
@@ -324,18 +324,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							self.generate(arg);
 						}
 					}
-					self.emit(bc![Call(self.proc_id[proc_index])]);
+					self.emit(code![Call(self.proc_id[proc_index])]);
 				},
 				ModuleCall::For { name, start, end, nested_calls } => {
 					self.generate(end);
-					self.emit(bc![StackLoad(0), CellInit]);
+					self.emit(code![StackLoad(0), CellInit]);
 					let counter_stack_index = self.stack_height;
 					self.generate(start);
-					self.emit(bc![StackLoad(0), CellInit, Label]);
+					self.emit(code![StackLoad(0), CellInit, Label]);
 					self.stack_index.insert(name.text, counter_stack_index);
 					self.generate_static_module_calls(nested_calls);
 					self.stack_index.remove(name.text);
-					self.emit(bc![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
+					self.emit(code![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
 				},
 			}
 		}
@@ -347,11 +347,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			if let Some(name) = self.name_in_cell.get(&cell_index) {
 				self.stack_index.entry(name).or_insert(self.stack_height);
 			}
-			self.emit(bc![CellRead]);
+			self.emit(code![CellRead]);
 		}
 		self.cell_stack_index = self.stack_height;
 		for _ in 0 .. self.cell_init.len() {
-			self.emit(bc![CellRead]);
+			self.emit(code![CellRead]);
 		}
 		self.next_stack_index = self.stack_height;
 
@@ -365,14 +365,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			match kind {
 				StateKind::Cell => {
 					self.generate(exp);
-					self.emit(bc![CellStore(cell_index as u16)]);
+					self.emit(code![CellStore(cell_index as u16)]);
 				},
 				StateKind::Delay => {
 					let stack_index = cell_stack_index_base + cell_index;
 					let offset = self.stack_height - stack_index - 1;
-					self.emit(bc![StackLoad(offset as u16)]);
+					self.emit(code![StackLoad(offset as u16)]);
 					self.generate(exp);
-					self.emit(bc![BufferStoreAndStep, CellStore(cell_index as u16)]);
+					self.emit(code![BufferStoreAndStep, CellStore(cell_index as u16)]);
 				}
 			}
 			cell_index += 1;
@@ -571,22 +571,22 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		match results.len() {
 			0 => {
 				for _ in 0..height {
-					self.emit(bc![Pop]);
+					self.emit(code![Pop]);
 				}
 			},
 			1 => {
 				for _ in 0..(height - results[0] - 1) {
-					self.emit(bc![Pop]);
+					self.emit(code![Pop]);
 				}
 				for _ in 0..results[0] {
-					self.emit(bc![PopNext]);
+					self.emit(code![PopNext]);
 				}
 			},
 			_ => {
 				for i in 0..results.len() {
 					if results[i] != i {
 						let offset = height - results[i] - 1;
-						self.emit(bc![StackLoad(offset as u16)]);
+						self.emit(code![StackLoad(offset as u16)]);
 						height += 1;
 					}
 				}
@@ -594,11 +594,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					if results[i] != i {
 						height -= 1;
 						let offset = height - i - 1;
-						self.emit(bc![StackStore(offset as u16)]);
+						self.emit(code![StackStore(offset as u16)]);
 					}
 				}
 				for _ in 0..(height - results.len()) {
-					self.emit(bc![Pop]);
+					self.emit(code![Pop]);
 				}
 			},
 		}
@@ -607,11 +607,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn generate(&mut self, exp: &'ast Expression<'ast>) {
 		use Expression::*;
 		match exp {
-			Number { value, .. } => self.emit(bc![Constant((*value as f32).to_bits())]),
+			Number { value, .. } => self.emit(code![Constant((*value as f32).to_bits())]),
 			Bool { value, .. } => if *value {
-				self.emit(bc![Constant(0), Constant(0), Eq]);
+				self.emit(code![Constant(0), Constant(0), Eq]);
 			} else {
-				self.emit(bc![Constant(0)]);
+				self.emit(code![Constant(0)]);
 			},
 			Variable { name } => {
 				let offset = match self.stack_index.get(name.text) {
@@ -621,25 +621,25 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						0
 					},
 				};
-				self.emit(bc![StackLoad(offset as u16)]);
+				self.emit(code![StackLoad(offset as u16)]);
 			},
 			UnOp { op, exp } => {
 				self.generate(exp);
-				self.emit(bc![Constant(0)]);
+				self.emit(code![Constant(0)]);
 				self.expand(self.retrieve_type(exp).width.unwrap());
-				self.emit(op.bytecodes());
+				self.emit(op.instructions());
 			},
 			BinOp { left, op, right } => {
 				self.generate(right);
 				self.generate(left);
-				self.emit(op.bytecodes());
+				self.emit(op.instructions());
 			},
 			Conditional { condition, then, otherwise } => {
 				self.generate(condition);
 				self.generate(then);
-				self.emit(bc![StackLoad(1), And]);
+				self.emit(code![StackLoad(1), And]);
 				self.generate(otherwise);
-				self.emit(bc![StackLoad(2), AndNot, Or, PopNext]);
+				self.emit(code![StackLoad(2), AndNot, Or, PopNext]);
 			},
 			Call { name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
@@ -652,21 +652,21 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									"cell" => {
 										let offset = self.stack_height - self.cell_stack_index - 1;
 										self.cell_stack_index += 1;
-										self.emit(bc![StackLoad(offset as u16)]);
+										self.emit(code![StackLoad(offset as u16)]);
 										self.update_queue.push_back((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
 										let offset = self.stack_height - self.cell_stack_index - 1;
 										self.cell_stack_index += 1;
-										self.emit(bc![StackLoad(offset as u16), BufferLoad]);
+										self.emit(code![StackLoad(offset as u16), BufferLoad]);
 										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
 									"dyndelay" => {
 										let offset = self.stack_height - self.cell_stack_index - 1;
 										self.cell_stack_index += 1;
-										self.emit(bc![StackLoad(offset as u16)]);
+										self.emit(code![StackLoad(offset as u16)]);
 										self.generate(&args[1]);
-										self.emit(bc![BufferLoadWithOffset]);
+										self.emit(code![BufferLoadWithOffset]);
 										self.update_queue.push_back((StateKind::Delay, &args[2]));
 									},
 									_ => panic!("Unknown built-in module"),
@@ -680,24 +680,24 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									}
 								}
 								let proc_id = self.proc_id[*proc_index] + 1;
-								self.emit(bc![Call(proc_id)]);
+								self.emit(code![Call(proc_id)]);
 							},
-							(Function, BuiltIn { bc, .. }) => {
-								let is_note_property = bc.iter().any(|c| matches!(c, Bytecode::ReadNoteProperty(_)));
+							(Function, BuiltIn { code, .. }) => {
+								let is_note_property = code.iter().any(|c| matches!(c, Instruction::ReadNoteProperty(_)));
 								if is_note_property && self.current_kind != ProcedureKind::Instrument {
 									self.unsupported(exp, "Note property outside instrument");
 								}
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(bc);
+								self.emit(code);
 							},
 							(Function, Declaration { proc_index }) => {
 								for arg in args {
 									self.generate(arg);
 								}
 								let proc_id = self.proc_id[*proc_index];
-								self.emit(bc![Call(proc_id)]);
+								self.emit(code![Call(proc_id)]);
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
@@ -706,8 +706,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(bc![Constant(0), ExpandStereo]);
-								self.emit(bc![CallInstrument]);
+								self.emit(code![Constant(0), ExpandStereo]);
+								self.emit(code![CallInstrument]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
 
@@ -729,15 +729,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			Merge { left, right, .. } => {
 				self.generate(right);
 				self.generate(left);
-				self.emit(bc![MergeLR]);
+				self.emit(code![MergeLR]);
 			},
 			Property { exp, name } => {
 				self.generate(exp);
 				match name.text {
-					"left" => self.emit(bc![Left]),
-					"right" => self.emit(bc![Right]),
-					"index" => self.emit(bc![BufferIndex]),
-					"length" => self.emit(bc![BufferLength]),
+					"left" => self.emit(code![Left]),
+					"right" => self.emit(code![Right]),
+					"index" => self.emit(code![BufferIndex]),
+					"length" => self.emit(code![BufferLength]),
 					_ => panic!("Unknown property"),
 				}
 			},
@@ -747,22 +747,22 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			BufferIndex { exp, index, .. } => {
 				self.generate(exp);
 				self.generate(index);
-				self.emit(bc![StackLoad(1), BufferIndex, Sub, BufferLoadWithOffset]);
+				self.emit(code![StackLoad(1), BufferIndex, Sub, BufferLoadWithOffset]);
 			},
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
-				self.emit(bc![Constant(combinator.neutral.to_bits())]); // accumulator
+				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
 				self.expand(self.retrieve_type(body).width.unwrap());
-				self.emit(bc![CellRead]); // end
+				self.emit(code![CellRead]); // end
 				let counter_stack_index = self.stack_height;
-				self.emit(bc![CellRead, Label]); // counter
+				self.emit(code![CellRead, Label]); // counter
 				self.stack_index.insert(name.text, counter_stack_index);
 				self.generate(body);
 				self.stack_index.remove(name.text);
-				self.emit(bc![StackLoad(3)]); // accumulator
-				self.emit(combinator.bc);
-				self.emit(bc![StackStore(2)]); // accumulator
-				self.emit(bc![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
+				self.emit(code![StackLoad(3)]); // accumulator
+				self.emit(combinator.code);
+				self.emit(code![StackStore(2)]); // accumulator
+				self.emit(code![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
 			},
 			Expand { exp, width } => {
 				self.generate(exp);
@@ -774,8 +774,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn expand(&mut self, width: Width) {
 		match width {
 			Width::Mono => {},
-			Width::Stereo => self.emit(bc![ExpandStereo]),
-			Width::Generic => self.emit(bc![ExpandGeneric]),
+			Width::Stereo => self.emit(code![ExpandStereo]),
+			Width::Generic => self.emit(code![ExpandGeneric]),
 		}
 	}
 }

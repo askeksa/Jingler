@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::instructions::{Bytecode, HasBytecodes, NoteProperty};
+use crate::instructions::{Instruction, HasInstructions, NoteProperty};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,7 +123,7 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 	encode(EncodedBytecode::Implicit, encoding);
 }
 
-fn encode_bytecode(bc: Bytecode, sample_rate: f32,
+fn encode_bytecode(inst: Instruction, sample_rate: f32,
                    encode: &mut impl FnMut(EncodedBytecode, u16),
                    encode_constant: &mut impl FnMut(u32)) {
 	use EncodedBytecode::*;
@@ -132,111 +132,111 @@ fn encode_bytecode(bc: Bytecode, sample_rate: f32,
 	use EncodedRoundingMode::*;
 	use EncodedCompareOp::*;
 	use EncodedImplicit::*;
-	match bc {
-		Bytecode::StateEnter => encode(StateEnter, 0),
-		Bytecode::StateLeave => encode(StateLeave, 0),
-		Bytecode::Kill => encode(Kill, 0),
-		Bytecode::CellInit => encode(CellInit, 0),
-		Bytecode::CellRead => encode(CellRead, 0),
-		Bytecode::GmDlsLength => encode(GmDlsLength, 0),
-		Bytecode::GmDlsSample => encode(GmDlsSample, 0),
-		Bytecode::AddSub => encode(AddSub, 0),
-		Bytecode::Random => encode(Random, 0),
-		Bytecode::BufferLoadWithOffset => encode(BufferLoadWithOffset, 0),
-		Bytecode::BufferLoad => encode(BufferLoad, 0),
-		Bytecode::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
-		Bytecode::BufferAlloc => encode(BufferAlloc, 0),
-		Bytecode::CallInstrument => encode(CallInstrument, 0),
-		Bytecode::Call(proc) => encode(ProcCall, proc),
-		Bytecode::Constant(constant) => encode_constant(constant),
-		Bytecode::SampleRate => encode_constant(sample_rate.to_bits()),
-		Bytecode::StackLoad(offset) => encode(StackLoad, offset),
-		Bytecode::StackStore(offset) => encode(StackStore, offset),
-		Bytecode::CellStore(offset) => encode(CellStore, offset),
-		Bytecode::Label => encode(Label, 0),
-		Bytecode::If => encode(If, 0),
-		Bytecode::Loop => encode(LoopJump, 0),
-		Bytecode::EndIf => encode(EndIf, 0),
-		Bytecode::Else => encode(Else, 0),
+	match inst {
+		Instruction::StateEnter => encode(StateEnter, 0),
+		Instruction::StateLeave => encode(StateLeave, 0),
+		Instruction::Kill => encode(Kill, 0),
+		Instruction::CellInit => encode(CellInit, 0),
+		Instruction::CellRead => encode(CellRead, 0),
+		Instruction::GmDlsLength => encode(GmDlsLength, 0),
+		Instruction::GmDlsSample => encode(GmDlsSample, 0),
+		Instruction::AddSub => encode(AddSub, 0),
+		Instruction::Random => encode(Random, 0),
+		Instruction::BufferLoadWithOffset => encode(BufferLoadWithOffset, 0),
+		Instruction::BufferLoad => encode(BufferLoad, 0),
+		Instruction::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
+		Instruction::BufferAlloc => encode(BufferAlloc, 0),
+		Instruction::CallInstrument => encode(CallInstrument, 0),
+		Instruction::Call(proc) => encode(ProcCall, proc),
+		Instruction::Constant(constant) => encode_constant(constant),
+		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
+		Instruction::StackLoad(offset) => encode(StackLoad, offset),
+		Instruction::StackStore(offset) => encode(StackStore, offset),
+		Instruction::CellStore(offset) => encode(CellStore, offset),
+		Instruction::Label => encode(Label, 0),
+		Instruction::If => encode(If, 0),
+		Instruction::Loop => encode(LoopJump, 0),
+		Instruction::EndIf => encode(EndIf, 0),
+		Instruction::Else => encode(Else, 0),
 
-		Bytecode::Ceil => encode_rounding(Ceil, encode),
-		Bytecode::Floor => encode_rounding(Floor, encode),
-		Bytecode::Round => encode_rounding(Nearest, encode),
-		Bytecode::Trunc => encode_rounding(Truncate, encode),
+		Instruction::Ceil => encode_rounding(Ceil, encode),
+		Instruction::Floor => encode_rounding(Floor, encode),
+		Instruction::Round => encode_rounding(Nearest, encode),
+		Instruction::Trunc => encode_rounding(Truncate, encode),
 
-		Bytecode::Eq => encode_comparison(Eq, encode),
-		Bytecode::Greater => encode_comparison(Greater, encode),
-		Bytecode::GreaterEq => encode_comparison(GreaterEq, encode),
-		Bytecode::Less => encode_comparison(Less, encode),
-		Bytecode::LessEq => encode_comparison(LessEq, encode),
-		Bytecode::Neq => encode_comparison(Neq, encode),
+		Instruction::Eq => encode_comparison(Eq, encode),
+		Instruction::Greater => encode_comparison(Greater, encode),
+		Instruction::GreaterEq => encode_comparison(GreaterEq, encode),
+		Instruction::Less => encode_comparison(Less, encode),
+		Instruction::LessEq => encode_comparison(LessEq, encode),
+		Instruction::Neq => encode_comparison(Neq, encode),
 
-		Bytecode::Atan2 => {
+		Instruction::Atan2 => {
 			encode(Fputnext, 0);
 			encode_fop(Fpatan, encode);
 			encode(Fdone, 0);
 		},
-		Bytecode::Cos => {
+		Instruction::Cos => {
 			encode_fop(Fcos, encode);
 			encode(Fdone, 0);
 		},
-		Bytecode::Exp2 => {
+		Instruction::Exp2 => {
 			encode_fop(Frndint, encode);
 			encode(Exp2Body, 0);
 			encode(Fdone, 0);
 		},
-		Bytecode::Mlog2 => {
+		Instruction::Mlog2 => {
 			encode(Fputnext, 0);
 			encode_fop(Fyl2x, encode);
 			encode(Fdone, 0);
 		},
-		Bytecode::Sin => {
+		Instruction::Sin => {
 			encode_fop(Fsin, encode);
 			encode(Fdone, 0);
 		},
-		Bytecode::Tan => {
+		Instruction::Tan => {
 			encode_fop(Fptan, encode);
 			encode(Fdone, 0);
 			encode(Fdone, 0);
 		},
 
-		Bytecode::ReadNoteProperty(NoteProperty::Gate) => {
+		Instruction::ReadNoteProperty(NoteProperty::Gate) => {
 			encode_constant(0);
 			encode_note_property(Length, encode);
 			encode_comparison(Greater, encode);
 		},
-		Bytecode::ReadNoteProperty(NoteProperty::Key) => encode_note_property(Key, encode),
-		Bytecode::ReadNoteProperty(NoteProperty::Velocity) => encode_note_property(Velocity, encode),
+		Instruction::ReadNoteProperty(NoteProperty::Key) => encode_note_property(Key, encode),
+		Instruction::ReadNoteProperty(NoteProperty::Velocity) => encode_note_property(Velocity, encode),
 
-		Bytecode::MergeLR => encode_implicit(MergeLR, encode),
-		Bytecode::SplitRL => encode_implicit(SplitRL, encode),
-		Bytecode::Left => {},
-		Bytecode::Right => encode_implicit(ExpandR, encode),
-		Bytecode::ExpandStereo => encode_implicit(ExpandL, encode),
-		Bytecode::ExpandGeneric => encode_implicit(ExpandL, encode),
-		Bytecode::Pop => encode_implicit(Pop, encode),
-		Bytecode::PopNext => encode_implicit(PopNext, encode),
-		Bytecode::BufferIndex => encode_implicit(BufferIndexAndLength, encode),
-		Bytecode::BufferLength => {
+		Instruction::MergeLR => encode_implicit(MergeLR, encode),
+		Instruction::SplitRL => encode_implicit(SplitRL, encode),
+		Instruction::Left => {},
+		Instruction::Right => encode_implicit(ExpandR, encode),
+		Instruction::ExpandStereo => encode_implicit(ExpandL, encode),
+		Instruction::ExpandGeneric => encode_implicit(ExpandL, encode),
+		Instruction::Pop => encode_implicit(Pop, encode),
+		Instruction::PopNext => encode_implicit(PopNext, encode),
+		Instruction::BufferIndex => encode_implicit(BufferIndexAndLength, encode),
+		Instruction::BufferLength => {
 			encode_implicit(BufferIndexAndLength, encode);
 			encode_implicit(ExpandR, encode);
 		},
-		Bytecode::Cmp => encode_implicit(Cmp, encode),
-		Bytecode::Sqrt => encode_implicit(Sqrt, encode),
-		Bytecode::And => encode_implicit(And, encode),
-		Bytecode::AndNot => encode_implicit(AndNot, encode),
-		Bytecode::Or => encode_implicit(Or, encode),
-		Bytecode::Xor => encode_implicit(Xor, encode),
-		Bytecode::Add => encode_implicit(Add, encode),
-		Bytecode::Mul => encode_implicit(Mul, encode),
-		Bytecode::Sub => encode_implicit(Sub, encode),
-		Bytecode::Min => encode_implicit(Min, encode),
-		Bytecode::Div => encode_implicit(Div, encode),
-		Bytecode::Max => encode_implicit(Max, encode),
+		Instruction::Cmp => encode_implicit(Cmp, encode),
+		Instruction::Sqrt => encode_implicit(Sqrt, encode),
+		Instruction::And => encode_implicit(And, encode),
+		Instruction::AndNot => encode_implicit(AndNot, encode),
+		Instruction::Or => encode_implicit(Or, encode),
+		Instruction::Xor => encode_implicit(Xor, encode),
+		Instruction::Add => encode_implicit(Add, encode),
+		Instruction::Mul => encode_implicit(Mul, encode),
+		Instruction::Sub => encode_implicit(Sub, encode),
+		Instruction::Min => encode_implicit(Min, encode),
+		Instruction::Div => encode_implicit(Div, encode),
+		Instruction::Max => encode_implicit(Max, encode),
 	}
 }
 
-pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
+pub fn encode_bytecodes(procedures: &[impl HasInstructions], sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>), String> {
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
@@ -247,8 +247,8 @@ pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> R
 	let mut discover_constant = |value: u32| {
 		constant_set.insert(value);
 	};
-	for &bc in procedures.iter().map(|p| p.get_bytecodes()).flatten() {
-		encode_bytecode(bc, sample_rate, &mut discover_opcode, &mut discover_constant);
+	for &inst in procedures.iter().map(|p| p.get_instructions()).flatten() {
+		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant);
 	}
 	opcode_capacity[EncodedBytecode::Constant as usize] = constant_set.len() as u16 + 1;
 
@@ -288,8 +288,8 @@ pub fn encode_bytecodes(procedures: &[impl HasBytecodes], sample_rate: f32) -> R
 	};
 	for procedure in procedures {
 		encode_opcode(EncodedBytecode::Proc, 0);
-		for &bc in procedure.get_bytecodes() {
-			encode_bytecode(bc, sample_rate, &mut encode_opcode, &mut encode_constant);
+		for &inst in procedure.get_instructions() {
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant);
 		}
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);

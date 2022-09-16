@@ -7,7 +7,7 @@ use regex::{Captures, Regex};
 
 use lalrpop_util::ParseError;
 
-use program::instructions::{Bytecode, HasBytecodes};
+use program::instructions::{Instruction, HasInstructions};
 
 use crate::ast::*;
 use crate::code_generator::generate_code;
@@ -192,11 +192,11 @@ pub struct ZingProgram {
 pub struct ZingProcedure {
 	pub name: String,
 	pub kind: ZingProcedureKind,
-	pub code: Vec<Bytecode>,
+	pub code: Vec<Instruction>,
 }
 
-impl HasBytecodes for ZingProcedure {
-	fn get_bytecodes(&self) -> &[Bytecode] {
+impl HasInstructions for ZingProcedure {
+	fn get_instructions(&self) -> &[Instruction] {
 		&self.code
 	}
 }
