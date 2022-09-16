@@ -4,7 +4,6 @@ use zing::compiler;
 
 use std::error::Error;
 use std::fs;
-use std::slice;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
 
@@ -15,14 +14,16 @@ use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::Sink;
 
+#[cfg(target_arch = "x86")]
 #[link(name = "clinklang_cmd")]
 extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn RunStaticCode(constants: *const u32);
-    fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
+	fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
 }
 
+#[cfg(target_arch = "x86")]
 fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	unsafe {
 		CompileBytecode(bytecodes.as_ptr());
@@ -32,6 +33,14 @@ fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 		slice::from_raw_parts(music, length * 2)
 	}
 }
+
+#[cfg(not(target_arch = "x86"))]
+fn run(_bytecodes: &[u8], _constants: &[u32], _length: usize) -> &'static [f32] {
+	&EMPTY_SOUND
+}
+
+#[cfg(not(target_arch = "x86"))]
+const EMPTY_SOUND: [f32; 0] = [0f32; 0];
 
 struct PlayOptions {
 	sample_rate: f32,
