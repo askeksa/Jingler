@@ -1,2 +1,2 @@
-pub mod bytecodes;
+pub mod instructions;
 pub mod encode;

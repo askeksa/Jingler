@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::bytecodes::{Bytecode, HasBytecodes, NoteProperty};
+use crate::instructions::{Bytecode, HasBytecodes, NoteProperty};
 
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

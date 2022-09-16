@@ -1,5 +1,5 @@
 
-use program::bytecodes::*;
+use program::instructions::*;
 
 use crate::ast::{BinOp, BinOpKind, Scope, Type, UnOp, UnOpKind, ValueType, Width};
 use crate::names::Signature;

@@ -7,7 +7,7 @@ use regex::{Captures, Regex};
 
 use lalrpop_util::ParseError;
 
-use program::bytecodes::{Bytecode, HasBytecodes};
+use program::instructions::{Bytecode, HasBytecodes};
 
 use crate::ast::*;
 use crate::code_generator::generate_code;
