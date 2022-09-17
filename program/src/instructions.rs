@@ -177,6 +177,15 @@ impl Display for Instruction {
 			Instruction::Constant(c) => {
 				write!(f, "Constant({})", f32::from_bits(c))?;
 			},
+			Instruction::Call(proc, width) => {
+				match width {
+					None => write!(f, "Call({})", proc)?,
+					Some(width) => write!(f, "Call({}, {})", proc, width)?,
+				}
+			},
+			Instruction::BufferAlloc(width) => {
+				write!(f, "BufferAlloc({})", width)?;
+			},
 			inst => {
 				write!(f, "{:?}", inst)?;
 			},
