@@ -12,11 +12,11 @@ pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
-		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Type>), CompileError> {
+		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Width>), CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
 	type_inferrer.infer_bodies(program)?;
-	Ok((type_inferrer.signatures, type_inferrer.stored_types))
+	Ok((type_inferrer.signatures, type_inferrer.stored_widths))
 }
 
 
@@ -24,7 +24,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-	stored_types: HashMap<*const Expression<'ast>, Type>,
+	stored_widths: HashMap<*const Expression<'ast>, Width>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
@@ -45,7 +45,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			names,
 			compiler,
 			signatures: vec![],
-			stored_types: HashMap::new(),
+			stored_widths: HashMap::new(),
 			ready: HashMap::new(),
 			current_proc_index: 0,
 			current_is_main: false,
@@ -343,7 +343,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						}
 					}
 					if inferred_type.assignable_to(&node_type) {
-						if let Some(width) = self.should_expand(&node_type, &exp_type, Width::Generic) {
+						if let Some(width) = self.should_expand(&node_type, &exp_type, Some(Width::Generic)) {
 							if single {
 								self.expand(exp, width);
 							} else {
@@ -384,7 +384,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
 			Conditional { condition, then, otherwise }
 				=> self.infer_conditional(condition, then, otherwise, loc),
-			Call { name, args, .. } => self.infer_call(name, args, loc),
+			Call { name, args, .. } => {
+				let (results, generic_width) = self.infer_call(name, args, loc);
+				if let Some(generic_width) = generic_width {
+					self.store_width(exp, generic_width)
+				}
+				results
+			},
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
 			Property { exp, name } => self.infer_property(exp, name, loc),
@@ -413,9 +419,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			title: &str) -> TypeResult {
 		let result = self.expect_single(exp, title);
 		if let TypeResult::Type { inferred_type } = result {
-			self.stored_types.insert(exp as *const Expression<'ast>, inferred_type);
+			self.store_width(exp, inferred_type.width.unwrap());
 		}
 		result
+	}
+
+	fn store_width(&mut self, exp: &Expression<'ast>, width: Width) {
+		self.stored_widths.insert(exp as *const Expression<'ast>, width);
 	}
 
 	fn infer_number(&mut self,
@@ -482,7 +492,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	fn infer_call(&mut self,
 			name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_procedure(name.text) {
 			Some(ProcedureRef { kind, definition }) => {
 				match kind {
@@ -514,7 +524,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			},
 			None => {
 				self.compiler.report_error(name, format!("Procedure not found: '{}'.", name));
-				vec![TypeResult::Error]
+				(vec![TypeResult::Error], None)
 			},
 		}
 	}
@@ -641,7 +651,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression<'ast>>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let mut arg_types = vec![];
 		let mut arg_multiplicity = vec![];
 		for arg in args.iter_mut() {
@@ -666,11 +676,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 				type_index += multiplicity;
 			}
-			result
+			(result, generic_width)
 		} else {
 			self.compiler.report_error(loc,
 				format!("{} arguments expected, {} given.", sig.inputs.len(), arg_types.len()));
-			vec![TypeResult::Error; sig.outputs.len()]
+			(vec![TypeResult::Error; sig.outputs.len()], None)
 		}
 	}
 
@@ -686,7 +696,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		result
 	}
 
-	fn generic_instantiation(&self, sig: &Signature, result: &Vec<TypeResult>) -> Width {
+	fn generic_instantiation(&self, sig: &Signature, result: &Vec<TypeResult>) -> Option<Width> {
+		let mut generic = false;
 		for (sig_out, result_out) in sig.outputs.iter().zip(result) {
 			if let (Type {
 				width: Some(sig_width), ..
@@ -697,16 +708,17 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				}
 			}) = (sig_out, result_out) {
 				match (sig_width, result_width) {
-					(Width::Generic, Width::Stereo) => return Width::Stereo,
-					(Width::Generic, Width::Generic) => return Width::Generic,
+					(Width::Generic, Width::Mono) => { generic = true; },
+					(Width::Generic, Width::Stereo) => return Some(Width::Stereo),
+					(Width::Generic, Width::Generic) => return Some(Width::Generic),
 					_ => {},
 				}
 			}
 		}
-		Width::Mono
+		generic.then_some(Width::Mono)
 	}
 
-	fn should_expand(&self, sig_type: &Type, arg_type: &TypeResult, generic_width: Width) -> Option<Width> {
+	fn should_expand(&self, sig_type: &Type, arg_type: &TypeResult, generic_width: Option<Width>) -> Option<Width> {
 		if let (Type {
 			width: Some(sig_width), ..
 		},
@@ -717,8 +729,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}) = (sig_type, arg_type) {
 			match (sig_width, arg_width, generic_width) {
 				(Width::Stereo, Width::Mono, _) => Some(Width::Stereo),
-				(Width::Generic, Width::Mono, Width::Stereo) => Some(Width::Stereo),
-				(Width::Generic, Width::Mono, Width::Generic) => Some(Width::Generic),
+				(Width::Generic, Width::Mono, Some(Width::Stereo)) => Some(Width::Stereo),
+				(Width::Generic, Width::Mono, Some(Width::Generic)) => Some(Width::Generic),
 				_ => None,
 			}
 		} else {

@@ -2,6 +2,8 @@
 use std::f32;
 use std::fmt::{Display, Error, Formatter};
 
+use crate::program::ZingWidth;
+
 #[macro_export]
 macro_rules! code {
 	{ $($b:expr),* } => {
@@ -77,7 +79,7 @@ pub enum Instruction {
 	StateLeave,
 
 	// Buffers
-	BufferAlloc,
+	BufferAlloc(ZingWidth),
 	BufferLoad,
 	BufferLoadWithOffset,
 	BufferStoreAndStep,
@@ -147,7 +149,7 @@ impl Instruction {
 			CellStore(..) => (1, 0),
 			StateEnter | StateLeave => (0, 0),
 
-			BufferAlloc => (1, 1),
+			BufferAlloc(..) => (1, 1),
 			BufferLoad => (1, 1),
 			BufferLoadWithOffset => (2, 1),
 			BufferStoreAndStep => (2, 1),

@@ -18,9 +18,9 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-		stored_types: HashMap<*const Expression<'ast>, Type>,
+		stored_widths: HashMap<*const Expression<'ast>, Width>,
 		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
-	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_types);
+	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths);
 	cg.generate_code_for_program(program)?;
 	Ok((take(&mut cg.procedures), take(&mut cg.instrument_order)))
 }
@@ -48,11 +48,32 @@ enum ModuleCall<'ast> {
 	},
 }
 
+impl From<Width> for ZingWidth {
+	fn from(width: Width) -> Self {
+		match width {
+			Width::Mono => ZingWidth::Mono,
+			Width::Stereo => ZingWidth::Stereo,
+			Width::Generic => ZingWidth::Generic,
+		}
+	}
+}
+
+impl From<ValueType> for ZingValueType {
+	fn from(value_type: ValueType) -> Self {
+		match value_type {
+			ValueType::Number => ZingValueType::Number,
+			ValueType::Bool => ZingValueType::Number,
+			ValueType::Buffer => ZingValueType::Buffer,
+			ValueType::Typeless => panic!("Typeless parameter in signature"),
+		}
+	}
+}
+
 struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-	stored_types: HashMap<*const Expression<'ast>, Type>,
+	stored_widths: HashMap<*const Expression<'ast>, Width>,
 
 	/// Lowest id (of two for modules and instruments) for procedure
 	proc_id: Vec<u16>,
@@ -80,7 +101,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// Nesting depth of repetitions
 	repetition_depth: usize,
 	// Static expression to initialize explicit cell
-	cell_init: Vec<(StateKind, &'ast Expression<'ast>)>,
+	cell_init: Vec<(StateKind, &'ast Expression<'ast>, Width)>,
 	// Module calls in execution order
 	module_call: Vec<ModuleCall<'ast>>,
 	// Instruments in execution order
@@ -94,13 +115,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			names: &'ast Names<'ast>,
 			compiler: &'comp mut Compiler<'input>,
 			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-			stored_types: HashMap<*const Expression<'ast>, Type>)
+			stored_widths: HashMap<*const Expression<'ast>, Width>)
 			-> CodeGenerator<'ast, 'input, 'comp> {
 		CodeGenerator {
 			names,
 			compiler,
 			signatures,
-			stored_types,
+			stored_widths,
 
 			proc_id: vec![],
 			proc_for_id: vec![],
@@ -124,8 +145,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn retrieve_type(&self, exp: &Expression<'ast>) -> Type {
-		self.stored_types[&(exp as *const Expression<'ast>)]
+	fn retrieve_width(&self, exp: &Expression<'ast>) -> Width {
+		self.stored_widths[&(exp as *const Expression<'ast>)]
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -228,7 +249,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
-						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT));
+						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT, Width::Mono));
 						self.mark_implicit_cells_from_outputs(outputs);
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.generate_static_body(body)?;
@@ -312,14 +333,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.name_in_cell.insert(cell_index, name);
 			}
 		}
-		for (kind, exp) in self.cell_init.clone() {
+		for (kind, exp, width) in self.cell_init.clone() {
 			self.generate(exp);
 			match kind {
 				StateKind::Cell => {
 					self.emit(code![CellInit]);
 				},
 				StateKind::Delay => {
-					self.emit(code![BufferAlloc, CellInit]);
+					self.emit(code![BufferAlloc(width.into()), CellInit]);
 				},
 			}
 		}
@@ -425,18 +446,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		let mut result = vec![];
 		for PatternItem { item_type, .. } in &types.items {
 			if scope.is_none() || item_type.scope == scope {
-				let width = match item_type.width.unwrap() {
-					Width::Mono => ZingWidth::Mono,
-					Width::Stereo => ZingWidth::Stereo,
-					Width::Generic => ZingWidth::Generic,
-				};
-				let value_type = match item_type.value_type.unwrap() {
-					ValueType::Number => ZingValueType::Number,
-					ValueType::Bool => ZingValueType::Number,
-					ValueType::Buffer => ZingValueType::Buffer,
-					ValueType::Typeless => panic!("Typeless parameter in signature"),
-				};
-				result.push(ZingType { width, value_type });
+				result.push(ZingType {
+					width: item_type.width.unwrap().into(),
+					value_type:  item_type.value_type.unwrap().into(),
+				});
 			}
 		}
 		result
@@ -509,17 +522,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								if self.repetition_depth > 0 {
 									self.unsupported(exp, "Built-in module in repetition body");
 								}
+								let width = self.retrieve_width(exp);
 								match name.text {
 									"cell" => {
-										self.cell_init.push((StateKind::Cell, &args[0]));
+										self.cell_init.push((StateKind::Cell, &args[0], width));
 										self.update_queue.push_back((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
-										self.cell_init.push((StateKind::Delay, &args[0]));
+										self.cell_init.push((StateKind::Delay, &args[0], width));
 										self.update_queue.push_back((StateKind::Delay, &args[1]));
 									},
 									"dyndelay" => {
-										self.cell_init.push((StateKind::Delay, &args[0]));
+										self.cell_init.push((StateKind::Delay, &args[0], width));
 										self.find_cells(&args[1]);
 										self.update_queue.push_back((StateKind::Delay, &args[2]));
 									},
@@ -660,7 +674,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			UnOp { op, exp } => {
 				self.generate(exp);
 				self.emit(code![Constant(0)]);
-				self.expand(self.retrieve_type(exp).width.unwrap());
+				self.expand(self.retrieve_width(exp));
 				self.emit(op.instructions());
 			},
 			BinOp { left, op, right } => {
@@ -786,7 +800,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
 				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
-				self.expand(self.retrieve_type(body).width.unwrap());
+				self.expand(self.retrieve_width(body));
 				self.emit(code![CellRead]); // end
 				let counter_stack_index = self.stack_height;
 				self.emit(code![CellRead, Label]); // counter

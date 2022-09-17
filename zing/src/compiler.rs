@@ -212,8 +212,8 @@ impl<'input> Compiler<'input> {
 		let processed_input = Rc::clone(&self.processed_input);
 		let mut program = self.parse(&processed_input)?;
 		let names = Names::find(&program, self)?;
-		let (signatures, stored_types) = infer_types(&mut program, &names, self)?;
-		let (procedures, instrument_order) = generate_code(&program, &names, signatures, stored_types, self)?;
+		let (signatures, stored_widths) = infer_types(&mut program, &names, self)?;
+		let (procedures, instrument_order) = generate_code(&program, &names, signatures, stored_widths, self)?;
 
 		Ok(ZingProgram { procedures, instrument_order })
 	}
