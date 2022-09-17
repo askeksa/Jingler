@@ -38,6 +38,15 @@ enum TypeResult {
 	Error,
 }
 
+impl TypeResult {
+	fn width(&self) -> Option<Width> {
+		match self {
+			TypeResult::Type { inferred_type } => inferred_type.width,
+			TypeResult::Error => None,
+		}
+	}
+}
+
 impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	pub fn new(names: &'ast Names<'ast>, compiler: &'comp mut Compiler<'input>)
 			-> TypeInferrer<'ast, 'input, 'comp> {
@@ -376,7 +385,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			exp: &mut Expression<'ast>) -> Vec<TypeResult> {
 		let loc = &PosRange::from(exp) as &dyn Location;
 		use Expression::*;
-		match exp {
+		let (results, generic_width) = match exp {
 			Number { value, .. } => self.infer_number(value, loc),
 			Bool { value, .. } => self.infer_bool(value, loc),
 			Variable { name } => self.infer_variable(name, loc),
@@ -384,13 +393,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
 			Conditional { condition, then, otherwise }
 				=> self.infer_conditional(condition, then, otherwise, loc),
-			Call { name, args, .. } => {
-				let (results, generic_width) = self.infer_call(name, args, loc);
-				if let Some(generic_width) = generic_width {
-					self.store_width(exp, generic_width)
-				}
-				results
-			},
+			Call { name, args, .. } => self.infer_call(name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
 			Property { exp, name } => self.infer_property(exp, name, loc),
@@ -399,7 +402,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			For { name, start, end, combinator, body, .. }
 				=> self.infer_for(name, start, end, combinator, body, loc),
 			Expand { .. } => panic!(),
+		};
+		if let Some(generic_width) = generic_width {
+			self.store_width(exp, generic_width)
 		}
+		results
 	}
 
 	fn expect_single(&mut self,
@@ -414,80 +421,72 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn expect_single_and_store(&mut self,
-			exp: &mut Expression<'ast>,
-			title: &str) -> TypeResult {
-		let result = self.expect_single(exp, title);
-		if let TypeResult::Type { inferred_type } = result {
-			self.store_width(exp, inferred_type.width.unwrap());
-		}
-		result
-	}
-
 	fn store_width(&mut self, exp: &Expression<'ast>, width: Width) {
 		self.stored_widths.insert(exp as *const Expression<'ast>, width);
 	}
 
 	fn infer_number(&mut self,
 			_value: &f64,
-			_loc: &dyn Location) -> Vec<TypeResult> {
+			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let inferred_type = type_spec!(mono number);
-		vec![TypeResult::Type { inferred_type }]
+		(vec![TypeResult::Type { inferred_type }], None)
 	}
 
 	fn infer_bool(&mut self,
 			_value: &bool,
-			_loc: &dyn Location) -> Vec<TypeResult> {
+			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let inferred_type = type_spec!(mono bool);
-		vec![TypeResult::Type { inferred_type }]
+		(vec![TypeResult::Type { inferred_type }], None)
 	}
 
 	fn infer_variable(&mut self,
 			name: &Id<'ast>,
-			_loc: &dyn Location) -> Vec<TypeResult> {
-		vec![self.ready[name.text]]
+			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
+		(vec![self.ready[name.text]], None)
 	}
 
 	fn infer_unop(&mut self,
 			op: &UnOp, exp: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
-		let operand = self.expect_single_and_store(exp, "operand of unary operator");
-		self.check_signature_expand(op.signature(), &[operand], &mut [exp], loc)
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
+		let operand = self.expect_single(exp, "operand of unary operator");
+		let results = self.check_signature_expand(op.signature(), &[operand], &mut [exp], loc);
+		(results, operand.width())
 	}
 
 	fn infer_binop(&mut self,
 			left: &mut Expression<'ast>, op: &BinOp, right: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let left_operand = self.expect_single(left, "left operand of binary operator");
 		let right_operand = self.expect_single(right, "right operand of binary operator");
-		self.check_signature_expand(op.signature(), &[left_operand, right_operand], &mut [left, right], loc)
+		let results = self.check_signature_expand(op.signature(), &[left_operand, right_operand], &mut [left, right], loc);
+		(results, None)
 	}
 
 	fn infer_conditional(&mut self,
 			condition: &mut Expression<'ast>, then: &mut Expression<'ast>, otherwise: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let condition_operand = self.expect_single(condition, "condition of conditional operator");
 		let then_operand = self.expect_single(then, "operand of conditional operator");
 		let otherwise_operand = self.expect_single(otherwise, "operand of conditional operator");
 		let sig = sig!([generic bool, generic typeless, generic typeless] [generic typeless]);
-		let result = self.check_signature_expand(&sig,
+		let results = self.check_signature_expand(&sig,
 			&[condition_operand, then_operand, otherwise_operand],
 			&mut [condition, then, otherwise],
 			loc);
 		if let TypeResult::Type {
 			inferred_type: Type { value_type: Some(ValueType::Buffer), .. }
-		} = result[0] {
+		} = results[0] {
 			if let TypeResult::Type {
 				inferred_type: Type { width, .. }
 			} = condition_operand {
 				if width != Some(Width::Mono) {
 					self.compiler.report_error(loc,
 						"Conditionals on buffers must have mono conditions.");
-					return vec![TypeResult::Error];
+					return (vec![TypeResult::Error], None);
 				}
 			}
 		}
-		result
+		(results, None)
 	}
 
 	fn infer_call(&mut self,
@@ -531,26 +530,27 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	fn infer_tuple(&mut self,
 			elements: &mut Vec<Expression<'ast>>,
-			_loc: &dyn Location) -> Vec<TypeResult> {
-		let mut result = vec![];
+			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
+		let mut results = vec![];
 		for exp in elements {
-			result.append(&mut self.infer_expression(exp));
+			results.append(&mut self.infer_expression(exp));
 		}
-		result
+		(results, None)
 	}
 
 	fn infer_merge(&mut self,
 			left: &mut Expression<'ast>, right: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let left_operand = self.expect_single(left, "left operand of merge");
 		let right_operand = self.expect_single(right, "right operand of merge");
 		let merge_sig = sig!([mono typeless, mono typeless] [stereo typeless]);
-		self.check_signature(&merge_sig, &[left_operand, right_operand], loc)
+		let results = self.check_signature(&merge_sig, &[left_operand, right_operand], loc);
+		(results, None)
 	}
 
 	fn infer_property(&mut self,
 			exp: &mut Expression<'ast>, name: &Id<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		if name.text == "left" || name.text == "right" {
 			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
 				TypeResult::Type {
@@ -563,20 +563,21 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					if value_type == ValueType::Buffer {
 						self.compiler.report_error(loc,
 							format!("No '{}' property on buffer.", name.text));
-						vec![TypeResult::Error]
+						(vec![TypeResult::Error], None)
 					} else if width != Width::Stereo {
 						self.compiler.report_error(loc,
 							format!("Can only take '{}' property on stereo value.", name.text));
-						vec![TypeResult::Error]
+						(vec![TypeResult::Error], None)
 					} else {
-						vec![TypeResult::Type {
+						let result = TypeResult::Type {
 							inferred_type: Type {
 								scope, width: Some(Width::Mono), value_type: Some(value_type)
 							}
-						}]
+						};
+						(vec![result], None)
 					}
 				},
-				_ => vec![TypeResult::Error],
+				_ => (vec![TypeResult::Error], None)
 			}
 		} else if name.text == "index" || name.text == "length" {
 			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
@@ -590,51 +591,53 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					if value_type != ValueType::Buffer {
 						self.compiler.report_error(loc,
 							format!("Can only take '{}' property on buffer.", name.text));
-						vec![TypeResult::Error]
+						(vec![TypeResult::Error], None)
 					} else {
-						vec![TypeResult::Type {
+						let result = TypeResult::Type {
 							inferred_type: Type {
 								scope, width: Some(Width::Mono), value_type: Some(ValueType::Number)
 							}
-						}]
+						};
+						(vec![result], None)
 					}
 				},
-				_ => vec![TypeResult::Error],
+				_ => (vec![TypeResult::Error], None),
 			}
 		} else {
 			self.compiler.report_error(name, format!("Invalid property '{}'.", name));
-			vec![TypeResult::Error]
+			(vec![TypeResult::Error], None)
 		}
 	}
 
 	fn infer_tuple_index(&mut self,
 			exp: &mut Expression<'ast>, index: u64,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let tuple = self.infer_expression(exp);
 		let index = index as usize;
 		if index < tuple.len() {
-			vec![tuple[index]]
+			(vec![tuple[index]], None)
 		} else {
 			self.compiler.report_error(loc,
 				format!("Index {} outside range of tuple of length {}.", index, tuple.len()));
-			vec![TypeResult::Error]
+			(vec![TypeResult::Error], None)
 		}
 	}
 
 	fn infer_buffer_index(&mut self,
 			exp: &mut Expression<'ast>, index: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let buffer_operand = self.expect_single(exp, "buffer operand of indexing");
 		let index_operand = self.expect_single(index, "index operand of indexing");
 		let index_sig = sig!([generic buffer, mono number] [generic number]);
-		self.check_signature(&index_sig, &[buffer_operand, index_operand], loc)
+		let results = self.check_signature(&index_sig, &[buffer_operand, index_operand], loc);
+		(results, None)
 	}
 
 	fn infer_for(&mut self,
 			name: &Id<'ast>,
 			start: &mut Expression<'ast>, end: &mut Expression<'ast>,
 			combinator: &Id<'ast>, body: &mut Expression<'ast>,
-			loc: &dyn Location) -> Vec<TypeResult> {
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		if let None = self.names.lookup_combinator(combinator.text) {
 			self.compiler.report_error(combinator,
 				format!("Permitted repetition combinators are {}", self.names.combinator_list()));
@@ -644,10 +647,11 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.ready.insert(name.text, TypeResult::Type {
 			inferred_type: type_spec!(static mono number),
 		});
-		let body_operand = self.expect_single_and_store(body, "body of repetition");
+		let body_operand = self.expect_single(body, "body of repetition");
 		self.ready.remove(name.text);
 		let for_sig = sig!([static mono number, static mono number, dynamic generic number] [dynamic generic number]);
-		self.check_signature(&for_sig, &[start_operand, end_operand, body_operand], loc)
+		let results = self.check_signature(&for_sig, &[start_operand, end_operand, body_operand], loc);
+		(results, body_operand.width())
 	}
 
 	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression<'ast>>,
@@ -833,7 +837,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}).collect()
 	}
 
-	fn expand(&self, exp: &mut Expression<'ast>, width: Width) {
+	fn expand(&mut self, exp: &mut Expression<'ast>, width: Width) {
 		let dummy = Expression::Bool {
 			before: exp.pos_before(),
 			value: true,
@@ -843,5 +847,12 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			exp: Box::new(node),
 			width,
 		};
+		let key = exp as *const Expression<'ast>;
+		if let Some(width) = self.stored_widths.get(&key) {
+			if let Expression::Expand { exp: inner, .. } = exp {
+				self.store_width(inner, *width);
+				self.stored_widths.remove(&key);
+			}
+		}
 	}
 }

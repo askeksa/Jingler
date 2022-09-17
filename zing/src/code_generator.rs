@@ -38,6 +38,7 @@ enum StateKind { Cell, Delay }
 enum ModuleCall<'ast> {
 	Call {
 		proc_index: usize,
+		generic_width: Option<ZingWidth>,
 		args: &'ast Vec<Expression<'ast>>,
 	},
 	For {
@@ -101,7 +102,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// Nesting depth of repetitions
 	repetition_depth: usize,
 	// Static expression to initialize explicit cell
-	cell_init: Vec<(StateKind, &'ast Expression<'ast>, Width)>,
+	cell_init: Vec<(StateKind, &'ast Expression<'ast>, ZingWidth)>,
 	// Module calls in execution order
 	module_call: Vec<ModuleCall<'ast>>,
 	// Instruments in execution order
@@ -145,8 +146,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn retrieve_width(&self, exp: &Expression<'ast>) -> Width {
-		self.stored_widths[&(exp as *const Expression<'ast>)]
+	fn retrieve_width(&self, exp: &Expression<'ast>) -> Option<ZingWidth> {
+		self.stored_widths.get(&(exp as *const Expression<'ast>)).map(|&w| w.into())
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -156,7 +157,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn emit(&mut self, code: &[Instruction]) {
 		for &inst in code {
 			let (popped, pushed) = match inst {
-				Instruction::Call(id) => {
+				Instruction::Call(id, ..) => {
 					let proc_index = self.proc_for_id[id as usize];
 					let (kind, inputs, outputs) = &self.signatures[proc_index];
 					let is_static = (id & 1) == 0;
@@ -249,7 +250,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
-						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT, Width::Mono));
+						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT, ZingWidth::Mono));
 						self.mark_implicit_cells_from_outputs(outputs);
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.generate_static_body(body)?;
@@ -340,7 +341,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.emit(code![CellInit]);
 				},
 				StateKind::Delay => {
-					self.emit(code![BufferAlloc(width.into()), CellInit]);
+					self.emit(code![BufferAlloc(width), CellInit]);
 				},
 			}
 		}
@@ -351,14 +352,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn generate_static_module_calls(&mut self, module_call: &Vec<ModuleCall<'ast>>) {
 		for call in module_call {
 			match call {
-				&ModuleCall::Call { proc_index, args } => {
+				&ModuleCall::Call { proc_index, generic_width, args } => {
 					let (_, inputs, _) = &self.signatures[proc_index];
 					for (input_type, arg) in inputs.clone().iter().zip(args) {
 						if input_type.scope == Some(Scope::Static) {
 							self.generate(arg);
 						}
 					}
-					self.emit(code![Call(self.proc_id[proc_index])]);
+					self.emit(code![Call(self.proc_id[proc_index], generic_width)]);
 				},
 				ModuleCall::For { name, start, end, nested_calls } => {
 					self.generate(end);
@@ -522,7 +523,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								if self.repetition_depth > 0 {
 									self.unsupported(exp, "Built-in module in repetition body");
 								}
-								let width = self.retrieve_width(exp);
+								let width = self.retrieve_width(exp).unwrap();
 								match name.text {
 									"cell" => {
 										self.cell_init.push((StateKind::Cell, &args[0], width));
@@ -547,7 +548,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										self.find_cells(arg);
 									}
 								}
-								self.module_call.push(ModuleCall::Call { proc_index: *proc_index, args });
+								self.module_call.push(ModuleCall::Call {
+									proc_index: *proc_index,
+									generic_width: self.retrieve_width(exp),
+									args,
+								});
 							},
 							(Function, BuiltIn { .. }) => {
 								for arg in args {
@@ -671,10 +676,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				};
 				self.emit(code![StackLoad(offset as u16)]);
 			},
-			UnOp { op, exp } => {
-				self.generate(exp);
+			UnOp { op, exp: operand } => {
+				self.generate(operand);
 				self.emit(code![Constant(0)]);
-				self.expand(self.retrieve_width(exp));
+				self.expand(self.retrieve_width(exp).unwrap());
 				self.emit(op.instructions());
 			},
 			BinOp { left, op, right } => {
@@ -728,7 +733,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									}
 								}
 								let proc_id = self.proc_id[*proc_index] + 1;
-								self.emit(code![Call(proc_id)]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Function, BuiltIn { code, .. }) => {
 								let is_note_property = code.iter().any(|c| matches!(c, Instruction::ReadNoteProperty(_)));
@@ -745,7 +750,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									self.generate(arg);
 								}
 								let proc_id = self.proc_id[*proc_index];
-								self.emit(code![Call(proc_id)]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
@@ -800,7 +805,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
 				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
-				self.expand(self.retrieve_width(body));
+				self.expand(self.retrieve_width(exp).unwrap());
 				self.emit(code![CellRead]); // end
 				let counter_stack_index = self.stack_height;
 				self.emit(code![CellRead, Label]); // counter
@@ -814,16 +819,16 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			Expand { exp, width } => {
 				self.generate(exp);
-				self.expand(*width);
+				self.expand((*width).into());
 			},
 		}
 	}
 
-	fn expand(&mut self, width: Width) {
+	fn expand(&mut self, width: ZingWidth) {
 		match width {
-			Width::Mono => {},
-			Width::Stereo => self.emit(code![ExpandStereo]),
-			Width::Generic => self.emit(code![ExpandGeneric]),
+			ZingWidth::Mono => {},
+			ZingWidth::Stereo => self.emit(code![ExpandStereo]),
+			ZingWidth::Generic => self.emit(code![ExpandGeneric]),
 		}
 	}
 }

@@ -87,7 +87,7 @@ pub enum Instruction {
 	BufferLength,
 
 	// Procedures/instruments/notes
-	Call(u16),
+	Call(u16, Option<ZingWidth>),
 	CallInstrument,
 	Kill,
 	ReadNoteProperty(NoteProperty),
