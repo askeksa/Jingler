@@ -362,13 +362,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				},
 				ModuleCall::For { name, count, nested_calls } => {
 					self.generate(count);
-					self.emit(code![StackLoad(0), CellInit]);
-					let counter_stack_index = self.stack_height;
-					self.emit(code![Constant(0), Label]);
+					self.emit(code![RepeatInit]);
+					let counter_stack_index = self.stack_height - 1;
 					self.stack_index.insert(name.text, counter_stack_index);
 					self.generate_static_module_calls(nested_calls);
 					self.stack_index.remove(name.text);
-					self.emit(code![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
+					self.emit(code![RepeatEnd]);
 				},
 			}
 		}
@@ -804,16 +803,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
 				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
 				self.expand(self.retrieve_width(exp).unwrap());
-				self.emit(code![CellRead]); // end
-				let counter_stack_index = self.stack_height;
-				self.emit(code![Constant(0), Label]); // counter
+				self.emit(code![RepeatStart]);
+				let counter_stack_index = self.stack_height - 1;
 				self.stack_index.insert(name.text, counter_stack_index);
 				self.generate(body);
 				self.stack_index.remove(name.text);
 				self.emit(code![StackLoad(3)]); // accumulator
 				self.emit(combinator.code);
 				self.emit(code![StackStore(2)]); // accumulator
-				self.emit(code![Constant(0x3F800000), Add, Cmp, Loop, Pop, Pop]);
+				self.emit(code![RepeatEnd]);
 			},
 			Expand { exp, width } => {
 				self.generate(exp);

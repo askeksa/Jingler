@@ -92,13 +92,10 @@ pub enum Instruction {
 	Kill,
 	ReadNoteProperty(NoteProperty),
 
-	// Loops and conditions
-	Cmp,
-	Label,
-	Loop,
-	If,
-	Else,
-	EndIf,
+	// Loops
+	RepeatInit,
+	RepeatStart,
+	RepeatEnd,
 
 	// Misc
 	Random,
@@ -160,9 +157,9 @@ impl Instruction {
 			Kill => (1, 0),
 			ReadNoteProperty(..) => (0, 1),
 
-			Cmp => (2, 2),
-			Label | Loop | If | EndIf => (0, 0),
-			Else => panic!("stack_change on 'else'"),
+			RepeatInit => (1, 2),
+			RepeatStart => (0, 2),
+			RepeatEnd => (2, 0),
 
 			Random => (2, 1),
 			GmDlsLength => (1, 1),

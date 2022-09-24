@@ -7,6 +7,7 @@ use crate::program::ZingProgram;
 use crate::instructions::{Instruction, NoteProperty};
 
 
+#[allow(unused)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EncodedBytecode {
 	StateEnter,
@@ -154,11 +155,26 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
 		Instruction::CellStore(offset) => encode(CellStore, offset),
-		Instruction::Label => encode(Label, 0),
-		Instruction::If => encode(If, 0),
-		Instruction::Loop => encode(LoopJump, 0),
-		Instruction::EndIf => encode(EndIf, 0),
-		Instruction::Else => encode(Else, 0),
+
+		Instruction::RepeatInit => {
+			encode(StackLoad, 0);
+			encode(CellInit, 0);
+			encode_constant(0);
+			encode(Label, 0);
+		},
+		Instruction::RepeatStart => {
+			encode(CellRead, 0);
+			encode_constant(0);
+			encode(Label, 0);
+		},
+		Instruction::RepeatEnd => {
+			encode_constant(0x3F800000);
+			encode_implicit(Add, encode);
+			encode_implicit(Cmp, encode);
+			encode(LoopJump, 0);
+			encode_implicit(Pop, encode);
+			encode_implicit(Pop, encode);
+		},
 
 		Instruction::Ceil => encode_rounding(Ceil, encode),
 		Instruction::Floor => encode_rounding(Floor, encode),
@@ -222,7 +238,6 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 			encode_implicit(BufferIndexAndLength, encode);
 			encode_implicit(ExpandR, encode);
 		},
-		Instruction::Cmp => encode_implicit(Cmp, encode),
 		Instruction::Sqrt => encode_implicit(Sqrt, encode),
 		Instruction::And => encode_implicit(And, encode),
 		Instruction::AndNot => encode_implicit(AndNot, encode),
