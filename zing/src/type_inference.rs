@@ -399,8 +399,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			Property { exp, name } => self.infer_property(exp, name, loc),
 			TupleIndex { exp, index, .. } => self.infer_tuple_index(exp, *index, loc),
 			BufferIndex { exp, index, .. } => self.infer_buffer_index(exp, index, loc),
-			For { name, start, end, combinator, body, .. }
-				=> self.infer_for(name, start, end, combinator, body, loc),
+			For { name, count, combinator, body, .. }
+				=> self.infer_for(name, count, combinator, body, loc),
 			Expand { .. } => panic!(),
 		};
 		if let Some(generic_width) = generic_width {
@@ -634,23 +634,21 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_for(&mut self,
-			name: &Id<'ast>,
-			start: &mut Expression<'ast>, end: &mut Expression<'ast>,
+			name: &Id<'ast>, count: &mut Expression<'ast>,
 			combinator: &Id<'ast>, body: &mut Expression<'ast>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		if let None = self.names.lookup_combinator(combinator.text) {
 			self.compiler.report_error(combinator,
 				format!("Permitted repetition combinators are {}", self.names.combinator_list()));
 		}
-		let start_operand = self.expect_single(start, "start value of repetition");
-		let end_operand = self.expect_single(end, "end value of repetition");
+		let count_operand = self.expect_single(count, "repetition count");
 		self.ready.insert(name.text, TypeResult::Type {
 			inferred_type: type_spec!(static mono number),
 		});
 		let body_operand = self.expect_single(body, "body of repetition");
 		self.ready.remove(name.text);
-		let for_sig = sig!([static mono number, static mono number, dynamic generic number] [dynamic generic number]);
-		let results = self.check_signature(&for_sig, &[start_operand, end_operand, body_operand], loc);
+		let for_sig = sig!([static mono number, dynamic generic number] [dynamic generic number]);
+		let results = self.check_signature(&for_sig, &[count_operand, body_operand], loc);
 		(results, body_operand.width())
 	}
 

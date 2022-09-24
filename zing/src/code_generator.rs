@@ -43,8 +43,7 @@ enum ModuleCall<'ast> {
 	},
 	For {
 		name: &'ast Id<'ast>,
-		start: &'ast Expression<'ast>,
-		end: &'ast Expression<'ast>,
+		count: &'ast Expression<'ast>,
 		nested_calls: Vec<ModuleCall<'ast>>,
 	},
 }
@@ -361,12 +360,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					}
 					self.emit(code![Call(self.proc_id[proc_index], generic_width)]);
 				},
-				ModuleCall::For { name, start, end, nested_calls } => {
-					self.generate(end);
+				ModuleCall::For { name, count, nested_calls } => {
+					self.generate(count);
 					self.emit(code![StackLoad(0), CellInit]);
 					let counter_stack_index = self.stack_height;
-					self.generate(start);
-					self.emit(code![StackLoad(0), CellInit, Label]);
+					self.emit(code![Constant(0), Label]);
 					self.stack_index.insert(name.text, counter_stack_index);
 					self.generate_static_module_calls(nested_calls);
 					self.stack_index.remove(name.text);
@@ -595,13 +593,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(exp);
 				self.find_cells(index);
 			},
-			For { name, start, end, body, .. } => {
+			For { name, count, body, .. } => {
 				let module_call_temp = replace(&mut self.module_call, vec![]);
 				self.repetition_depth += 1;
 				self.find_cells(body);
 				self.repetition_depth -= 1;
 				let module_call = ModuleCall::For {
-					name, start, end, nested_calls: replace(&mut self.module_call, module_call_temp)
+					name, count, nested_calls: replace(&mut self.module_call, module_call_temp)
 				};
 				self.module_call.push(module_call);
 			},
@@ -808,7 +806,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.expand(self.retrieve_width(exp).unwrap());
 				self.emit(code![CellRead]); // end
 				let counter_stack_index = self.stack_height;
-				self.emit(code![CellRead, Label]); // counter
+				self.emit(code![Constant(0), Label]); // counter
 				self.stack_index.insert(name.text, counter_stack_index);
 				self.generate(body);
 				self.stack_index.remove(name.text);

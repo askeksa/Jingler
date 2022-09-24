@@ -259,11 +259,9 @@ impl<'input> Expression<'input> {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, "[{}]", index)?;
 			},
-			For { name, start, end, combinator, body, .. } => {
-				write!(f, "for {} = ", name)?;
-				start.fmt_with_precedence(f, Precedence::Expression)?;
-				write!(f, " to ")?;
-				end.fmt_with_precedence(f, Precedence::Expression)?;
+			For { name, count, combinator, body, .. } => {
+				write!(f, "for {} to ", name)?;
+				count.fmt_with_precedence(f, Precedence::Expression)?;
 				write!(f, " {} ", combinator)?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},

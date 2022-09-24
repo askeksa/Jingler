@@ -114,8 +114,7 @@ pub enum Expression<'input> {
 	For {
 		before: Pos,
 		name: Id<'input>,
-		start: Box<Expression<'input>>,
-		end: Box<Expression<'input>>,
+		count: Box<Expression<'input>>,
 		combinator: Id<'input>,
 		body: Box<Expression<'input>>,
 	},
@@ -236,9 +235,8 @@ impl<'input> Expression<'input> {
 				exp.traverse(pre, post);
 				index.traverse(pre, post);
 			},
-			For { start, end, body, .. } => {
-				start.traverse(pre, post);
-				end.traverse(pre, post);
+			For { count, body, .. } => {
+				count.traverse(pre, post);
 				body.traverse(pre, post);
 			},
 			Expand { exp, .. } => {

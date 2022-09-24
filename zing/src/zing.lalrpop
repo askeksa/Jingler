@@ -78,7 +78,7 @@ Expression: Expression<'input> = {
 	OrExpression,
 	<condition:Box<OrExpression>> "?" <then:Box<Expression>> ":" <otherwise:Box<Expression>>
 		=> Expression::Conditional {<>},
-	<before:@L> "for" <name:Id> "=" <start:Box<Expression>> "to" <end:Box<Expression>> <combinator:Id> <body:Box<Expression>>
+	<before:@L> "for" <name:Id> "to" <count:Box<Expression>> <combinator:Id> <body:Box<Expression>>
 		=> Expression::For {<>},
 };
 
