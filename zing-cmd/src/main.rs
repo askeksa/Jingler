@@ -30,7 +30,7 @@ fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 		RunStaticCode(constants.as_ptr());
 		let music = RenderSamples(constants.as_ptr(), length);
 		ReleaseBytecode();
-		slice::from_raw_parts(music, length * 2)
+		std::slice::from_raw_parts(music, length * 2)
 	}
 }
 

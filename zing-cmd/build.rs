@@ -1,6 +1,6 @@
 extern crate nasm_rs;
 
-#[cfg(target_arch = "x86")]
+#[cfg(target_vendor = "pc")]
 fn main() {
 	#[cfg(not(target_env = "msvc"))]
 	nasm_rs::compile_library("libjingler_cmd.a", &["../runtime/cmd.asm"]);
@@ -15,5 +15,5 @@ fn main() {
 	println!("cargo:rustc-link-lib=static=jingler_cmd");
 }
 
-#[cfg(not(target_arch = "x86"))]
+#[cfg(not(target_vendor = "pc"))]
 fn main() {}
