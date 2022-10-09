@@ -1,6 +1,6 @@
 
 %include "used_instructions.inc"
-%include "clinklang.asm"
+%include "jingler.asm"
 
 global main
 

@@ -17,7 +17,7 @@ use vst::event::{Event, MidiEvent};
 use vst::plugin::{Category, HostCallback, Info, Plugin};
 use vst::plugin_main;
 
-#[link(name = "clinklang_cmd")]
+#[link(name = "jingler_cmd")]
 extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
@@ -146,7 +146,7 @@ impl Plugin for ZingPlugin {
 			f64_precision: false,
 			preset_chunks: false,
 
-			name: "ClinklangZing".to_string(),
+			name: "JinglerZing".to_string(),
 			vendor: "Loonies".to_string(),
 			unique_id: 0xDEAF,
 			version: 100,

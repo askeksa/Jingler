@@ -1,5 +1,5 @@
-# Design of Clinklang
-This document contains ideas about what the Clinklang synthesizer is going to
+# Design of Jingler
+This document contains ideas about what the Jingler synthesizer is going to
 be like.
 
 1. [Overview](#overview)
@@ -16,7 +16,7 @@ be like.
    3. [Composite nodes](#composite-nodes)
 
 ## Overview
-The primary components of the Clinklang toolchain are:
+The primary components of the Jingler toolchain are:
 - A VST plugin with a nodegraph-based user interface, somewhat similar to
   [64klang](https://github.com/hzdgopher/64klang). Instrument/effect patches
   (and subcomponents of these) can be loaded from and saved to files, or
@@ -30,7 +30,7 @@ The primary components of the Clinklang toolchain are:
   sequencer, capable of reproducing the music as part of a small executable.
 
 ## The nodegraph
-Clinklang employs fine-grained modularity: all available constructs are
+Jingler employs fine-grained modularity: all available constructs are
 ultimately built from very primitive components, many of which correspond to
 individual machine instructions. These primitive operations can be combined
 into larger components in arbitrary levels of nesting, eventually giving rise

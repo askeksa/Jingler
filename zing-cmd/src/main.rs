@@ -15,7 +15,7 @@ use rodio::buffer::SamplesBuffer;
 use rodio::Sink;
 
 #[cfg(target_arch = "x86")]
-#[link(name = "clinklang_cmd")]
+#[link(name = "jingler_cmd")]
 extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();

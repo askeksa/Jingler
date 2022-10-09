@@ -18,5 +18,4 @@ zing = { path = "../zing" }
 nasm-rs = "= 0.1.3"
 
 [lib]
-name = "ClinklangZing"
 crate-type = ["cdylib"]
