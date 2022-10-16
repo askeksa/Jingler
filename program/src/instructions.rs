@@ -20,6 +20,7 @@ pub enum Instruction {
 	// Constants
 	Constant(u32),
 	SampleRate,
+	Parameter(u16),
 
 	// Binary operations
 	Add,
@@ -114,7 +115,7 @@ impl Instruction {
 	pub fn stack_change(&self) -> (usize, usize) { // pops, pushes
 		use Instruction::*;
 		match self {
-			Constant(..) | SampleRate => (0, 1),
+			Constant(..) | SampleRate | Parameter(..) => (0, 1),
 
 			Add | Sub | AddSub | Mul | Div => (2, 1),
 			And | AndNot | Or | Xor => (2, 1),

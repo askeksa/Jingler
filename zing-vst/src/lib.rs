@@ -1,11 +1,14 @@
 
 use program::encode::encode_bytecodes;
-use program::program::ZingProgram;
+use program::program::{ZingProgram, ZingParameter};
+
 use zing::compiler;
 
 use std::collections::{VecDeque};
 use std::fs;
+use std::ops::DerefMut;
 use std::slice;
+use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
@@ -14,8 +17,11 @@ use rfd::FileDialog;
 use vst::api::Events;
 use vst::buffer::AudioBuffer;
 use vst::event::{Event, MidiEvent};
-use vst::plugin::{Category, HostCallback, Info, Plugin};
+use vst::plugin::{Category, HostCallback, Info, Plugin, PluginParameters};
 use vst::plugin_main;
+use vst::util::AtomicFloat;
+
+const NUM_PARAMETERS: usize = 15;
 
 #[link(name = "jingler_cmd")]
 extern "C" {
@@ -39,6 +45,38 @@ struct ZingPlugin {
 	constants: Vec<u32>,
 	midi_channel_mapping: [Option<u32>; 16],
 	bytecode_compiled: bool,
+
+	parameters: Arc<ZingParameters>,
+}
+
+#[derive(Default)]
+struct ZingParameters {
+	zing_parameters: RwLock<Vec<ZingParameter>>,
+	values: [AtomicFloat; NUM_PARAMETERS],
+}
+
+impl ZingParameters {
+	fn update_zing(&self, new: &Vec<ZingParameter>) {
+		let new = new.clone();
+		let mut new_values = [0f32; NUM_PARAMETERS];
+		let mut old = self.zing_parameters.write().unwrap();
+		for i in 0..NUM_PARAMETERS {
+			new_values[i] = if i < new.len() {
+				let np = &new[i];
+				if let Some(old_index) = old.iter().position(|p| p.name == np.name) {
+					self.values[old_index].get()
+				} else {
+					((np.default - np.min) / (np.max - np.min)).max(0.0).min(1.0)
+				}
+			} else {
+				0.0
+			}
+		}
+		for i in 0..NUM_PARAMETERS {
+			self.values[i].set(new_values[i]);
+		}
+		*old.deref_mut() = new;
+	}
 }
 
 impl Default for ZingPlugin {
@@ -56,6 +94,8 @@ impl Default for ZingPlugin {
 			program: None,
 			constants: vec![],
 			midi_channel_mapping: [None; 16],
+
+			parameters: Arc::new(ZingParameters::default()),
 		}
 	}
 }
@@ -66,6 +106,7 @@ impl ZingPlugin {
 		match fs::read_to_string(&self.zing_filename) {
 			Ok(s) => match compiler::Compiler::new(&self.zing_filename, &s).compile() {
 				Ok(program) => {
+					self.parameters.update_zing(&program.parameters);
 					self.program = Some(program);
 					self.init_program();
 				},
@@ -139,7 +180,7 @@ impl Plugin for ZingPlugin {
 	fn get_info(&self) -> Info {
 		Info {
 			presets: 1,
-			parameters: 0,
+			parameters: NUM_PARAMETERS as i32,
 			inputs: 0,
 			outputs: 2,
 			category: Category::Synth,
@@ -153,6 +194,10 @@ impl Plugin for ZingPlugin {
 
 			.. Info::default()
 		}
+	}
+
+	fn get_parameter_object(&mut self) -> Arc<dyn PluginParameters> {
+		self.parameters.clone()
 	}
 
 	fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -177,6 +222,17 @@ impl Plugin for ZingPlugin {
 			self.compile();
 		}
 		if self.bytecode_compiled {
+			if let Some(program) = &self.program {
+				for (i, p) in program.parameters.iter().enumerate() {
+					let value = if i < NUM_PARAMETERS {
+						self.parameters.values[i].get()
+					} else {
+						0.0
+					};
+					self.constants[i] = (p.min + value * (p.max - p.min)).to_bits();
+				}
+			}
+
 			let mut base = 0usize;
 			while self.time < end_time {
 				let mut dirty = true;
@@ -233,6 +289,41 @@ impl Plugin for ZingPlugin {
 impl Drop for ZingPlugin {
 	fn drop(&mut self) {
 		self.release_program();
+	}
+}
+
+impl PluginParameters for ZingParameters {
+	fn get_parameter(&self, index: i32) -> f32 {
+		let index = index as usize;
+		self.values[index].get()
+	}
+
+	fn set_parameter(&self, index: i32, value: f32) {
+		let index = index as usize;
+		self.values[index].set(value);
+	}
+
+	fn get_parameter_name(&self, index: i32) -> String {
+		let index = index as usize;
+		let zing_parameters = self.zing_parameters.read().unwrap();
+		if index < zing_parameters.len() {
+			zing_parameters[index].name.clone()
+		} else {
+			"".to_string()
+		}
+	}
+
+	fn get_parameter_text(&self, index: i32) -> String {
+		let index = index as usize;
+		let value = self.values[index].get();
+		let zing_parameters = self.zing_parameters.read().unwrap();
+		let display = if index < zing_parameters.len() {
+			let p = &zing_parameters[index];
+			p.min + value * (p.max - p.min)
+		} else {
+			value
+		};
+		format!("{display}")
 	}
 }
 

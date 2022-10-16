@@ -25,6 +25,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
+	parameters: HashMap<&'ast str, TypeResult>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
@@ -50,11 +51,18 @@ impl TypeResult {
 impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	pub fn new(names: &'ast Names<'ast>, compiler: &'comp mut Compiler<'input>)
 			-> TypeInferrer<'ast, 'input, 'comp> {
+		let mut parameters = HashMap::new();
+		for &param in names.parameter_names() {
+			parameters.insert(param, TypeResult::Type {
+				inferred_type: type_spec!(mono number),
+			});
+		}
 		TypeInferrer {
 			names,
 			compiler,
 			signatures: vec![],
 			stored_widths: HashMap::new(),
+			parameters,
 			ready: HashMap::new(),
 			current_proc_index: 0,
 			current_is_main: false,
@@ -193,10 +201,12 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			self.compiler.report_error(&proc.name, "'main' must be a module.");
 		}
 
+		// Initialize ready variable to the set of parameters.
+		self.ready = self.parameters.clone();
+
 		// Record dependencies of all statements and mark inputs and fully typed
 		// variables as ready.
 		// A statement can be inferred when all its dependencies are ready.
-		self.ready.clear();
 		let mut dependencies = vec![HashSet::new(); proc.body.len()];
 		self.find_ready(proc.kind, &mut proc.inputs);
 		for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
@@ -309,10 +319,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				match self.names.lookup_variable(self.current_proc_index, variable_name.text) {
 					Some(VariableRef { kind, .. }) => {
 						match kind {
-							VariableKind::For { .. } => {},
-							_ => {
+							VariableKind::Input | VariableKind::Node { .. } => {
 								dependencies.insert(variable_name.text);
 							},
+							_ => {},
 						}
 					},
 					None => {

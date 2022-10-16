@@ -4,10 +4,20 @@ use crate::instructions::Instruction;
 
 #[derive(Clone, Debug)]
 pub struct ZingProgram {
+	// Parameters
+	pub parameters: Vec<ZingParameter>,
 	// Procedures
 	pub procedures: Vec<ZingProcedure>,
 	// Instruments in execution order
 	pub instrument_order: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ZingParameter {
+	pub name: String,
+	pub min: f32,
+	pub max: f32,
+	pub default: f32,
 }
 
 #[derive(Clone, Debug)]

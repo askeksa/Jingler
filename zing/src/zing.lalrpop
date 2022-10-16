@@ -9,7 +9,16 @@ use crate::ast::*;
 grammar;
 
 pub Program: Program<'input> = {
-	<procedures:Procedure*> => Program {<>},
+	<parameters:Parameter*> <procedures:Procedure*> => Program {<>},
+};
+
+Parameter: Parameter<'input> = {
+	"parameter" <name:Id> <min:Num> "to" <max:Num> <default:ParameterDefault> => Parameter {<>},
+};
+
+ParameterDefault: Option<f64> = {
+	=> None,
+	"=" <value:Num> => Some(value),
 };
 
 Procedure: Procedure<'input> = {

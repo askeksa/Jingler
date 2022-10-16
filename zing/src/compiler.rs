@@ -214,8 +214,16 @@ impl<'input> Compiler<'input> {
 		let names = Names::find(&program, self)?;
 		let (signatures, stored_widths) = infer_types(&mut program, &names, self)?;
 		let (procedures, instrument_order) = generate_code(&program, &names, signatures, stored_widths, self)?;
+		let parameters = program.parameters.iter().map(|p| {
+			ZingParameter {
+				name: p.name.to_string(),
+				min: p.min as f32,
+				max: p.max as f32,
+				default: p.default.unwrap_or(p.min) as f32,
+			}
+		}).collect();
 
-		Ok(ZingProgram { procedures, instrument_order })
+		Ok(ZingProgram { parameters, procedures, instrument_order })
 	}
 
 	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {

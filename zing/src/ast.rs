@@ -3,7 +3,16 @@ type Pos = usize;
 
 #[derive(Clone, Debug)]
 pub struct Program<'input> {
+	pub parameters: Vec<Parameter<'input>>,
 	pub procedures: Vec<Procedure<'input>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Parameter<'input> {
+	pub name: Id<'input>,
+	pub min: f64,
+	pub max: f64,
+	pub default: Option<f64>,
 }
 
 #[derive(Clone, Debug)]

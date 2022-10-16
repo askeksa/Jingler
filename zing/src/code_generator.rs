@@ -664,14 +664,19 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(code![Constant(0)]);
 			},
 			Variable { name } => {
-				let offset = match self.stack_index.get(name.text) {
-					Some(stack_index) => self.stack_height - stack_index - 1,
+				match self.stack_index.get(name.text) {
+					Some(stack_index) => {
+						let offset = self.stack_height - stack_index - 1;
+						self.emit(code![StackLoad(offset as u16)]);
+					}
 					None => {
-						self.unsupported(exp, "accessing a variable above its definition (except in cell or delay)");
-						0
+						if let Some(index) = self.names.lookup_parameter(name.text) {
+							self.emit(code![Parameter(index as u16)]);
+						} else {
+							self.unsupported(exp, "accessing a variable above its definition (except in cell or delay)");
+						}
 					},
 				};
-				self.emit(code![StackLoad(offset as u16)]);
 			},
 			UnOp { op, exp: operand } => {
 				self.generate(operand);

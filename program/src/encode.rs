@@ -152,6 +152,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
+		Instruction::Parameter(index) => encode(Constant, index),
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
 		Instruction::CellStore(offset) => encode(CellStore, offset),
@@ -266,10 +267,11 @@ pub fn encode_bytecodes(program: &ZingProgram, sample_rate: f32) -> Result<(Vec<
 	for &inst in program.procedures.iter().map(|p| &p.code).flatten() {
 		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant);
 	}
-	opcode_capacity[EncodedBytecode::Constant as usize] = constant_set.len() as u16 + 1;
+	opcode_capacity[EncodedBytecode::Constant as usize] = (program.parameters.len() + constant_set.len() + 1) as u16;
 
 	// Build constant list
-	let constants: Vec<u32> = constant_set.into_iter().collect();
+	let mut constants: Vec<u32> = vec![0; program.parameters.len()];
+	constants.extend(constant_set.into_iter());
 	let mut constant_map = BTreeMap::new();
 	for (i, &v) in constants.iter().enumerate() {
 		constant_map.insert(v, i as u16);

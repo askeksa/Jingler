@@ -10,6 +10,7 @@ use crate::compiler::{Compiler, CompileError, Location, PosRange};
 /// Mapping of names in the program to their definitions.
 #[derive(Clone, Debug)]
 pub struct Names<'ast> {
+	parameters: HashMap<&'ast str, VariableRef>,
 	procedures: HashMap<&'ast str, ProcedureRef>,
 	variables: Vec<HashMap<&'ast str, VariableRef>>,
 	combinators: HashMap<&'ast str, Combinator>,
@@ -25,6 +26,7 @@ pub struct VariableRef {
 /// Location of the pattern this variable occurs in: input or node.
 #[derive(Clone, Copy, Debug)]
 pub enum VariableKind {
+	Parameter,
 	Input,
 	Node { body_index: usize },
 	For { variable_pos: PosRange },
@@ -65,6 +67,7 @@ impl<'ast> Names<'ast> {
 	/// Find all named entities in the program and build a map for locating them.
 	pub fn find(program: &Program<'ast>, compiler: &mut Compiler) -> Result<Names<'ast>, CompileError> {
 		let mut names = Names {
+			parameters: HashMap::new(),
 			procedures: HashMap::new(),
 			variables: vec![HashMap::new(); program.procedures.len()],
 			combinators: HashMap::new(),
@@ -85,6 +88,14 @@ impl<'ast> Names<'ast> {
 		}
 		for &(name, neutral, code) in REPETITION_COMBINATORS {
 			names.combinators.insert(name, Combinator { neutral, code });
+		}
+
+		// Insert parameters
+		for (index, param) in program.parameters.iter().enumerate() {
+			names.parameters.insert(param.name.text, VariableRef{
+				kind: VariableKind::Parameter,
+				tuple_index: index,
+			});
 		}
 
 		// Run through all procedures in the program
@@ -155,6 +166,7 @@ impl<'ast> Names<'ast> {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let proc = &program.procedures[proc_index];
 			let loc: &dyn Location = match existing.kind {
+				VariableKind::Parameter => &program.parameters[existing.tuple_index].name,
 				VariableKind::Input => &proc.inputs.items[existing.tuple_index].name,
 				VariableKind::Node { body_index } => match proc.body[body_index] {
 					Statement::Assign { ref node, .. } => &node.items[existing.tuple_index].name,
@@ -172,7 +184,7 @@ impl<'ast> Names<'ast> {
 
 	/// Look up a variable by name inside a specific procedure.
 	pub fn lookup_variable(&self, proc_index: usize, name: &str) -> Option<&VariableRef> {
-		self.variables[proc_index].get(name)
+		self.variables[proc_index].get(name).or_else(|| self.parameters.get(name))
 	}
 
 	pub fn lookup_combinator(&self, combinator: &str) -> Option<&Combinator> {
@@ -188,5 +200,13 @@ impl<'ast> Names<'ast> {
 		}
 		list += &format!(" and '{}'", combinators.last().unwrap());
 		list
+	}
+
+	pub fn lookup_parameter(&self, name: &str) -> Option<usize> {
+		self.parameters.get(name).map(|p| p.tuple_index)
+	}
+
+	pub fn parameter_names(&self) -> impl Iterator<Item=&&'ast str> {
+		self.parameters.keys()
 	}
 }

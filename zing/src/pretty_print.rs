@@ -4,9 +4,23 @@ use crate::ast::*;
 
 impl<'input> Display for Program<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		for parameter in &self.parameters {
+			write!(f, "{}", parameter)?;
+		}
 		for procedure in &self.procedures {
 			write!(f, "\n{}", procedure)?;
 		}
+		Ok(())
+	}
+}
+
+impl<'input> Display for Parameter<'input> {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		write!(f, "parameter {} {} to {}", self.name, self.min, self.max)?;
+		if let Some(default) = self.default {
+			write!(f, " = {}", default)?;
+		}
+		write!(f, "\n")?;
 		Ok(())
 	}
 }
