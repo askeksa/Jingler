@@ -409,34 +409,28 @@ NoteOff:
 	movapd		xmm0, [edi]
 	add			edi, byte 16
 
-	snip		gmdls_length, st, I_GMDLS_LENGTH
-	xor			edx, edx
-	cvtsd2si	eax, [ebx]
-	cmp			eax, GMDLS_COUNT
-	jae			.out_of_range
-	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
-	add			eax, GmDls + GMDLS_DATA
-	add			eax, [eax]
-	mov			edx, [eax + 8]
-	sar			edx, 1
-.out_of_range:
-	cvtsi2sd	xmm0, edx
-
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
-	xor			edx, edx
 	cvtsd2si	eax, [ebx]
-	cmp			eax, GMDLS_COUNT
-	jae			.out_of_range
-	mov			eax, [GmDls + GMDLS_OFFSETS + eax*4]
-	add			eax, GmDls + GMDLS_DATA
-	add			eax, [eax]
-	cvtsd2si	ecx, xmm0
-	add			ecx, ecx
-	cmp			[eax + 8], ecx
-	jbe			.out_of_range
-	movsx		edx, word [eax + 12 + ecx]
-.out_of_range:
-	cvtsi2sd	xmm0, edx
+	mov			ecx, GmDls + GMDLS_DATA
+	add			ecx, [GmDls + GMDLS_OFFSETS + eax*4]
+	add			ecx, [ecx] ; Last dword of wsmp chunk
+	cvtsd2si	eax, xmm0
+	mov			edx, eax
+	cmp			dword [ecx], byte 0 ; Loop length or looped flag
+	je			.direct
+	sub			eax, [ecx - 4] ; Loop base
+	jb			.direct
+	xor			edx, edx
+	div			dword [ecx] ; Loop length
+	add			edx, [ecx - 4] ; Loop base
+.direct:
+	mov			eax, [ecx + 8] ; Length of data chunk
+	shr			eax, 1 ; Sample count
+	cmp			edx, eax
+	jae			.lookup
+	lea			ecx, [ecx + 10 + edx*2] ; 2 bytes before sample data
+.lookup:
+	cvtsi2sd	xmm0, dword [ecx]
 
 	snip		addsub, rt, I_ADDSUB
 	addsubpd	xmm0, [ebx]

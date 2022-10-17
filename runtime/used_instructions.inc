@@ -5,7 +5,6 @@
 %define I_KILL 1
 %define I_CELL_INIT 1
 %define I_CELL_READ 1
-%define I_GMDLS_LENGTH 1
 %define I_GMDLS_SAMPLE 1
 %define I_ADDSUB 1
 %define I_FPUTNEXT 1

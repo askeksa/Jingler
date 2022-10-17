@@ -100,7 +100,6 @@ pub enum Instruction {
 
 	// Misc
 	Random,
-	GmDlsLength,
 	GmDlsSample,
 }
 
@@ -163,7 +162,6 @@ impl Instruction {
 			RepeatEnd => (2, 0),
 
 			Random => (2, 1),
-			GmDlsLength => (1, 1),
 			GmDlsSample => (2, 1),
 		}
 	}
