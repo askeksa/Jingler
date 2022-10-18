@@ -1,9 +1,10 @@
 
-use program::encode::encode_bytecodes;
+use program::encode::{encode_bytecodes_binary, encode_bytecodes_source};
 use zing::compiler;
 
 use std::error::Error;
 use std::fs;
+use std::fs::File;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
 
@@ -49,6 +50,7 @@ struct PlayOptions {
 	play: bool,
 	dump_instructions: bool,
 	write_wav: Option<String>,
+	write_source: Option<String>,
 }
 
 impl Default for PlayOptions {
@@ -60,6 +62,7 @@ impl Default for PlayOptions {
 			play: true,
 			dump_instructions: false,
 			write_wav: None,
+			write_source: None,
 		}
 	}
 }
@@ -91,6 +94,18 @@ fn play_file(filename: &str, options: &PlayOptions) {
 	match fs::read_to_string(&filename) {
 		Ok(s) => match compiler::Compiler::new(&filename, &s).compile() {
 			Ok(program) => {
+				if let Some(filename) = &options.write_source {
+					match File::create(filename) {
+						Ok(mut file) => {
+							if let Err(e) = encode_bytecodes_source(&program, options.sample_rate, &mut file) {
+								println!("Error writing output file '{}': {}", filename, e);
+							}
+						},
+						Err(e) => {
+							println!("Error creating output file '{}': {}", filename, e);
+						},
+					}
+				}
 				if options.dump_instructions {
 					for (p, proc) in program.procedures.iter().enumerate() {
 						println!("{:2}: {}", p, proc);
@@ -100,7 +115,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 						println!();
 					}
 				}
-				match encode_bytecodes(&program, options.sample_rate) {
+				match encode_bytecodes_binary(&program, options.sample_rate) {
 					Ok((bytecodes, constants)) => if options.run {
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
 						let output = run(&bytecodes[..], &constants[..], n_samples);
@@ -155,7 +170,7 @@ fn play_file_resident(filename: &str, options: &PlayOptions) -> Result<(), Box<d
 
 fn main() {
 	let matches = clap_app!(zing =>
-		(version: "0.1.0")
+		(version: "0.2.0")
 		(@arg ZING: +required "Zing file to play.")
 		(@arg SAMPLE_RATE: -s --samplerate +takes_value "Sample rate to play at.")
 		(@arg DURATION: -d --duration +takes_value "Duration of audio, in seconds.")
@@ -164,6 +179,7 @@ fn main() {
 		(@arg SILENT: -n --noaudio "Don't play audio.")
 		(@arg DUMP: -g --dump "Dump generated code.")
 		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
+		(@arg OUTPUT: -o --output +takes_value "Output source file for music.")
 	).get_matches();
 
 	let zing_filename = matches.value_of("ZING").unwrap();
@@ -200,6 +216,9 @@ fn main() {
 	}
 	if let Some(wav_filename) = matches.value_of("WAV_FILE") {
 		options.write_wav = Some(wav_filename.to_string());
+	}
+	if let Some(filename) = matches.value_of("OUTPUT") {
+		options.write_source = Some(filename.to_string());
 	}
 
 	if matches.is_present("RESIDENT") {

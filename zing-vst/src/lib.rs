@@ -1,5 +1,5 @@
 
-use program::encode::encode_bytecodes;
+use program::encode::encode_bytecodes_binary;
 use program::program::{ZingProgram, ZingParameter};
 
 use zing::compiler;
@@ -127,7 +127,7 @@ impl ZingPlugin {
 	fn init_program(&mut self) {
 		debug_assert!(!self.bytecode_compiled);
 		if let Some(ref program) = self.program {
-			match encode_bytecodes(&program, self.sample_rate) {
+			match encode_bytecodes_binary(&program, self.sample_rate) {
 				Ok((bytecodes, constants)) => unsafe {
 					CompileBytecode(bytecodes.as_ptr());
 					self.bytecode_compiled = true;

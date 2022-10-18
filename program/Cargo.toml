@@ -5,3 +5,5 @@ authors = ["Aske Simon Christensen <askesc@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0"
+strum_macros = "0.24"
