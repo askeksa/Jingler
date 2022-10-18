@@ -19,8 +19,9 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		names: &'ast Names<'ast>,
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 		stored_widths: HashMap<*const Expression<'ast>, Width>,
+		callees: Vec<Vec<usize>>,
 		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
-	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths);
+	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees);
 	cg.generate_code_for_program(program)?;
 	Ok((take(&mut cg.procedures), take(&mut cg.instrument_order)))
 }
@@ -74,7 +75,10 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	compiler: &'comp mut Compiler<'input>,
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
+	callees: Vec<Vec<usize>>,
 
+	/// Is the procedure reachable from main?
+	live: Vec<bool>,
 	/// Lowest id (of two for modules and instruments) for procedure
 	proc_id: Vec<u16>,
 	// Procedure index for id
@@ -115,14 +119,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			names: &'ast Names<'ast>,
 			compiler: &'comp mut Compiler<'input>,
 			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
-			stored_widths: HashMap<*const Expression<'ast>, Width>)
+			stored_widths: HashMap<*const Expression<'ast>, Width>,
+			callees: Vec<Vec<usize>>)
 			-> CodeGenerator<'ast, 'input, 'comp> {
+		let proc_count = callees.len();
 		CodeGenerator {
 			names,
 			compiler,
 			signatures,
 			stored_widths,
+			callees,
 
+			live: vec![false; proc_count],
 			proc_id: vec![],
 			proc_for_id: vec![],
 			instrument_id: 0,
@@ -193,6 +201,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	pub fn generate_code_for_program(&mut self, program: &'ast Program<'ast>) -> Result<(), CompileError> {
+		self.propagate_liveness(program.procedures.iter().position(|p| p.name.text == "main").unwrap());
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
 			let proc_index = self.proc_for_id[id];
@@ -297,6 +306,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.compiler.check_errors()
 	}
 
+	fn propagate_liveness(&mut self, proc_index: usize) {
+		if !self.live[proc_index] {
+			self.live[proc_index] = true;
+			for &callee in &self.callees[proc_index].clone() {
+				self.propagate_liveness(callee);
+			}
+		}
+	}
+
 	fn init_proc_id(&mut self, program: &Program<'ast>) {
 		// Assign ID to all procedures in this order:
 		// main, instruments, modules (except main), functions.
@@ -305,7 +323,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 		let mut assign_ids = |pred: &dyn Fn(ProcedureKind, &str) -> bool, step: usize| {
 			for (proc_index, proc) in program.procedures.iter().enumerate() {
-				if pred(proc.kind, proc.name.text) {
+				if self.live[proc_index] && pred(proc.kind, proc.name.text) {
 					let id = self.proc_for_id.len() as u16;
 					self.proc_id[proc_index] = id;
 					for _ in 0..step {

@@ -12,11 +12,11 @@ pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
-		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Width>), CompileError> {
+		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Width>, Vec<Vec<usize>>), CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
 	type_inferrer.infer_bodies(program)?;
-	Ok((type_inferrer.signatures, type_inferrer.stored_widths))
+	Ok((type_inferrer.signatures, type_inferrer.stored_widths, type_inferrer.callees))
 }
 
 
@@ -26,6 +26,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	parameters: HashMap<&'ast str, TypeResult>,
+	callees: Vec<Vec<usize>>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
@@ -63,6 +64,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			signatures: vec![],
 			stored_widths: HashMap::new(),
 			parameters,
+			callees: vec![],
 			ready: HashMap::new(),
 			current_proc_index: 0,
 			current_is_main: false,
@@ -168,6 +170,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	pub fn infer_bodies(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
 		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
 			self.current_proc_index = proc_index;
+			self.callees.push(vec![]);
 			self.infer_body(proc)?;
 			self.check_outputs(proc)?;
 		}
@@ -525,6 +528,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 						self.check_call_signature(sig, args, loc)
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
+						self.callees[self.current_proc_index].push(*proc_index);
 						let (_, ref inputs, ref outputs) = self.signatures[*proc_index].clone();
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, args, loc)
