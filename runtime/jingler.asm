@@ -131,7 +131,7 @@ section snipdead text align=1
 %endmacro
 
 
-section ckmain text align=1
+section unpackn text align=1
 
 UnpackNotes:
 	; ESI = Notes
@@ -175,6 +175,8 @@ UnpackNotes:
 	jns			.componentloop
 	ret
 
+section loadgm text align=1
+
 LoadGmDls:
 	mov			edi, GmDls
 
@@ -193,6 +195,8 @@ LoadGmDls:
 
 	call		[__imp__CloseHandle@4]
 	ret
+
+section generate text align=1
 
 GenerateCode:
 	; ESI = Bytecode
@@ -244,6 +248,8 @@ GenerateCode:
 .decode_done:
 	ret
 
+section rstatic text align=1
+
 RunStaticCode:
 	; ESI = Constant pool
 
@@ -252,6 +258,8 @@ RunStaticCode:
 	mov			ebx, edi
 	call		[ProcPointers + 0*4]
 	ret
+
+section render text align=1
 
 RenderSamples:
 	; EAX = Number of samples to render
@@ -276,6 +284,8 @@ RenderSamples:
 	jne			.sample
 	pop			eax
 	ret
+
+section reset text align=1
 
 ResetState:
 	; Clear buffer space
@@ -311,6 +321,8 @@ ResetState:
 	loop		.trackloop
 	ret
 
+section noteon text align=1
+
 NoteOn:
 	; EAX = Channel
 	; EBX = Sample offset
@@ -336,6 +348,8 @@ NoteOn:
 	mov			[edi + 8], ecx
 	mov			[edi + 12], edx
 	ret
+
+section noteoff text align=1
 
 NoteOff:
 	; EAX = Channel
