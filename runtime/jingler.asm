@@ -269,6 +269,31 @@ RenderSamples:
 	push		eax
 	xor			ebp, ebp
 .sample:
+%if NUM_PARAMETERS > 0
+	mov			ecx, NUM_PARAMETERS
+.paramloop:
+	mov			edi, [TrackStarts + NUM_INSTRUMENTS*4 + ecx*4 - 4]
+.findkey:
+	fild		dword [edi+8]
+	fmul		dword [ParameterScaleBias + ecx*8 - 8]
+	fadd		dword [ParameterScaleBias + ecx*8 - 4]
+	mov			eax, [edi]
+	cmp			eax, [edi+4]
+	jne			.interpolate
+	fstp		dword [ParameterStates + ecx*4 - 4]
+	add			edi, byte 16
+	mov			[TrackStarts + NUM_INSTRUMENTS*4 + ecx*4 - 4], edi
+	jmp			.findkey
+.interpolate:
+	fsub		dword [ParameterStates + ecx*4 - 4]
+	fimul		dword [edi+4]
+	fidiv		dword [edi]
+	fadd		dword [ParameterStates + ecx*4 - 4]
+	fstp		dword [esi + ecx*4 - 4]
+	inc			dword [edi+4]
+	loop		.paramloop
+%endif
+
 	xor			eax, eax
 	mov			[InstrumentIndex], eax
 
@@ -803,6 +828,12 @@ BufferAllocPtr:
 section instidx bss align=4
 InstrumentIndex:
 	resd 1
+
+%if NUM_PARAMETERS > 0
+section paramst bss align=4
+ParameterStates:
+	resd NUM_PARAMETERS
+%endif
 
 section tracks bss align=4
 TrackStarts:

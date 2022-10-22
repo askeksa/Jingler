@@ -360,7 +360,7 @@ fn check_opcode_space(opcode_capacity: &Vec<u16>) -> Result<()> {
 	Ok(())
 }
 
-pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, out: &mut impl std::io::Write) -> Result<()> {
+pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, parameter_quantization: f32, out: &mut impl std::io::Write) -> Result<()> {
 	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
 	let (constants, constant_map) = build_constant_list(program, &constant_set);
 	check_opcode_space(&opcode_capacity)?;
@@ -371,9 +371,12 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, out: &mu
 	}
 	writeln!(out, "\n%define COMPACT_IMPLICIT_OPCODES 1")?;
 
+	writeln!(out, "\n%define NUM_INSTRUMENTS {}", program.instrument_order.len())?;
+	writeln!(out, "\n%define NUM_PARAMETERS {}", program.parameters.len())?;
+
 	writeln!(out, "\n%include \"jingler.asm\"")?;
 
-	writeln!(out, "\nsection musdat rdata align=1")?;
+	writeln!(out, "\nsection musdat data align=1")?;
 	writeln!(out, "\n%define b(n) _snip_id_%+n")?;
 	writeln!(out, "%define c(n) _snip_id_constant+n")?;
 
@@ -425,6 +428,15 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, out: &mu
 		}
 	}
 	writeln!(out)?;
+
+	writeln!(out, "\nsection paramsb rdata align=4")?;
+
+	writeln!(out, "\nParameterScaleBias:")?;
+	for param in &program.parameters {
+		let scale = (param.max - param.min) * parameter_quantization;
+		let bias = param.min;
+		writeln!(out, "\tdd\t0x{:08X}, 0x{:08X}", scale.to_bits(), bias.to_bits())?;
+	}
 
 	Ok(())
 }

@@ -51,6 +51,7 @@ struct PlayOptions {
 	dump_instructions: bool,
 	write_wav: Option<String>,
 	write_source: Option<String>,
+	parameter_quantization_levels: u16,
 }
 
 impl Default for PlayOptions {
@@ -63,6 +64,7 @@ impl Default for PlayOptions {
 			dump_instructions: false,
 			write_wav: None,
 			write_source: None,
+			parameter_quantization_levels: 16,
 		}
 	}
 }
@@ -97,7 +99,8 @@ fn play_file(filename: &str, options: &PlayOptions) {
 				if let Some(filename) = &options.write_source {
 					match File::create(filename) {
 						Ok(mut file) => {
-							if let Err(e) = encode_bytecodes_source(&program, options.sample_rate, &mut file) {
+							let parameter_quantization = 1.0 / (options.parameter_quantization_levels as f32);
+							if let Err(e) = encode_bytecodes_source(&program, options.sample_rate, parameter_quantization, &mut file) {
 								println!("Error writing output file '{}': {}", filename, e);
 							}
 						},
@@ -180,6 +183,7 @@ fn main() {
 		(@arg DUMP: -g --dump "Dump generated code.")
 		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
 		(@arg OUTPUT: -o --output +takes_value "Output source file for music.")
+		(@arg QUANTIZATION: -q --quantization +takes_value "Number of quantization levels for parameters.")
 	).get_matches();
 
 	let zing_filename = matches.value_of("ZING").unwrap();
@@ -219,6 +223,16 @@ fn main() {
 	}
 	if let Some(filename) = matches.value_of("OUTPUT") {
 		options.write_source = Some(filename.to_string());
+	}
+	if let Some(q) = matches.value_of("QUANTIZATION") {
+		match q.parse::<u16>() {
+			Ok(q) => {
+				options.parameter_quantization_levels = q;
+			},
+			Err(_) => {
+				println!("Invalid quantization: {}", q);
+			},
+		}
 	}
 
 	if matches.is_present("RESIDENT") {

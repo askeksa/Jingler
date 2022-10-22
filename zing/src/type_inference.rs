@@ -55,7 +55,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let mut parameters = HashMap::new();
 		for &param in names.parameter_names() {
 			parameters.insert(param, TypeResult::Type {
-				inferred_type: type_spec!(mono number),
+				inferred_type: type_spec!(dynamic mono number),
 			});
 		}
 		TypeInferrer {

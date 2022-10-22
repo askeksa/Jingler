@@ -33,3 +33,5 @@
 %define I_COMPARE 7
 
 %define COMPACT_IMPLICIT_OPCODES 1
+
+%define NUM_PARAMETERS 0
