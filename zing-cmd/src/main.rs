@@ -108,6 +108,13 @@ fn play_file(filename: &str, options: &PlayOptions) {
 							println!("Error creating output file '{}': {}", filename, e);
 						},
 					}
+
+					println!("Parameters: {}", program.parameters.len());
+					print!("Instrument order:");
+					for channel in &program.instrument_order {
+						print!(" {}", channel);
+					}
+					println!();
 				}
 				if options.dump_instructions {
 					for (p, proc) in program.procedures.iter().enumerate() {
