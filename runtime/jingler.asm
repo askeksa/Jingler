@@ -251,7 +251,7 @@ GenerateCode:
 section rstatic text align=1
 
 RunStaticCode:
-	; ESI = Constant pool
+	; ESI = Random scramble, constant pool
 
 	ldmxcsr		[MXCSR]
 	mov			edi, StateSpace
@@ -263,7 +263,7 @@ section render text align=1
 
 RenderSamples:
 	; EAX = Number of samples to render
-	; ESI = Constant pool
+	; ESI = Random scramble, constant pool
 
 	ldmxcsr		[MXCSR]
 	push		eax
@@ -289,7 +289,7 @@ RenderSamples:
 	fimul		dword [edi+4]
 	fidiv		dword [edi]
 	fadd		dword [ParameterStates + ecx*4 - 4]
-	fstp		dword [esi + ecx*4 - 4]
+	fstp		dword [esi+4 + ecx*4 - 4]
 	inc			dword [edi+4]
 	loop		.paramloop
 %endif
@@ -463,6 +463,7 @@ NoteOff:
 	pextrb		[ebp-1], xmm0, 7
 
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
+	push		ecx
 	cvtsd2si	eax, [ebx]
 	mov			ecx, GmDls + GMDLS_DATA
 	add			ecx, [GmDls + GMDLS_OFFSETS + eax*4]
@@ -484,6 +485,7 @@ NoteOff:
 	lea			ecx, [ecx + 10 + edx*2] ; 2 bytes before sample data
 .lookup:
 	cvtsi2sd	xmm0, dword [ecx]
+	pop			ecx
 
 	snip		addsub, rt, I_ADDSUB
 	addsubpd	xmm0, [ebx]
@@ -493,14 +495,13 @@ NoteOff:
 
 	snip		random, rt, I_RANDOM
 	cvtsd2si	eax, xmm0
-	mov			ecx, 0xCD9E8D57
-	mul			ecx
+	mul			dword [esi]
 	xor			eax, edx
 	xor			eax, [byte ebx+4]
-	mul			ecx
+	mul			dword [esi]
 	xor			eax, edx
 	xor			eax, [byte ebx+0]
-	mul			ecx
+	mul			dword [esi]
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
@@ -644,7 +645,7 @@ NoteOff:
 	call		[ProcPointers]
 
 	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, [dword esi + 0]
+	cvtss2sd	xmm0, [dword esi + 4]
 
 	snip		note_property, sr, I_NOTE_PROPERTY
 	cvtsi2sd	xmm0, [dword ebp - 3*4]

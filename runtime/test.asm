@@ -99,6 +99,9 @@ Bytecodes:
 
 	db b(proc), 0
 
+RandomScramble:
+	dd	0xCD9E8D57
+
 ConstantPool:
 	; Constant pool
 	dd 0.0

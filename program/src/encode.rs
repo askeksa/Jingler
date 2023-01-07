@@ -10,6 +10,8 @@ use crate::program::{ZingProcedureKind, ZingProgram};
 use crate::instructions::{Instruction, NoteProperty};
 
 
+const RANDOM_SCRAMBLE: u32 = 0xCD9E8D57;
+
 #[allow(unused)]
 #[derive(Clone, Copy, Debug, Eq, FromRepr, PartialEq)]
 enum EncodedBytecode {
@@ -425,6 +427,14 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, paramete
 	}
 	writeln!(out, "\tdb\t0")?;
 
+	let random_scramble = if opcode_capacity[EncodedBytecode::Random as usize] != 0 {
+		RANDOM_SCRAMBLE
+	} else {
+		0
+	};
+	writeln!(out, "\nRandomScramble:")?;
+	writeln!(out, "\tdd\t0x{:08X}", random_scramble)?;
+
 	write!(out, "\nConstantPool:")?;
 	for (i, &value) in constants.iter().enumerate() {
 		if i % 10 == 0 {
@@ -447,9 +457,9 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, paramete
 	Ok(())
 }
 
-pub fn encode_bytecodes_binary(program: &ZingProgram, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>)> {
+pub fn encode_bytecodes_binary(program: &ZingProgram, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>, usize)> {
 	let (mut opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
-	let (constants, constant_map) = build_constant_list(program, &constant_set);
+	let (mut constants, constant_map) = build_constant_list(program, &constant_set);
 	adjust_to_fixed_capacities(&mut opcode_capacity)?;
 	check_opcode_space(&opcode_capacity)?;
 
@@ -480,7 +490,8 @@ pub fn encode_bytecodes_binary(program: &ZingProgram, sample_rate: f32) -> Resul
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);
 
-	Ok((encoded.into_inner(), constants))
+	constants.insert(0, RANDOM_SCRAMBLE);
+	Ok((encoded.into_inner(), constants, 1))
 }
 
 fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {

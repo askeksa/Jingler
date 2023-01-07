@@ -43,6 +43,7 @@ struct ZingPlugin {
 	watcher_receiver: Receiver<DebouncedEvent>,
 	program: Option<ZingProgram>,
 	constants: Vec<u32>,
+	parameter_offset: usize,
 	midi_channel_mapping: [Option<u32>; 16],
 	bytecode_compiled: bool,
 
@@ -93,6 +94,7 @@ impl Default for ZingPlugin {
 			bytecode_compiled: false,
 			program: None,
 			constants: vec![],
+			parameter_offset: 0,
 			midi_channel_mapping: [None; 16],
 
 			parameters: Arc::new(ZingParameters::default()),
@@ -128,12 +130,13 @@ impl ZingPlugin {
 		debug_assert!(!self.bytecode_compiled);
 		if let Some(ref program) = self.program {
 			match encode_bytecodes_binary(&program, self.sample_rate) {
-				Ok((bytecodes, constants)) => unsafe {
+				Ok((bytecodes, constants, parameter_offset)) => unsafe {
 					CompileBytecode(bytecodes.as_ptr());
 					self.bytecode_compiled = true;
 
 					RunStaticCode(constants.as_ptr());
 					self.constants = constants;
+					self.parameter_offset = parameter_offset;
 
 					self.midi_channel_mapping.fill(None);
 					for (index, &inst) in program.instrument_order.iter().enumerate() {
@@ -229,7 +232,7 @@ impl Plugin for ZingPlugin {
 					} else {
 						0.0
 					};
-					self.constants[i] = (p.min + value * (p.max - p.min)).to_bits();
+					self.constants[self.parameter_offset + i] = (p.min + value * (p.max - p.min)).to_bits();
 				}
 			}
 
