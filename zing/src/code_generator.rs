@@ -1,5 +1,5 @@
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::mem::{replace, take};
 
 use program::program::*;
@@ -9,10 +9,6 @@ use crate::ast::*;
 use crate::builtin::*;
 use crate::compiler::*;
 use crate::names::*;
-
-const AUTOKILL_CELL_INIT: Expression<'static> = Expression::Number {
-	before: 0, value: 0.0, after: 0
-};
 
 pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
@@ -32,11 +28,16 @@ fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum StateKind { Cell, Delay }
 
 #[derive(Clone)]
 enum ModuleCall<'ast> {
+	Init {
+		kind: StateKind,
+		value: &'ast Expression<'ast>,
+		width: ZingWidth,
+	},
 	Call {
 		proc_index: usize,
 		generic_width: Option<ZingWidth>,
@@ -100,18 +101,14 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	stack_index_in_cell: Vec<usize>,
 	// Variable names of implicit cells
 	name_in_cell: HashMap<usize, &'ast str>,
-	// Stack index of next cell in execution order
-	cell_stack_index: usize,
 	// Nesting depth of repetitions
 	repetition_depth: usize,
-	// Static expression to initialize explicit cell
-	cell_init: Vec<(StateKind, &'ast Expression<'ast>, ZingWidth)>,
 	// Module calls in execution order
 	module_call: Vec<ModuleCall<'ast>>,
 	// Instruments in execution order
 	instrument_order: Vec<usize>,
 	// Queue for dynamic cell update expressions
-	update_queue: VecDeque<(StateKind, &'ast Expression<'ast>)>,
+	update_stack: Vec<(StateKind, &'ast Expression<'ast>)>,
 }
 
 impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
@@ -144,12 +141,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			stack_index: HashMap::new(),
 			stack_index_in_cell: vec![],
 			name_in_cell: HashMap::new(),
-			cell_stack_index: 0,
 			repetition_depth: 0,
-			cell_init: vec![],
 			module_call: vec![],
 			instrument_order: vec![],
-			update_queue: VecDeque::new(),
+			update_stack: vec![],
 		}
 	}
 
@@ -258,10 +253,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
-						self.cell_init.push((StateKind::Cell, &AUTOKILL_CELL_INIT, ZingWidth::Mono));
 						self.mark_implicit_cells_from_outputs(outputs);
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.generate_static_body(body)?;
+						// Init autokill
+						self.emit(code![
+							Constant(0),
+							CellInit
+						]);
 						// Leave only the inputs (including the accumulator) on the stack.
 						self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 					} else {
@@ -269,17 +268,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 						self.generate_dynamic_body(body)?;
 						// Run autokill code
-						let counter_stack_index = self.cell_stack_index;
-						let counter_offset = self.stack_height - counter_stack_index;
-						let counter_cell_index = self.stack_index_in_cell.len() + self.cell_init.len() - 1;
 						self.emit(code![
 							StackLoad(0), // Copy of output
 							Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
 							SplitRL, Or, // 0 when both channels small
 							Constant(0), Eq, // True when small
-							StackLoad(counter_offset as u16), And, // Preserve counter when small
+							CellPush, And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
-							StackLoad(0), CellStore(counter_cell_index as u16), // Update counter
+							StackLoad(0), CellPop, // Update counter
 							Constant(0x46000000), Less, // Has counter reached threshold?
 							Kill // Kill when counter reaches threshold
 						]);
@@ -351,17 +347,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.name_in_cell.insert(cell_index, name);
 			}
 		}
-		for (kind, exp, width) in self.cell_init.clone() {
-			self.generate(exp);
-			match kind {
-				StateKind::Cell => {
-					self.emit(code![CellInit]);
-				},
-				StateKind::Delay => {
-					self.emit(code![BufferAlloc(width), CellInit]);
-				},
-			}
-		}
 		self.generate_static_module_calls(&self.module_call.clone());
 		Ok(())
 	}
@@ -369,6 +354,17 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn generate_static_module_calls(&mut self, module_call: &Vec<ModuleCall<'ast>>) {
 		for call in module_call {
 			match call {
+				&ModuleCall::Init { kind, value, width } => {
+					self.generate(value);
+					match kind {
+						StateKind::Cell => {
+							self.emit(code![CellInit]);
+						},
+						StateKind::Delay => {
+							self.emit(code![BufferAlloc(width), CellInit]);
+						},
+					}
+				},
 				&ModuleCall::Call { proc_index, generic_width, args } => {
 					let (_, inputs, _) = &self.signatures[proc_index];
 					for (input_type, arg) in inputs.clone().iter().zip(args) {
@@ -392,42 +388,40 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
-		let cell_stack_index_base = self.stack_height;
 		for cell_index in 0 .. self.stack_index_in_cell.len() {
 			if let Some(name) = self.name_in_cell.get(&cell_index) {
 				self.stack_index.entry(name).or_insert(self.stack_height);
 			}
 			self.emit(code![CellRead]);
 		}
-		self.cell_stack_index = self.stack_height;
-		for _ in 0 .. self.cell_init.len() {
-			self.emit(code![CellRead]);
-		}
-		self.next_stack_index = self.stack_height;
 
+		self.next_stack_index = self.stack_height;
 		for statement in body {
 			if statement_scope(statement) == Some(Scope::Dynamic) {
 				self.generate_code_for_statement(statement)?;
 			}
 		}
-		let mut cell_index = self.stack_index_in_cell.len();
-		while let Some((kind, exp)) = self.update_queue.pop_front() {
+		self.generate_dynamic_body_flush_update_stack(0);
+		Ok(())
+	}
+
+	fn generate_dynamic_body_flush_update_stack(&mut self, height: usize) {
+		while self.update_stack.len() > height {
+			let (kind, exp) = self.update_stack.pop().unwrap();
+			let base_height = self.update_stack.len();
 			match kind {
 				StateKind::Cell => {
 					self.generate(exp);
-					self.emit(code![CellStore(cell_index as u16)]);
 				},
 				StateKind::Delay => {
-					let stack_index = cell_stack_index_base + cell_index;
-					let offset = self.stack_height - stack_index - 1;
-					self.emit(code![StackLoad(offset as u16)]);
+					self.emit(code![CellFetch]);
 					self.generate(exp);
-					self.emit(code![BufferStoreAndStep, CellStore(cell_index as u16)]);
-				}
+					self.emit(code![BufferStoreAndStep]);
+				},
 			}
-			cell_index += 1;
+			self.generate_dynamic_body_flush_update_stack(base_height);
+			self.emit(code![CellPop]);
 		}
-		Ok(())
 	}
 
 	fn generate_code_for_statement(&mut self, statement: &'ast Statement<'ast>) -> Result<(), CompileError> {
@@ -473,9 +467,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
 		self.stack_index_in_cell.clear();
-		self.cell_init.clear();
 		self.module_call.clear();
-		debug_assert!(self.update_queue.is_empty());
+		debug_assert!(self.update_stack.is_empty());
 
 		for Statement::Assign { node, .. } in body {
 			self.add_stack_indices(node, Some(Scope::Static), false, false);
@@ -486,11 +479,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(exp);
 			}
 		}
-		while let Some((_kind, exp)) = self.update_queue.pop_front() {
-			self.find_cells(exp);
-		}
+		self.find_cells_in_body_flush_update_stack(0);
 
 		self.compiler.check_errors()
+	}
+
+	fn find_cells_in_body_flush_update_stack(&mut self, height: usize) {
+		while self.update_stack.len() > height {
+			let (_kind, exp) = self.update_stack.pop().unwrap();
+			let base_height = self.update_stack.len();
+			self.find_cells(exp);
+			self.find_cells_in_body_flush_update_stack(base_height);
+		}
 	}
 
 	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern<'ast>) {
@@ -541,17 +541,17 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let width = self.retrieve_width(exp).unwrap();
 								match name.text {
 									"cell" => {
-										self.cell_init.push((StateKind::Cell, &args[0], width));
-										self.update_queue.push_back((StateKind::Cell, &args[1]));
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[0], width });
+										self.update_stack.push((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
-										self.cell_init.push((StateKind::Delay, &args[0], width));
-										self.update_queue.push_back((StateKind::Delay, &args[1]));
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[0], width });
+										self.update_stack.push((StateKind::Delay, &args[1]));
 									},
 									"dyndelay" => {
-										self.cell_init.push((StateKind::Delay, &args[0], width));
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[0], width });
 										self.find_cells(&args[1]);
-										self.update_queue.push_back((StateKind::Delay, &args[2]));
+										self.update_stack.push((StateKind::Delay, &args[2]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}
@@ -723,24 +723,18 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							(Module, BuiltIn { .. }) => {
 								match name.text {
 									"cell" => {
-										let offset = self.stack_height - self.cell_stack_index - 1;
-										self.cell_stack_index += 1;
-										self.emit(code![StackLoad(offset as u16)]);
-										self.update_queue.push_back((StateKind::Cell, &args[1]));
+										self.emit(code![CellPush]);
+										self.update_stack.push((StateKind::Cell, &args[1]));
 									},
 									"delay" => {
-										let offset = self.stack_height - self.cell_stack_index - 1;
-										self.cell_stack_index += 1;
-										self.emit(code![StackLoad(offset as u16), BufferLoad]);
-										self.update_queue.push_back((StateKind::Delay, &args[1]));
+										self.emit(code![CellPush, BufferLoad]);
+										self.update_stack.push((StateKind::Delay, &args[1]));
 									},
 									"dyndelay" => {
-										let offset = self.stack_height - self.cell_stack_index - 1;
-										self.cell_stack_index += 1;
-										self.emit(code![StackLoad(offset as u16)]);
+										self.emit(code![CellPush]);
 										self.generate(&args[1]);
 										self.emit(code![BufferLoadWithOffset]);
-										self.update_queue.push_back((StateKind::Delay, &args[2]));
+										self.update_stack.push((StateKind::Delay, &args[2]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}

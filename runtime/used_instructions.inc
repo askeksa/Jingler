@@ -2,9 +2,12 @@
 ; Used instructions
 %define I_STATE_ENTER 1
 %define I_STATE_LEAVE 1
-%define I_KILL 1
-%define I_CELL_INIT 1
+%define I_CELL_FETCH 1
+%define I_CELL_PUSH 1
 %define I_CELL_READ 1
+%define I_CELL_INIT 1
+%define I_CELL_POP 1
+%define I_KILL 1
 %define I_GMDLS_SAMPLE 1
 %define I_ADDSUB 1
 %define I_FPUTNEXT 1
@@ -23,7 +26,6 @@
 %define I_NOTE_PROPERTY 3
 %define I_STACK_LOAD 20
 %define I_STACK_STORE 20
-%define I_CELL_STORE 10
 %define I_LABEL 1
 %define I_IF 1
 %define I_LOOPJUMP 1

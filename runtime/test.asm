@@ -91,9 +91,9 @@ Bytecodes:
 
 	; Instrument 0 update
 	db b(proc)
-	db b(cell_read), b(stack_load)+0, b(cell_read), b(add), b(cell_store)+0
+	db b(cell_push), b(stack_load)+0, b(cell_read), b(add), b(cell_pop)
 	db b(fop)+(~0xfe), b(fdone) ; sin
-	db b(cell_read), b(stack_load)+0, b(constant)+4, b(mul), b(cell_store)+2
+	db b(cell_push), b(stack_load)+0, b(constant)+4, b(mul), b(cell_pop)
 	db b(mul), b(expand_l), b(add)
 	db b(note_property)+NOTE_LENGTH, b(constant)+0, b(compare)+COMPARE_GE, b(kill)
 

@@ -75,7 +75,9 @@ pub enum Instruction {
 	// State
 	CellInit,
 	CellRead,
-	CellStore(u16),
+	CellPush,
+	CellFetch,
+	CellPop,
 	StateEnter,
 	StateLeave,
 
@@ -141,9 +143,8 @@ impl Instruction {
 				(offset + 2, offset + 1)
 			},
 
-			CellInit => (1, 0),
-			CellRead => (0, 1),
-			CellStore(..) => (1, 0),
+			CellInit | CellPop => (1, 0),
+			CellRead | CellPush | CellFetch => (0, 1),
 			StateEnter | StateLeave => (0, 0),
 
 			BufferAlloc(..) => (1, 1),

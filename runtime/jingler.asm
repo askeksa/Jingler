@@ -437,16 +437,30 @@ NoteOff:
 	snip		state_leave, rr, I_STATE_LEAVE
 	pop			edi
 
-	snip		kill, rs, I_KILL
-	pextrb		[ebp-1], xmm0, 7
+	snip		cell_fetch, sr, I_CELL_FETCH
+	pop			eax
+	movapd		xmm0, [eax]
+	push		eax
 
-	snip		cell_init, rs, I_CELL_INIT
-	movapd		[edi], xmm0
+	snip		cell_push, sr, I_CELL_PUSH
+	push		edi
+	movapd		xmm0, [edi]
 	add			edi, byte 16
 
 	snip		cell_read, sr, I_CELL_READ
 	movapd		xmm0, [edi]
 	add			edi, byte 16
+
+	snip		cell_init, rs, I_CELL_INIT
+	movapd		[edi], xmm0
+	add			edi, byte 16
+
+	snip		cell_pop, rs, I_CELL_POP
+	pop			eax
+	movapd		[eax], xmm0
+
+	snip		kill, rs, I_KILL
+	pextrb		[ebp-1], xmm0, 7
 
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
 	cvtsd2si	eax, [ebx]
@@ -636,7 +650,7 @@ NoteOff:
 	cvtsi2sd	xmm0, [dword ebp - 3*4]
 
 	; Offset snips
-	snipcode	offset, I_STACK_LOAD+I_STACK_STORE+I_CELL_STORE
+	snipcode	offset, I_STACK_LOAD+I_STACK_STORE
 	shl			eax, 4
 	stosd
 
@@ -645,9 +659,6 @@ NoteOff:
 
 	snip		stack_store, rs, I_STACK_STORE
 	db			0x66, 0x0f, 0x29, 0x83 ; movapd [dword ebx + offset*16], xmm0
-
-	snip		cell_store, rs, I_CELL_STORE
-	db			0x66, 0x0f, 0x29, 0x85 ; movapd [dword ebp + offset*16], xmm0
 
 	; Label snips
 	snipcode	label, I_LABEL+I_IF

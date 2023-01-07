@@ -15,9 +15,12 @@ use crate::instructions::{Instruction, NoteProperty};
 enum EncodedBytecode {
 	StateEnter,
 	StateLeave,
-	Kill,
-	CellInit,
+	CellFetch,
+	CellPush,
 	CellRead,
+	CellInit,
+	CellPop,
+	Kill,
 	GmDlsSample,
 	AddSub,
 	Fputnext,
@@ -36,7 +39,6 @@ enum EncodedBytecode {
 	ReadNoteProperty,
 	StackLoad,
 	StackStore,
-	CellStore,
 	Label,
 	If,
 	LoopJump,
@@ -114,9 +116,12 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 	match opcode {
 		StateEnter => ("state_enter", None),
 		StateLeave => ("state_leave", None),
-		Kill => ("kill", None),
-		CellInit => ("cell_init", None),
+		CellFetch => ("cell_fetch", None),
+		CellPush => ("cell_push", None),
 		CellRead => ("cell_read", None),
+		CellInit => ("cell_init", None),
+		CellPop => ("cell_pop", None),
+		Kill => ("kill", None),
 		GmDlsSample => ("gmdls_sample", None),
 		AddSub => ("addsub", None),
 		Fputnext => ("fputnext", None),
@@ -135,7 +140,6 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		ReadNoteProperty => ("note_property", Some(arg)),
 		StackLoad => ("stack_load", Some(arg)),
 		StackStore => ("stack_store", Some(arg)),
-		CellStore => ("cell_store", Some(arg)),
 		Label => ("label", None),
 		If => ("if", None),
 		LoopJump => ("loopjump", None),
@@ -206,9 +210,12 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 	match inst {
 		Instruction::StateEnter => encode(StateEnter, 0),
 		Instruction::StateLeave => encode(StateLeave, 0),
-		Instruction::Kill => encode(Kill, 0),
-		Instruction::CellInit => encode(CellInit, 0),
+		Instruction::CellFetch => encode(CellFetch, 0),
+		Instruction::CellPush => encode(CellPush, 0),
 		Instruction::CellRead => encode(CellRead, 0),
+		Instruction::CellInit => encode(CellInit, 0),
+		Instruction::CellPop => encode(CellPop, 0),
+		Instruction::Kill => encode(Kill, 0),
 		Instruction::GmDlsSample => encode(GmDlsSample, 0),
 		Instruction::AddSub => encode(AddSub, 0),
 		Instruction::Random => encode(Random, 0),
@@ -223,7 +230,6 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Parameter(index) => encode(Constant, index),
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
-		Instruction::CellStore(offset) => encode(CellStore, offset),
 
 		Instruction::RepeatInit => {
 			encode(StackLoad, 0);
@@ -498,7 +504,6 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
 	adjust(EncodedBytecode::StackLoad, 20, "stack load");
 	adjust(EncodedBytecode::StackStore, 20, "stack store");
-	adjust(EncodedBytecode::CellStore, 10, "cell store");
 	adjust(EncodedBytecode::Round, 4, "round");
 	adjust(EncodedBytecode::Compare, 7, "compare");
 
