@@ -269,15 +269,17 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						self.generate_dynamic_body(body)?;
 						// Run autokill code
 						self.emit(code![
-							StackLoad(0), // Copy of output
+							Constant(0x46000000), // Counter threshold
+							StackLoad(1), // Copy of output
 							Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
 							SplitRL, Or, // 0 when both channels small
 							Constant(0), Eq, // True when small
 							CellPush, And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
 							StackLoad(0), CellPop, // Update counter
-							Constant(0x46000000), Less, // Has counter reached threshold?
-							Kill // Kill when counter reaches threshold
+							IfGreaterEq, // Has counter reached threshold?
+							Kill, // Kill when counter reaches threshold
+							EndIf, Pop, Pop
 						]);
 						// Leave the inputs (including the accumulator) and the output on the stack.
 						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();

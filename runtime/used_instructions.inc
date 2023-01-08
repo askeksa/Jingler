@@ -7,7 +7,6 @@
 %define I_CELL_READ 1
 %define I_CELL_INIT 1
 %define I_CELL_POP 1
-%define I_KILL 1
 %define I_GMDLS_SAMPLE 1
 %define I_ADDSUB 1
 %define I_FPUTNEXT 1
@@ -17,6 +16,7 @@
 %define I_BUFFER_STORE_AND_STEP 1
 %define I_BUFFER_ALLOC 1
 %define I_CALL_INSTRUMENT 1
+%define I_KILL 1
 %define I_EXP2_BODY 1
 %define I_FDONE 1
 %define I_FOP 15

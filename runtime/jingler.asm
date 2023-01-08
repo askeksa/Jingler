@@ -459,10 +459,6 @@ NoteOff:
 	pop			eax
 	movapd		[eax], xmm0
 
-	snip		kill, rs, I_KILL
-	mov			eax, [ecx]
-	pextrb		[eax+15], xmm0, 7
-
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
 	push		ecx
 	cvtsd2si	eax, [ebx]
@@ -551,15 +547,15 @@ NoteOff:
 .noteloop:
 	; Find note headers for track
 	lea			ecx, [TrackStarts + ebp*4] ; Note headers for track
-	mov			edx, [ecx]
+	mov			edi, [ecx]
 
 	; Count down to note trigger
-	dec			dword [edx]
+	dec			dword [edi]
 	jns			.no_more_notes
 
 	; Allocate note object and copy header
+	movapd		xmm0, [edi]
 	mov			edi, [NoteAllocPtr]
-	movapd		xmm0, [edx]
 	add			dword [ecx], byte 16
 	movapd		[edi], xmm0
 
@@ -581,14 +577,9 @@ NoteOff:
 	; Process all active notes for this instrument
 	lea			ecx, [NoteChains + ebp*4]
 .activeloop:
-	mov			edi, ecx
-.killloop:
-	mov			edi, [edi]
-	mov			[ecx], edi
+	mov			edi, [ecx]
 	test		edi, edi
 	je			.activedone
-	cmp			[edi + 15], byte 0
-	jne			.killloop
 	push		edi
 
 	; Call instrument process procedure
@@ -602,6 +593,11 @@ NoteOff:
 
 	inc			dword [InstrumentIndex]
 	popa
+
+	snip		kill, ss, I_KILL
+	mov			eax, [ecx]
+	mov			eax, [eax]
+	mov			[ecx], eax
 
 	snip		exp2_body, ss, I_EXP2_BODY
 	; Assumes fop 0xFC (frndint) before.

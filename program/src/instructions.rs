@@ -100,6 +100,11 @@ pub enum Instruction {
 	RepeatStart,
 	RepeatEnd,
 
+	// Conditionals
+	IfGreaterEq,
+	Else,
+	EndIf,
+
 	// Misc
 	Random,
 	GmDlsSample,
@@ -155,12 +160,14 @@ impl Instruction {
 
 			Call(..) => panic!("stack_change on 'call'"),
 			CallInstrument => (0, 0),
-			Kill => (1, 0),
+			Kill => (0, 0),
 			ReadNoteProperty(..) => (0, 1),
 
 			RepeatInit => (1, 2),
 			RepeatStart => (0, 2),
 			RepeatEnd => (2, 0),
+
+			IfGreaterEq | Else | EndIf => (2, 2),
 
 			Random => (2, 1),
 			GmDlsSample => (2, 1),

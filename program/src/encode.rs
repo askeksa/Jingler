@@ -22,7 +22,6 @@ enum EncodedBytecode {
 	CellRead,
 	CellInit,
 	CellPop,
-	Kill,
 	GmDlsSample,
 	AddSub,
 	Fputnext,
@@ -32,6 +31,7 @@ enum EncodedBytecode {
 	BufferStoreAndStep,
 	BufferAlloc,
 	CallInstrument,
+	Kill,
 	Exp2Body,
 	Fdone,
 	Fop,
@@ -123,7 +123,6 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		CellRead => ("cell_read", None),
 		CellInit => ("cell_init", None),
 		CellPop => ("cell_pop", None),
-		Kill => ("kill", None),
 		GmDlsSample => ("gmdls_sample", None),
 		AddSub => ("addsub", None),
 		Fputnext => ("fputnext", None),
@@ -133,6 +132,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		BufferStoreAndStep => ("buffer_store_and_step", None),
 		BufferAlloc => ("buffer_alloc", None),
 		CallInstrument => ("call_instrument", None),
+		Kill => ("kill", None),
 		Exp2Body => ("exp2_body", None),
 		Fdone => ("fdone", None),
 		Fop => ("fop", Some(arg)),
@@ -217,7 +217,6 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::CellRead => encode(CellRead, 0),
 		Instruction::CellInit => encode(CellInit, 0),
 		Instruction::CellPop => encode(CellPop, 0),
-		Instruction::Kill => encode(Kill, 0),
 		Instruction::GmDlsSample => encode(GmDlsSample, 0),
 		Instruction::AddSub => encode(AddSub, 0),
 		Instruction::Random => encode(Random, 0),
@@ -226,6 +225,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
 		Instruction::BufferAlloc(..) => encode(BufferAlloc, 0),
 		Instruction::CallInstrument => encode(CallInstrument, 0),
+		Instruction::Kill => encode(Kill, 0),
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
@@ -251,6 +251,18 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 			encode(LoopJump, 0);
 			encode_implicit(Pop, encode);
 			encode_implicit(Pop, encode);
+		},
+
+		Instruction::IfGreaterEq => {
+			encode_implicit(Cmp, encode);
+			encode(If, 0);
+		},
+		Instruction::Else => {
+			encode(Else, 0);
+			encode(Label, 0);
+		},
+		Instruction::EndIf => {
+			encode(EndIf, 0);
 		},
 
 		Instruction::Ceil => encode_rounding(Ceil, encode),
