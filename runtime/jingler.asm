@@ -460,7 +460,8 @@ NoteOff:
 	movapd		[eax], xmm0
 
 	snip		kill, rs, I_KILL
-	pextrb		[ebp-1], xmm0, 7
+	mov			eax, [ecx]
+	pextrb		[eax+15], xmm0, 7
 
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
 	push		ecx
@@ -563,9 +564,10 @@ NoteOff:
 	movapd		[edi], xmm0
 
 	; Chain note object into note list
-	mov			eax, [NoteChains + ebp*4]
+	lea			ecx, [NoteChains + ebp*4]
+	mov			eax, [ecx]
 	mov			[edi], eax
-	mov			[NoteChains + ebp*4], edi
+	mov			[ecx], edi
 
 	; Call instrument init procedure
 	add			edi, byte 16
@@ -577,12 +579,12 @@ NoteOff:
 .no_more_notes:
 
 	; Process all active notes for this instrument
-	lea			eax, [NoteChains + ebp*4]
+	lea			ecx, [NoteChains + ebp*4]
 .activeloop:
-	mov			edi, eax
+	mov			edi, ecx
 .killloop:
 	mov			edi, [edi]
-	mov			[eax], edi
+	mov			[ecx], edi
 	test		edi, edi
 	je			.activedone
 	cmp			[edi + 15], byte 0
@@ -593,8 +595,8 @@ NoteOff:
 	add			edi, byte 16
 	call		[ProcPointers + ebp*8 + 3*4]
 
-	pop			eax
-	dec			dword [eax + 4]
+	pop			ecx
+	dec			dword [ecx + 4]
 	jmp			.activeloop
 .activedone:
 
@@ -625,16 +627,12 @@ NoteOff:
 
 	; Proc snip
 	snipcode	proc, I_PROC
-	lea			eax, [edi-3]
 	movzx		ecx, dh
 	inc			dh
-	mov			[ProcPointers + ecx*4], eax
+	mov			[ProcPointers + ecx*4], edi
 
 	snip		proc, ss, I_PROC
-	pop			ebp
 	ret
-	push		ebp
-	mov			ebp, edi
 
 	; Pointer snips
 	snipcode	pointer, I_CONSTANT+I_PROC_CALL+I_NOTE_PROPERTY
@@ -648,7 +646,8 @@ NoteOff:
 	cvtss2sd	xmm0, [dword esi + 4]
 
 	snip		note_property, sr, I_NOTE_PROPERTY
-	cvtsi2sd	xmm0, [dword ebp - 3*4]
+	mov			eax, [ecx]
+	cvtsi2sd	xmm0, [dword eax + 4]
 
 	; Offset snips
 	snipcode	offset, I_STACK_LOAD+I_STACK_STORE
