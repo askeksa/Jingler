@@ -139,7 +139,7 @@ impl ZingPlugin {
 					self.parameter_offset = parameter_offset;
 
 					self.midi_channel_mapping.fill(None);
-					for (index, &inst) in program.instrument_order.iter().enumerate() {
+					for (index, &inst) in program.track_order.iter().enumerate() {
 						if inst < 16 {
 							self.midi_channel_mapping[inst] = Some(index as u32);
 						}

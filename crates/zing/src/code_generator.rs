@@ -19,7 +19,7 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees);
 	cg.generate_code_for_program(program)?;
-	Ok((take(&mut cg.procedures), take(&mut cg.instrument_order)))
+	Ok((take(&mut cg.procedures), take(&mut cg.track_order)))
 }
 
 fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
@@ -105,8 +105,8 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	repetition_depth: usize,
 	// Module calls in execution order
 	module_call: Vec<ModuleCall<'ast>>,
-	// Instruments in execution order
-	instrument_order: Vec<usize>,
+	// Tracks in execution order
+	track_order: Vec<usize>,
 	// Queue for dynamic cell update expressions
 	update_stack: Vec<(StateKind, &'ast Expression<'ast>)>,
 }
@@ -143,7 +143,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			name_in_cell: HashMap::new(),
 			repetition_depth: 0,
 			module_call: vec![],
-			instrument_order: vec![],
+			track_order: vec![],
 			update_stack: vec![],
 		}
 	}
@@ -583,7 +583,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index, .. }) => {
-								self.instrument_order.push((self.proc_id[*proc_index] as usize - 2) / 2);
+								self.track_order.push((self.proc_id[*proc_index] as usize - 2) / 2);
 								for arg in args {
 									self.find_cells(arg);
 								}
@@ -770,20 +770,22 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
+								self.instrument_id += 2;
+								let static_proc_id = self.instrument_id + 0;
+								let dynamic_proc_id = self.instrument_id + 1;
+								self.proc_id[*proc_index] = static_proc_id as u16;
+								self.proc_for_id[static_proc_id] = *proc_index;
+								self.proc_for_id[dynamic_proc_id] = *proc_index;
+
 								let (_, inputs, outputs) = &self.signatures[*proc_index];
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
 									self.generate(arg);
 								}
 								self.emit(code![Constant(0), ExpandStereo]);
-								self.emit(code![CallInstrument]);
+								self.emit(code![PlayInstrument(static_proc_id as u16, dynamic_proc_id as u16)]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
-
-								self.instrument_id += 2;
-								self.proc_id[*proc_index] = self.instrument_id as u16;
-								self.proc_for_id[self.instrument_id + 0] = *proc_index;
-								self.proc_for_id[self.instrument_id + 1] = *proc_index;
 							},
 						}
 					},

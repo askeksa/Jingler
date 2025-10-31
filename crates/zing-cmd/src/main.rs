@@ -110,8 +110,8 @@ fn play_file(filename: &str, options: &PlayOptions) {
 					}
 
 					println!("Parameters: {}", program.parameters.len());
-					print!("Instrument order:");
-					for channel in &program.instrument_order {
+					print!("Track order:");
+					for channel in &program.track_order {
 						print!(" {}", channel);
 					}
 					println!();

@@ -8,8 +8,8 @@ pub struct ZingProgram {
 	pub parameters: Vec<ZingParameter>,
 	// Procedures
 	pub procedures: Vec<ZingProcedure>,
-	// Instruments in execution order
-	pub instrument_order: Vec<usize>,
+	// Tracks in execution order
+	pub track_order: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]

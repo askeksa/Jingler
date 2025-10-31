@@ -274,7 +274,7 @@ RenderSamples:
 %if NUM_PARAMETERS > 0
 	mov			ecx, NUM_PARAMETERS
 .paramloop:
-	mov			edi, [TrackStarts + NUM_INSTRUMENTS*4 + ecx*4 - 4]
+	mov			edi, [TrackStarts + NUM_TRACKS*4 + ecx*4 - 4]
 .findkey:
 	fild		dword [edi+8]
 	fmul		dword [ParameterScaleBias + ecx*8 - 8]
@@ -284,7 +284,7 @@ RenderSamples:
 	jne			.interpolate
 	fstp		dword [ParameterStates + ecx*4 - 4]
 	add			edi, byte 16
-	mov			[TrackStarts + NUM_INSTRUMENTS*4 + ecx*4 - 4], edi
+	mov			[TrackStarts + NUM_TRACKS*4 + ecx*4 - 4], edi
 	jmp			.findkey
 .interpolate:
 	fsub		dword [ParameterStates + ecx*4 - 4]
@@ -541,7 +541,7 @@ NoteOff:
 	add			[BufferAllocPtr], eax
 	and			dword [ebx], byte 0
 
-	snip		call_instrument, ss, I_CALL_INSTRUMENT
+	snip		play_instrument1, ss, I_PLAY_INSTRUMENT1
 	push		edi
 
 .noteloop:
@@ -551,7 +551,7 @@ NoteOff:
 
 	; Count down to note trigger
 	dec			dword [edi]
-	jns			.no_more_notes
+	jns			_snip_play_instrument2.no_more_notes+6
 
 	; Allocate note object and copy header
 	movapd		xmm0, [edi]
@@ -567,11 +567,11 @@ NoteOff:
 
 	; Call instrument init procedure
 	add			edi, byte 16
-	call		[ProcPointers + ebp*8 + 2*4]
 
+	snip		play_instrument2, ss, I_PLAY_INSTRUMENT2
 	; Bump alloc pointer to end of allocated note object
 	mov			[NoteAllocPtr], edi
-	jmp			.noteloop
+	jmp			_snip_play_instrument1.noteloop-6
 .no_more_notes:
 
 	; Process all active notes for this instrument
@@ -579,16 +579,16 @@ NoteOff:
 .activeloop:
 	mov			edi, [ecx]
 	test		edi, edi
-	je			.activedone
+	je			_snip_play_instrument3.activedone+6
 	push		edi
 
 	; Call instrument process procedure
 	add			edi, byte 16
-	call		[ProcPointers + ebp*8 + 3*4]
 
+	snip		play_instrument3, ss, I_PLAY_INSTRUMENT3
 	pop			ecx
 	dec			dword [ecx + 4]
-	jmp			.activeloop
+	jmp			_snip_play_instrument2.activeloop-6
 .activedone:
 
 	inc			ebp

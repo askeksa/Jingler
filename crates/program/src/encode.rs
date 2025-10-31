@@ -30,7 +30,9 @@ enum EncodedBytecode {
 	BufferLoad,
 	BufferStoreAndStep,
 	BufferAlloc,
-	CallInstrument,
+	PlayInstrument1,
+	PlayInstrument2,
+	PlayInstrument3,
 	Kill,
 	Exp2Body,
 	Fdone,
@@ -131,7 +133,9 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		BufferLoad => ("buffer_load", None),
 		BufferStoreAndStep => ("buffer_store_and_step", None),
 		BufferAlloc => ("buffer_alloc", None),
-		CallInstrument => ("call_instrument", None),
+		PlayInstrument1 => ("play_instrument1", None),
+		PlayInstrument2 => ("play_instrument2", None),
+		PlayInstrument3 => ("play_instrument3", None),
 		Kill => ("kill", None),
 		Exp2Body => ("exp2_body", None),
 		Fdone => ("fdone", None),
@@ -224,7 +228,6 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::BufferLoad => encode(BufferLoad, 0),
 		Instruction::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
 		Instruction::BufferAlloc(..) => encode(BufferAlloc, 0),
-		Instruction::CallInstrument => encode(CallInstrument, 0),
 		Instruction::Kill => encode(Kill, 0),
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
 		Instruction::Constant(constant) => encode_constant(constant),
@@ -232,6 +235,14 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Parameter(index) => encode(Constant, index),
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
+
+		Instruction::PlayInstrument(static_proc, dynamic_proc) => {
+			encode(PlayInstrument1, 0);
+			encode(ProcCall, static_proc);
+			encode(PlayInstrument2, 0);
+			encode(ProcCall, dynamic_proc);
+			encode(PlayInstrument3, 0);
+		},
 
 		Instruction::RepeatInit => {
 			encode(StackLoad, 0);
@@ -391,7 +402,7 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, paramete
 	}
 	writeln!(out, "\n%define COMPACT_IMPLICIT_OPCODES 1")?;
 
-	writeln!(out, "\n%define NUM_INSTRUMENTS {}", program.instrument_order.len())?;
+	writeln!(out, "\n%define NUM_TRACKS {}", program.track_order.len())?;
 	writeln!(out, "\n%define NUM_PARAMETERS {}", program.parameters.len())?;
 
 	writeln!(out, "\n%include \"jingler.asm\"")?;

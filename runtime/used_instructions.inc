@@ -15,7 +15,9 @@
 %define I_BUFFER_LOAD 1
 %define I_BUFFER_STORE_AND_STEP 1
 %define I_BUFFER_ALLOC 1
-%define I_CALL_INSTRUMENT 1
+%define I_PLAY_INSTRUMENT1 1
+%define I_PLAY_INSTRUMENT2 1
+%define I_PLAY_INSTRUMENT3 1
 %define I_KILL 1
 %define I_EXP2_BODY 1
 %define I_FDONE 1

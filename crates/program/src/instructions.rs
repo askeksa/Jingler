@@ -91,7 +91,7 @@ pub enum Instruction {
 
 	// Procedures/instruments/notes
 	Call(u16, Option<ZingWidth>),
-	CallInstrument,
+	PlayInstrument(u16, u16),
 	Kill,
 	ReadNoteProperty(NoteProperty),
 
@@ -159,7 +159,7 @@ impl Instruction {
 			BufferIndex | BufferLength => (1, 1),
 
 			Call(..) => panic!("stack_change on 'call'"),
-			CallInstrument => (0, 0),
+			PlayInstrument(..) => (0, 0),
 			Kill => (0, 0),
 			ReadNoteProperty(..) => (0, 1),
 
