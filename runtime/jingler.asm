@@ -267,8 +267,10 @@ RenderSamples:
 
 	ldmxcsr		[MXCSR]
 	push		eax
-	xor			ebp, ebp
+	xor			eax, eax
 .sample:
+	push		eax
+
 %if NUM_PARAMETERS > 0
 	mov			ecx, NUM_PARAMETERS
 .paramloop:
@@ -294,18 +296,17 @@ RenderSamples:
 	loop		.paramloop
 %endif
 
-	xor			eax, eax
-	mov			[InstrumentIndex], eax
-
+	xor			ebp, ebp
 	mov			edi, StateSpace
 	mov			ebx, edi
 	call		[ProcPointers + 1*4]
 
+	pop			eax
 	cvtpd2ps	xmm0, [ebx]
-	movq		[MusicBuffer + ebp*8], xmm0
+	movq		[MusicBuffer + eax*8], xmm0
 
-	inc			ebp
-	cmp			[esp], ebp
+	inc			eax
+	cmp			[esp], eax
 	jne			.sample
 	pop			eax
 	ret
@@ -541,8 +542,7 @@ NoteOff:
 	and			dword [ebx], byte 0
 
 	snip		call_instrument, ss, I_CALL_INSTRUMENT
-	pusha
-	mov			ebp, [InstrumentIndex]
+	push		edi
 
 .noteloop:
 	; Find note headers for track
@@ -591,8 +591,8 @@ NoteOff:
 	jmp			.activeloop
 .activedone:
 
-	inc			dword [InstrumentIndex]
-	popa
+	inc			ebp
+	pop			edi
 
 	snip		kill, ss, I_KILL
 	mov			eax, [ecx]
@@ -831,10 +831,6 @@ NoteAllocPtr:
 section	bufferpt data align=4
 BufferAllocPtr:
 	dd BufferSpace
-
-section instidx bss align=4
-InstrumentIndex:
-	resd 1
 
 %if NUM_PARAMETERS > 0
 section paramst bss align=4
