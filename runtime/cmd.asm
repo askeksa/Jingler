@@ -1,6 +1,6 @@
 
-%include "../runtime/used_instructions.inc"
-%include "../runtime/jingler.asm"
+%include "../../runtime/used_instructions.inc"
+%include "../../runtime/jingler.asm"
 
 extern __imp__VirtualAlloc@16
 extern __imp__VirtualFree@12
