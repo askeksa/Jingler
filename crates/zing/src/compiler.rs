@@ -232,7 +232,7 @@ impl<'input> Compiler<'input> {
 				ParseError::InvalidToken { location } => {
 					self.report_syntax_error(&(location, 1), "Invalid token.");
 				},
-				ParseError::UnrecognizedEOF { location, expected: _ } => {
+				ParseError::UnrecognizedEof { location, expected: _ } => {
 					self.report_syntax_error(&(location, 1), "Unexpected end of file.");
 				},
 				ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {

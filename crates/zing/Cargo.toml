@@ -6,16 +6,16 @@ edition = "2021"
 build = "build.rs" # LALRPOP preprocessing
 
 [dependencies]
-regex = "1.5.4"
+regex = "1.12.2"
 
 program = { path = "../program" }
 
 [dependencies.lalrpop-util]
-version = "0.19.6"
+version = "0.22.2"
 features = ["lexer"]
 
 [build-dependencies.lalrpop]
-version = "0.19.6"
+version = "0.22.2"
 features = ["lexer"]
 
 [lib]
