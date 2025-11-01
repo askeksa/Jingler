@@ -8,6 +8,10 @@ pub struct ZingProgram {
 	pub parameters: Vec<ZingParameter>,
 	// Procedures
 	pub procedures: Vec<ZingProcedure>,
+	// Static procedure ID of the main module
+	pub main_static_proc_id: usize,
+	// Dynamic procedure ID of the main module
+	pub main_dynamic_proc_id: usize,
 	// Tracks in execution order
 	pub track_order: Vec<usize>,
 }

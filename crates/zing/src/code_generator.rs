@@ -16,10 +16,17 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 		stored_widths: HashMap<*const Expression<'ast>, Width>,
 		callees: Vec<Vec<usize>>,
-		compiler: &mut Compiler<'input>) -> Result<(Vec<ZingProcedure>, Vec<usize>), CompileError> {
+		compiler: &mut Compiler<'input>)
+-> Result<(Vec<ZingProcedure>, usize, usize, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees);
 	cg.generate_code_for_program(program)?;
-	Ok((take(&mut cg.procedures), take(&mut cg.track_order)))
+	let main_index = match names.lookup_procedure("main").unwrap().definition {
+		ProcedureDefinition::Declaration { proc_index } => proc_index,
+		_ => panic!("No main"),
+	};
+	let main_static_proc_id = cg.static_proc_id[main_index] as usize;
+	let main_dynamic_proc_id = cg.dynamic_proc_id[main_index] as usize;
+	Ok((take(&mut cg.procedures), main_static_proc_id, main_dynamic_proc_id, take(&mut cg.track_order)))
 }
 
 fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
