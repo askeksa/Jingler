@@ -247,7 +247,10 @@ impl<'input> Expression<'input> {
 				write!(f, " : ")?;
 				otherwise.fmt_with_precedence(f, Precedence::Expression)?;
 			},
-			Call { name, args, .. } => {
+			Call { channel, name, args, .. } => {
+				if let Some(channel) = channel {
+					write!(f, "{}::", channel)?;
+				}
 				write!(f, "{}", name)?;
 				fmt_parenthesized_list(f, args)?;
 			},

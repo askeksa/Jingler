@@ -27,6 +27,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	parameters: HashMap<&'ast str, TypeResult>,
 	callees: Vec<Vec<usize>>,
+	seen_midi_channels: [bool; 16],
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
@@ -65,6 +66,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			stored_widths: HashMap::new(),
 			parameters,
 			callees: vec![],
+			seen_midi_channels: [false; 16],
 			ready: HashMap::new(),
 			current_proc_index: 0,
 			current_is_main: false,
@@ -406,7 +408,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
 			Conditional { condition, then, otherwise }
 				=> self.infer_conditional(condition, then, otherwise, loc),
-			Call { name, args, .. } => self.infer_call(name, args, loc),
+			Call { channel, name, args, .. } => self.infer_call(*channel, name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
 			Property { exp, name } => self.infer_property(exp, name, loc),
@@ -503,23 +505,50 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_call(&mut self,
-			name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
+			channel: Option<usize>, name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_procedure(name.text) {
 			Some(ProcedureRef { kind, definition }) => {
+				let channel_loc = &(loc.pos_before(), name.before);
 				match kind {
 					ProcedureKind::Module => {
+						if channel.is_some() {
+							self.compiler.report_error(channel_loc,
+								"Modules can't be prefixed with a midi channel.");
+						}
 						let (current_kind, _, _) = self.signatures[self.current_proc_index];
 						if current_kind == ProcedureKind::Function {
 							self.compiler.report_error(name,
 								"Modules can't be called from functions.");
 						}
 					},
-					ProcedureKind::Function => {},
+					ProcedureKind::Function => {
+						if channel.is_some() {
+							self.compiler.report_error(channel_loc,
+								"Functions can't be prefixed with a midi channel.");
+						}
+					},
 					ProcedureKind::Instrument => {
 						if !self.current_is_main {
 							self.compiler.report_error(name,
 								"Instruments can only be called from the main module.");
+						}
+						match channel {
+							Some(channel) => {
+								if channel >= 1 && channel <= 16 {
+									if self.seen_midi_channels[channel - 1] {
+										self.compiler.report_error(channel_loc,
+											format!("Midi channel {} used multiple times.", channel));
+									}
+								} else {
+									self.compiler.report_error(channel_loc,
+										"Midi channel must be between 1 and 16.");
+								}
+							},
+							None => {
+								self.compiler.report_error(name,
+									"Instruments must be prefixed with midi channel and '::'.");
+							},
 						}
 					},
 				}

@@ -84,8 +84,6 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	proc_id: Vec<u16>,
 	// Procedure index for id
 	proc_for_id: Vec<usize>,
-	// The id of last called instrument
-	instrument_id: usize,
 	// The current procedure kind
 	current_kind: ProcedureKind,
 
@@ -130,7 +128,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			live: vec![false; proc_count],
 			proc_id: vec![],
 			proc_for_id: vec![],
-			instrument_id: 0,
 			current_kind: ProcedureKind::Module,
 
 			procedures: vec![],
@@ -530,7 +527,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(then);
 				self.find_cells(otherwise);
 			},
-			Call { name, args, .. } => {
+			Call { channel, name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
 					Some(ProcedureRef { kind, definition }) => {
 						use ProcedureKind::*;
@@ -582,8 +579,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
-							(Instrument, Declaration { proc_index, .. }) => {
-								self.track_order.push((self.proc_id[*proc_index] as usize - 2) / 2);
+							(Instrument, Declaration { .. }) => {
+								self.track_order.push(channel.unwrap() - 1);
 								for arg in args {
 									self.find_cells(arg);
 								}
@@ -770,12 +767,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
-								self.instrument_id += 2;
-								let static_proc_id = self.instrument_id + 0;
-								let dynamic_proc_id = self.instrument_id + 1;
-								self.proc_id[*proc_index] = static_proc_id as u16;
-								self.proc_for_id[static_proc_id] = *proc_index;
-								self.proc_for_id[dynamic_proc_id] = *proc_index;
+								let proc_id = self.proc_id[*proc_index];
+								let static_proc_id = proc_id + 0;
+								let dynamic_proc_id = proc_id + 1;
 
 								let (_, inputs, outputs) = &self.signatures[*proc_index];
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());

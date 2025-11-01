@@ -142,13 +142,15 @@ PrimaryExpression: Expression<'input> = {
 	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
 	<before:@L> <value:Bool> => Expression::Bool {<>},
 	<name:Id> => Expression::Variable {<>},
-	<name:Id> "(" <args:Comma<Expression>> ")" <after:@R> => Expression::Call {<>},
+	<before:@L> <channel:MidiPrefix?> <name:Id> "(" <args:Comma<Expression>> ")" <after:@R> => Expression::Call {<>},
 	<before:@L> "(" <elements:Comma<Expression>> ")" <after:@R> => Expression::Tuple {<>},
 	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
 	<exp:Box<PrimaryExpression>> "." <name:Id> => Expression::Property {<>},
 	<exp:Box<PrimaryExpression>> "." <index:Uint> <after:@R> => Expression::TupleIndex {<>},
 	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
+
+MidiPrefix: usize = <value:Uint> "::" => value as usize;
 
 Num: f64 = {
 	<pos:@L> <i:Uint> =>? {
