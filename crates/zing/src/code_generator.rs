@@ -80,10 +80,14 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 
 	/// Is the procedure reachable from main?
 	live: Vec<bool>,
-	/// Lowest id (of two for modules and instruments) for procedure
-	proc_id: Vec<u16>,
-	// Procedure index for id
-	proc_for_id: Vec<usize>,
+	/// Procedure ID for functions
+	function_proc_id: Vec<u16>,
+	/// Static procedure ID for modules and instruments
+	static_proc_id: Vec<u16>,
+	/// Dynamic procedure ID for modules and instruments
+	dynamic_proc_id: Vec<u16>,
+	// Procedure index and scope for ID
+	proc_for_id: Vec<(usize, Option<Scope>)>,
 	// The current procedure kind
 	current_kind: ProcedureKind,
 
@@ -126,7 +130,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			callees,
 
 			live: vec![false; proc_count],
-			proc_id: vec![],
+			function_proc_id: vec![0; proc_count],
+			static_proc_id: vec![0; proc_count],
+			dynamic_proc_id: vec![0; proc_count],
 			proc_for_id: vec![],
 			current_kind: ProcedureKind::Module,
 
@@ -157,12 +163,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		for &inst in code {
 			let (popped, pushed) = match inst {
 				Instruction::Call(id, ..) => {
-					let proc_index = self.proc_for_id[id as usize];
+					let (proc_index, scope) = self.proc_for_id[id as usize];
 					let (kind, inputs, outputs) = &self.signatures[proc_index];
-					let is_static = (id & 1) == 0;
 					match kind {
 						ProcedureKind::Module => {
-							if is_static {
+							if scope == Some(Scope::Static) {
 								let input_count = inputs.iter()
 									.filter(|t| t.scope == Some(Scope::Static)).count();
 								(input_count, 0)
@@ -196,7 +201,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.propagate_liveness(program.procedures.iter().position(|p| p.name.text == "main").unwrap());
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
-			let proc_index = self.proc_for_id[id];
+			let (proc_index, scope) = self.proc_for_id[id];
 			let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
 			self.current_kind = *kind;
 			let proc_kind;
@@ -204,8 +209,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			let proc_outputs;
 			match kind {
 				ProcedureKind::Module => {
-					let is_static = (id & 1) == 0;
-					if is_static {
+					if scope == Some(Scope::Static) {
 						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
 						proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
 						proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
@@ -245,8 +249,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						},
 						item_type: type_spec!(dynamic stereo number),
 					});
-					let is_static = (id & 1) == 0;
-					if is_static {
+					if scope == Some(Scope::Static) {
 						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 						self.find_cells_in_body(body)?;
@@ -313,24 +316,29 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	fn init_proc_id(&mut self, program: &Program<'ast>) {
 		// Assign ID to all procedures in this order:
 		// main, instruments, modules (except main), functions.
-		self.proc_id.resize(program.procedures.len(), 0);
-		self.proc_for_id.clear();
-
-		let mut assign_ids = |pred: &dyn Fn(ProcedureKind, &str) -> bool, step: usize| {
+		let mut assign_ids = |pred: &dyn Fn(ProcedureKind, &str) -> bool| {
 			for (proc_index, proc) in program.procedures.iter().enumerate() {
 				if self.live[proc_index] && pred(proc.kind, proc.name.text) {
-					let id = self.proc_for_id.len() as u16;
-					self.proc_id[proc_index] = id;
-					for _ in 0..step {
-						self.proc_for_id.push(proc_index);
-					}
+					let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
+						proc_id[proc_index] = self.proc_for_id.len() as u16;
+						self.proc_for_id.push((proc_index, scope));
+					};
+					match proc.kind {
+						ProcedureKind::Function => {
+							push_id(&mut self.function_proc_id, None);
+						},
+						ProcedureKind::Module | ProcedureKind::Instrument => {
+							push_id(&mut self.static_proc_id, Some(Scope::Static));
+							push_id(&mut self.dynamic_proc_id, Some(Scope::Dynamic));
+						},
+					};
 				}
 			}
 		};
-		assign_ids(&|_, name| name == "main", 2);
-		assign_ids(&|kind, _| kind == ProcedureKind::Instrument, 2);
-		assign_ids(&|kind, name| kind == ProcedureKind::Module && name != "main", 2);
-		assign_ids(&|kind, _| kind == ProcedureKind::Function, 1);
+		assign_ids(&|_, name| name == "main");
+		assign_ids(&|kind, _| kind == ProcedureKind::Instrument);
+		assign_ids(&|kind, name| kind == ProcedureKind::Module && name != "main");
+		assign_ids(&|kind, _| kind == ProcedureKind::Function);
 	}
 
 	fn generate_static_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
@@ -371,7 +379,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							self.generate(arg);
 						}
 					}
-					self.emit(code![Call(self.proc_id[proc_index], generic_width)]);
+					self.emit(code![Call(self.static_proc_id[proc_index], generic_width)]);
 				},
 				ModuleCall::For { name, count, nested_calls } => {
 					self.generate(count);
@@ -745,7 +753,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 										self.generate(arg);
 									}
 								}
-								let proc_id = self.proc_id[*proc_index] + 1;
+								let proc_id = self.dynamic_proc_id[*proc_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Function, BuiltIn { code, .. }) => {
@@ -762,14 +770,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								for arg in args {
 									self.generate(arg);
 								}
-								let proc_id = self.proc_id[*proc_index];
+								let proc_id = self.function_proc_id[*proc_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
-								let proc_id = self.proc_id[*proc_index];
-								let static_proc_id = proc_id + 0;
-								let dynamic_proc_id = proc_id + 1;
+								let static_proc_id = self.static_proc_id[*proc_index];
+								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
 
 								let (_, inputs, outputs) = &self.signatures[*proc_index];
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
@@ -777,7 +784,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									self.generate(arg);
 								}
 								self.emit(code![Constant(0), ExpandStereo]);
-								self.emit(code![PlayInstrument(static_proc_id as u16, dynamic_proc_id as u16)]);
+								self.emit(code![PlayInstrument(static_proc_id, dynamic_proc_id)]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
 							},
