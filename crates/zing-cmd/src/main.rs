@@ -51,6 +51,7 @@ struct PlayOptions {
 	dump_instructions: bool,
 	write_wav: Option<String>,
 	write_source: Option<String>,
+	jingler_asm_path: String,
 	parameter_quantization_levels: u16,
 }
 
@@ -64,6 +65,7 @@ impl Default for PlayOptions {
 			dump_instructions: false,
 			write_wav: None,
 			write_source: None,
+			jingler_asm_path: "jingler.asm".to_string(),
 			parameter_quantization_levels: 16,
 		}
 	}
@@ -100,7 +102,10 @@ fn play_file(filename: &str, options: &PlayOptions) {
 					match File::create(filename) {
 						Ok(mut file) => {
 							let parameter_quantization = 1.0 / (options.parameter_quantization_levels as f32);
-							if let Err(e) = encode_bytecodes_source(&program, options.sample_rate, parameter_quantization, &mut file) {
+							if let Err(e) = encode_bytecodes_source(
+									&program, &options.jingler_asm_path,
+									options.sample_rate, parameter_quantization,
+									&mut file) {
 								println!("Error writing output file '{}': {}", filename, e);
 							}
 						},
@@ -190,6 +195,7 @@ fn main() {
 		(@arg DUMP: -g --dump "Dump generated code.")
 		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
 		(@arg OUTPUT: -o --output +takes_value "Output source file for music.")
+		(@arg JINGLER_ASM: -j --jinglerasm +takes_value "Path to jingler.asm file.")
 		(@arg QUANTIZATION: -q --quantization +takes_value "Number of quantization levels for parameters.")
 	).get_matches();
 
@@ -230,6 +236,9 @@ fn main() {
 	}
 	if let Some(filename) = matches.value_of("OUTPUT") {
 		options.write_source = Some(filename.to_string());
+	}
+	if let Some(jingler_asm_path) = matches.value_of("JINGLER_ASM") {
+		options.jingler_asm_path = jingler_asm_path.to_string();
 	}
 	if let Some(q) = matches.value_of("QUANTIZATION") {
 		match q.parse::<u16>() {

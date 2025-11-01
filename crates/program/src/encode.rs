@@ -391,7 +391,10 @@ fn check_opcode_space(opcode_capacity: &Vec<u16>) -> Result<()> {
 	Ok(())
 }
 
-pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, parameter_quantization: f32, out: &mut impl std::io::Write) -> Result<()> {
+pub fn encode_bytecodes_source(
+		program: &ZingProgram, jingler_asm_path: &String,
+		sample_rate: f32, parameter_quantization: f32,
+		out: &mut impl std::io::Write) -> Result<()> {
 	if (program.main_static_proc_id, program.main_dynamic_proc_id) != (0, 1) {
 		return Err(anyhow!("Procedures for the main module must be first."));
 	}
@@ -409,7 +412,7 @@ pub fn encode_bytecodes_source(program: &ZingProgram, sample_rate: f32, paramete
 	writeln!(out, "\n%define NUM_TRACKS {}", program.track_order.len())?;
 	writeln!(out, "\n%define NUM_PARAMETERS {}", program.parameters.len())?;
 
-	writeln!(out, "\n%include \"jingler.asm\"")?;
+	writeln!(out, "\n%include \"{}\"", jingler_asm_path)?;
 
 	writeln!(out, "\nsection musdat data align=1")?;
 	writeln!(out, "\n%define b(n) _snip_id_%+n")?;
