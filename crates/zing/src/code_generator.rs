@@ -274,6 +274,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Dynamic };
 						self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 						self.generate_dynamic_body(body)?;
+						// Leave the inputs (including the accumulator) and the output on the stack.
+						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
+						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
+						self.adjust_stack(&stack_adjust, self.stack_height);
 						// Run autokill code
 						self.emit(code![
 							Constant(0x46000000), // Counter threshold
@@ -283,15 +287,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							Constant(0), Eq, // True when small
 							CellPush, And, // Preserve counter when small
 							Constant(0x3F800000), Add, // Increment counter
-							StackLoad(0), CellPop, // Update counter
 							IfGreaterEq, // Has counter reached threshold?
 							Kill, // Kill when counter reaches threshold
-							EndIf, Pop, Pop
+							EndIf,
+							CellPop, // Update counter
+							Pop // Pop threshold
 						]);
-						// Leave the inputs (including the accumulator) and the output on the stack.
-						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
-						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
-						self.adjust_stack(&stack_adjust, self.stack_height);
 						// Add the output to the accumulator.
 						self.emit(code![Add]);
 					}
