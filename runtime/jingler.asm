@@ -256,7 +256,7 @@ RunStaticCode:
 	ldmxcsr		[MXCSR]
 	mov			edi, StateSpace
 	mov			ebx, edi
-	call		[ProcPointers + 0*4]
+	call		[ProcPointers + MAIN_STATIC_PROC_ID*4]
 	ret
 
 section render text align=1
@@ -299,7 +299,7 @@ RenderSamples:
 	xor			ebp, ebp
 	mov			edi, StateSpace
 	mov			ebx, edi
-	call		[ProcPointers + 1*4]
+	call		[ProcPointers + MAIN_DYNAMIC_PROC_ID*4]
 
 	pop			eax
 	cvtpd2ps	xmm0, [ebx]

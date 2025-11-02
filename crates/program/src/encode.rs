@@ -395,10 +395,6 @@ pub fn encode_bytecodes_source(
 		program: &ZingProgram, jingler_asm_path: &String,
 		sample_rate: f32, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
-	if (program.main_static_proc_id, program.main_dynamic_proc_id) != (0, 1) {
-		return Err(anyhow!("Procedures for the main module must be first."));
-	}
-
 	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
 	let (constants, constant_map) = build_constant_list(program, &constant_set);
 	check_opcode_space(&opcode_capacity)?;
@@ -408,6 +404,9 @@ pub fn encode_bytecodes_source(
 		writeln!(out, "%define I_{} {}", name.to_uppercase(), opcode_capacity[i])?;
 	}
 	writeln!(out, "\n%define COMPACT_IMPLICIT_OPCODES 1")?;
+
+	writeln!(out, "\n%define MAIN_STATIC_PROC_ID {}", program.main_static_proc_id)?;
+	writeln!(out, "%define MAIN_DYNAMIC_PROC_ID {}", program.main_dynamic_proc_id)?;
 
 	writeln!(out, "\n%define NUM_TRACKS {}", program.track_order.len())?;
 	writeln!(out, "\n%define NUM_PARAMETERS {}", program.parameters.len())?;
