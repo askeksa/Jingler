@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use program::instructions::Instruction;
 
 use crate::ast::*;
-use crate::builtin::{BUILTIN_FUNCTIONS, BUILTIN_MODULES, REPETITION_COMBINATORS};
+use crate::builtin::*;
 use crate::compiler::{Compiler, CompileError, Location, PosRange};
 
 /// Mapping of names in the program to their definitions.
@@ -46,6 +46,7 @@ pub enum ProcedureDefinition {
 		sig: &'static Signature<'static>,
 		code: &'static [Instruction],
 	},
+	Precompiled { proc: &'static PrecompiledProcedure },
 	Declaration { proc_index: usize },
 }
 
@@ -84,6 +85,18 @@ impl<'ast> Names<'ast> {
 			names.procedures.insert(name, ProcedureRef {
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::BuiltIn { sig, code: &[] },
+			});
+		}
+		for proc in PRECOMPILED_FUNCTIONS {
+			names.procedures.insert(proc.0, ProcedureRef {
+				kind: ProcedureKind::Function,
+				definition: ProcedureDefinition::Precompiled { proc },
+			});
+		}
+		for proc in PRECOMPILED_MODULES {
+			names.procedures.insert(proc.0, ProcedureRef {
+				kind: ProcedureKind::Module,
+				definition: ProcedureDefinition::Precompiled { proc },
 			});
 		}
 		for &(name, neutral, code) in REPETITION_COMBINATORS {
@@ -144,7 +157,7 @@ impl<'ast> Names<'ast> {
 			name: &Id<'ast>, proc_ref: ProcedureRef) {
 		self.procedures.entry(name.text).and_modify(|existing| {
 			match existing.definition {
-				ProcedureDefinition::BuiltIn { .. } => {
+				ProcedureDefinition::BuiltIn { .. } | ProcedureDefinition::Precompiled { .. } => {
 					compiler.report_error(name,
 						format!("The {} '{}' has the same name as a built-in {}.",
 							proc_ref.kind, name, existing.kind));

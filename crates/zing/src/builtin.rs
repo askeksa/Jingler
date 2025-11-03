@@ -57,7 +57,11 @@ macro_rules! sig {
 	};
 }
 
-pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Instruction])] = &[
+pub type BuiltinFunction = (&'static str, Signature<'static>, &'static [Instruction]);
+pub type BuiltinModule = (&'static str, Signature<'static>);
+pub type PrecompiledProcedure = (&'static str, Signature<'static>, &'static [&'static [Instruction]]);
+
+pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 	("atan2",      sig!([mono, mono] [mono]),          code![Atan2]),
 	("ceil",       sig!([generic] [generic]),          code![Ceil]),
 	("cos",        sig!([mono] [mono]),                code![Cos]),
@@ -79,10 +83,16 @@ pub static BUILTIN_FUNCTIONS: &[(&'static str, Signature<'static>, &'static [Ins
 	("velocity",   sig!([] [mono]),                    code![ReadNoteProperty(Velocity)]),
 ];
 
-pub static BUILTIN_MODULES: &[(&'static str, Signature<'static>)] = &[
+pub static BUILTIN_MODULES: &[BuiltinModule] = &[
 	("cell",     sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
 	("delay",    sig!([static mono number, dynamic generic typeless] [dynamic generic typeless])),
 	("dyndelay", sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
+];
+
+pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
+];
+
+pub static PRECOMPILED_MODULES: &[PrecompiledProcedure] = &[
 ];
 
 pub static REPETITION_COMBINATORS: &[(&'static str, f32, &'static [Instruction])] = &[

@@ -212,9 +212,9 @@ impl<'input> Compiler<'input> {
 		let processed_input = Rc::clone(&self.processed_input);
 		let mut program = self.parse(&processed_input)?;
 		let names = Names::find(&program, self)?;
-		let (signatures, stored_widths, callees) = infer_types(&mut program, &names, self)?;
+		let (signatures, stored_widths, callees, precompiled_callees) = infer_types(&mut program, &names, self)?;
 		let (procedures, main_static_proc_id, main_dynamic_proc_id, track_order)
-			= generate_code(&program, &names, signatures, stored_widths, callees, self)?;
+			= generate_code(&program, &names, signatures, stored_widths, callees, precompiled_callees, self)?;
 		let parameters = program.parameters.iter().map(|p| {
 			ZingParameter {
 				name: p.name.to_string(),

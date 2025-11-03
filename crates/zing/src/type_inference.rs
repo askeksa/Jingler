@@ -12,11 +12,16 @@ pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
-		-> Result<(Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>, HashMap<*const Expression<'ast>, Width>, Vec<Vec<usize>>), CompileError> {
+		-> Result<(
+			Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+			HashMap<*const Expression<'ast>, Width>,
+			Vec<Vec<usize>>,
+			Vec<Vec<*const PrecompiledProcedure>>,
+		), CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
 	type_inferrer.infer_bodies(program)?;
-	Ok((type_inferrer.signatures, type_inferrer.stored_widths, type_inferrer.callees))
+	Ok((type_inferrer.signatures, type_inferrer.stored_widths, type_inferrer.callees, type_inferrer.precompiled_callees))
 }
 
 
@@ -27,6 +32,7 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	parameters: HashMap<&'ast str, TypeResult>,
 	callees: Vec<Vec<usize>>,
+	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 	seen_midi_channels: [bool; 16],
 
 	// Procedure-local state
@@ -66,6 +72,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			stored_widths: HashMap::new(),
 			parameters,
 			callees: vec![],
+			precompiled_callees: vec![],
 			seen_midi_channels: [false; 16],
 			ready: HashMap::new(),
 			current_proc_index: 0,
@@ -173,6 +180,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
 			self.current_proc_index = proc_index;
 			self.callees.push(vec![]);
+			self.precompiled_callees.push(vec![]);
 			self.infer_body(proc)?;
 			self.check_outputs(proc)?;
 		}
@@ -555,6 +563,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				match definition {
 					ProcedureDefinition::BuiltIn { sig, .. } => {
 						self.check_call_signature(sig, args, loc)
+					}
+					ProcedureDefinition::Precompiled { proc } => {
+						self.precompiled_callees[self.current_proc_index].push(*proc);
+						self.check_call_signature(&proc.1, args, loc)
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
 						self.callees[self.current_proc_index].push(*proc_index);

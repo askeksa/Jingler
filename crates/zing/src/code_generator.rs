@@ -1,5 +1,5 @@
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem::{replace, take};
 
 use program::program::*;
@@ -16,9 +16,10 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 		stored_widths: HashMap<*const Expression<'ast>, Width>,
 		callees: Vec<Vec<usize>>,
+		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 		compiler: &mut Compiler<'input>)
 -> Result<(Vec<ZingProcedure>, usize, usize, Vec<usize>), CompileError> {
-	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees);
+	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
 	cg.generate_code_for_program(program)?;
 	let main_index = match names.lookup_procedure("main").unwrap().definition {
 		ProcedureDefinition::Declaration { proc_index } => proc_index,
@@ -46,7 +47,8 @@ enum ModuleCall<'ast> {
 		width: ZingWidth,
 	},
 	Call {
-		proc_index: usize,
+		inputs: Vec<Type>,
+		static_proc_id: u16,
 		generic_width: Option<ZingWidth>,
 		args: &'ast Vec<Expression<'ast>>,
 	},
@@ -84,18 +86,23 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	callees: Vec<Vec<usize>>,
+	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 
 	/// Is the procedure reachable from main?
 	live: Vec<bool>,
+	/// Is the precompiled procedure reachable from main?
+	live_precompiled: HashSet<*const PrecompiledProcedure>,
 	/// Procedure ID for functions
 	function_proc_id: Vec<u16>,
 	/// Static procedure ID for modules and instruments
 	static_proc_id: Vec<u16>,
 	/// Dynamic procedure ID for modules and instruments
 	dynamic_proc_id: Vec<u16>,
-	// Procedure index and scope for ID
-	proc_for_id: Vec<(usize, Option<Scope>)>,
-	// The current procedure kind
+	/// Procedure IDs for precompiled procedures
+	precompiled_proc_id: HashMap<*const PrecompiledProcedure, Vec<u16>>,
+	/// Procedure and scope for ID
+	proc_for_id: Vec<(ProcedureRef, Option<Scope>)>,
+	/// The current procedure kind
 	current_kind: ProcedureKind,
 
 	procedures: Vec<ZingProcedure>,
@@ -126,7 +133,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			compiler: &'comp mut Compiler<'input>,
 			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
 			stored_widths: HashMap<*const Expression<'ast>, Width>,
-			callees: Vec<Vec<usize>>)
+			callees: Vec<Vec<usize>>,
+			precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>)
 			-> CodeGenerator<'ast, 'input, 'comp> {
 		let proc_count = callees.len();
 		CodeGenerator {
@@ -135,11 +143,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			signatures,
 			stored_widths,
 			callees,
+			precompiled_callees,
 
 			live: vec![false; proc_count],
+			live_precompiled: HashSet::new(),
 			function_proc_id: vec![0; proc_count],
 			static_proc_id: vec![0; proc_count],
 			dynamic_proc_id: vec![0; proc_count],
+			precompiled_proc_id: HashMap::new(),
 			proc_for_id: vec![],
 			current_kind: ProcedureKind::Module,
 
@@ -170,9 +181,20 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		for &inst in code {
 			let (popped, pushed) = match inst {
 				Instruction::Call(id, ..) => {
-					let (proc_index, scope) = self.proc_for_id[id as usize];
-					let (kind, inputs, outputs) = &self.signatures[proc_index];
-					match kind {
+					let (ref proc, scope) = self.proc_for_id[id as usize];
+					let (inputs, outputs) = match &proc.definition {
+						ProcedureDefinition::Declaration { proc_index } => {
+							let (_, inputs, outputs) = &self.signatures[*proc_index];
+							(&inputs[..], &outputs[..])
+						},
+						ProcedureDefinition::Precompiled { proc } => {
+							(proc.1.inputs, proc.1.outputs)
+						},
+						ProcedureDefinition::BuiltIn { .. } => {
+							panic!("Call of built-in procedure");
+						},
+					};
+					match proc.kind {
 						ProcedureKind::Module => {
 							if scope == Some(Scope::Static) {
 								let input_count = inputs.iter()
@@ -208,108 +230,138 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.propagate_liveness(program.procedures.iter().position(|p| p.name.text == "main").unwrap());
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
-			let (proc_index, scope) = self.proc_for_id[id];
-			let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
-			self.current_kind = *kind;
-			let proc_kind;
-			let proc_inputs;
-			let proc_outputs;
-			match kind {
-				ProcedureKind::Module => {
-					if scope == Some(Scope::Static) {
-						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
-						proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
-						proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
-						self.initialize_stack(inputs, Some(Scope::Static), false);
-						self.find_cells_in_body(body)?;
-						self.mark_implicit_cells_from_outputs(outputs);
-						self.initialize_stack(inputs, Some(Scope::Static), false);
-						self.generate_static_body(body)?;
-						self.adjust_stack(&[], self.stack_height);
-					} else {
-						proc_kind = ZingProcedureKind::Module { scope: ZingScope::Dynamic };
-						proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
-						proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
-						self.initialize_stack(inputs, Some(Scope::Dynamic), false);
-						self.generate_dynamic_body(body)?;
-						let stack_adjust = self.stack_adjust_from_outputs(outputs);
-						self.adjust_stack(&stack_adjust[..], self.stack_height);
+			let (ref proc, scope) = self.proc_for_id[id];
+			let proc = match proc.definition {
+				ProcedureDefinition::Declaration { proc_index } => {
+					self.generate_code_for_procedure(program, proc_index, scope)?
+				},
+				ProcedureDefinition::Precompiled { proc } => {
+					let (kind, index) = match scope {
+						None => (ZingProcedureKind::Function, 0),
+						Some(Scope::Static) => (ZingProcedureKind::Module { scope: ZingScope::Static }, 0),
+						Some(Scope::Dynamic) => (ZingProcedureKind::Module { scope: ZingScope::Dynamic }, 1),
+					};
+					ZingProcedure {
+						name: proc.0.to_string(),
+						kind,
+						inputs: self.make_type_list(proc.1.inputs.iter().copied(), scope),
+						outputs: self.make_type_list(proc.1.outputs.iter().copied(), scope),
+						code: proc.2[index].to_vec()
 					}
 				},
-				ProcedureKind::Function => {
-					proc_kind = ZingProcedureKind::Function;
-					proc_inputs = self.make_proc_type_list(inputs, None);
-					proc_outputs = self.make_proc_type_list(outputs, None);
-					self.initialize_stack(inputs, None, false);
-					for statement in body {
-						self.generate_code_for_statement(statement)?;
-					}
+				ProcedureDefinition::BuiltIn { .. } => {
+					panic!("Code generation for built-in procedure");
+				},
+			};
+			self.procedures.push(proc);
+		}
+		self.compiler.check_errors()
+	}
+
+	fn generate_code_for_procedure(&mut self,
+		program: &'ast Program<'ast>,
+		proc_index: usize,
+		scope: Option<Scope>,
+	) -> Result<ZingProcedure, CompileError> {
+		let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
+		self.current_kind = *kind;
+		let proc_kind;
+		let proc_inputs;
+		let proc_outputs;
+		match kind {
+			ProcedureKind::Module => {
+				if scope == Some(Scope::Static) {
+					proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
+					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
+					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
+					self.initialize_stack(inputs, Some(Scope::Static), false);
+					self.find_cells_in_body(body)?;
+					self.mark_implicit_cells_from_outputs(outputs);
+					self.initialize_stack(inputs, Some(Scope::Static), false);
+					self.generate_static_body(body)?;
+					self.adjust_stack(&[], self.stack_height);
+				} else {
+					proc_kind = ZingProcedureKind::Module { scope: ZingScope::Dynamic };
+					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
+					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
+					self.initialize_stack(inputs, Some(Scope::Dynamic), false);
+					self.generate_dynamic_body(body)?;
 					let stack_adjust = self.stack_adjust_from_outputs(outputs);
 					self.adjust_stack(&stack_adjust[..], self.stack_height);
-				},
-				ProcedureKind::Instrument => {
-					// Extra implicit input for accumulating instrument outputs.
-					let mut real_inputs = inputs.clone();
-					real_inputs.items.push(PatternItem {
-						name: Id {
-							text: "#acc#", before: outputs.before,
-						},
-						item_type: type_spec!(dynamic stereo number),
-					});
-					if scope == Some(Scope::Static) {
-						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
-						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
-						self.find_cells_in_body(body)?;
-						self.mark_implicit_cells_from_outputs(outputs);
-						self.initialize_stack(&real_inputs, Some(Scope::Static), true);
-						self.generate_static_body(body)?;
-						// Init autokill
-						self.emit(code![
-							Constant(0),
-							CellInit
-						]);
-						// Leave only the inputs (including the accumulator) on the stack.
-						self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
-					} else {
-						proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Dynamic };
-						self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
-						self.generate_dynamic_body(body)?;
-						// Leave the inputs (including the accumulator) and the output on the stack.
-						let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
-						stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
-						self.adjust_stack(&stack_adjust, self.stack_height);
-						// Run autokill code
-						self.emit(code![
-							Constant(0x46000000), // Counter threshold
-							StackLoad(1), // Copy of output
-							Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
-							SplitRL, Or, // 0 when both channels small
-							Constant(0), Eq, // True when small
-							CellPush, And, // Preserve counter when small
-							Constant(0x3F800000), Add, // Increment counter
-							IfGreaterEq, // Has counter reached threshold?
-							Kill, // Kill when counter reaches threshold
-							EndIf,
-							CellPop, // Update counter
-							Pop // Pop threshold
-						]);
-						// Add the output to the accumulator.
-						self.emit(code![Add]);
-					}
-					proc_inputs = self.make_proc_type_list(inputs, None);
-					proc_outputs = self.make_proc_type_list(inputs, None);
-				},
-			}
-			self.procedures.push(ZingProcedure {
-				name: name.text.into(),
-				kind: proc_kind,
-				inputs: proc_inputs,
-				outputs: proc_outputs,
-				code: take(&mut self.code),
-			});
+				}
+			},
+			ProcedureKind::Function => {
+				proc_kind = ZingProcedureKind::Function;
+				proc_inputs = self.make_proc_type_list(inputs, None);
+				proc_outputs = self.make_proc_type_list(outputs, None);
+				self.initialize_stack(inputs, None, false);
+				for statement in body {
+					self.generate_code_for_statement(statement)?;
+				}
+				let stack_adjust = self.stack_adjust_from_outputs(outputs);
+				self.adjust_stack(&stack_adjust[..], self.stack_height);
+			},
+			ProcedureKind::Instrument => {
+				// Extra implicit input for accumulating instrument outputs.
+				let mut real_inputs = inputs.clone();
+				real_inputs.items.push(PatternItem {
+					name: Id {
+						text: "#acc#", before: outputs.before,
+					},
+					item_type: type_spec!(dynamic stereo number),
+				});
+				if scope == Some(Scope::Static) {
+					proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
+					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
+					self.find_cells_in_body(body)?;
+					self.mark_implicit_cells_from_outputs(outputs);
+					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
+					self.generate_static_body(body)?;
+					// Init autokill
+					self.emit(code![
+						Constant(0),
+						CellInit
+					]);
+					// Leave only the inputs (including the accumulator) on the stack.
+					self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
+				} else {
+					proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Dynamic };
+					self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
+					self.generate_dynamic_body(body)?;
+					// Leave the inputs (including the accumulator) and the output on the stack.
+					let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
+					stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
+					self.adjust_stack(&stack_adjust, self.stack_height);
+					// Run autokill code
+					self.emit(code![
+						Constant(0x46000000), // Counter threshold
+						StackLoad(1), // Copy of output
+						Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
+						SplitRL, Or, // 0 when both channels small
+						Constant(0), Eq, // True when small
+						CellPush, And, // Preserve counter when small
+						Constant(0x3F800000), Add, // Increment counter
+						IfGreaterEq, // Has counter reached threshold?
+						Kill, // Kill when counter reaches threshold
+						EndIf,
+						CellPop, // Update counter
+						Pop // Pop threshold
+					]);
+					// Add the output to the accumulator.
+					self.emit(code![Add]);
+				}
+				proc_inputs = self.make_proc_type_list(inputs, None);
+				proc_outputs = self.make_proc_type_list(inputs, None);
+			},
 		}
 
-		self.compiler.check_errors()
+		Ok(ZingProcedure {
+			name: name.text.into(),
+			kind: proc_kind,
+			inputs: proc_inputs,
+			outputs: proc_outputs,
+			code: take(&mut self.code),
+		})
 	}
 
 	fn propagate_liveness(&mut self, proc_index: usize) {
@@ -318,35 +370,64 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			for &callee in &self.callees[proc_index].clone() {
 				self.propagate_liveness(callee);
 			}
+			for precompiled_callee in &self.precompiled_callees[proc_index] {
+				self.live_precompiled.insert(*precompiled_callee);
+			}
+		}
+	}
+
+	fn assign_ids(&mut self, program: &Program<'ast>, pred: &dyn Fn(ProcedureKind, &str) -> bool) {
+		for (proc_index, proc) in program.procedures.iter().enumerate() {
+			if self.live[proc_index] && pred(proc.kind, proc.name.text) {
+				let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
+					proc_id[proc_index] = self.proc_for_id.len() as u16;
+					let proc = ProcedureRef {
+						kind: proc.kind,
+						definition: ProcedureDefinition::Declaration { proc_index }
+					};
+					self.proc_for_id.push((proc, scope));
+				};
+				match proc.kind {
+					ProcedureKind::Function => {
+						push_id(&mut self.function_proc_id, None);
+					},
+					ProcedureKind::Module | ProcedureKind::Instrument => {
+						push_id(&mut self.static_proc_id, Some(Scope::Static));
+						push_id(&mut self.dynamic_proc_id, Some(Scope::Dynamic));
+					},
+				};
+			}
+		}
+	}
+
+	fn assign_precompiled_ids(&mut self,
+		procs: &'static [PrecompiledProcedure],
+		kind: ProcedureKind,
+		scopes: &[Option<Scope>]
+	) {
+		for proc in procs {
+			if self.live_precompiled.contains(&(proc as *const PrecompiledProcedure)) {
+				for &scope in scopes {
+					self.precompiled_proc_id.entry(proc).or_default().push(self.proc_for_id.len() as u16);
+					let proc = ProcedureRef {
+						kind: kind,
+						definition: ProcedureDefinition::Precompiled { proc }
+					};
+					self.proc_for_id.push((proc, scope));
+				};
+			}
 		}
 	}
 
 	fn init_proc_id(&mut self, program: &Program<'ast>) {
 		// Assign ID to all procedures in this order:
 		// main, instruments, modules (except main), functions.
-		let mut assign_ids = |pred: &dyn Fn(ProcedureKind, &str) -> bool| {
-			for (proc_index, proc) in program.procedures.iter().enumerate() {
-				if self.live[proc_index] && pred(proc.kind, proc.name.text) {
-					let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
-						proc_id[proc_index] = self.proc_for_id.len() as u16;
-						self.proc_for_id.push((proc_index, scope));
-					};
-					match proc.kind {
-						ProcedureKind::Function => {
-							push_id(&mut self.function_proc_id, None);
-						},
-						ProcedureKind::Module | ProcedureKind::Instrument => {
-							push_id(&mut self.static_proc_id, Some(Scope::Static));
-							push_id(&mut self.dynamic_proc_id, Some(Scope::Dynamic));
-						},
-					};
-				}
-			}
-		};
-		assign_ids(&|_, name| name == "main");
-		assign_ids(&|kind, _| kind == ProcedureKind::Instrument);
-		assign_ids(&|kind, name| kind == ProcedureKind::Module && name != "main");
-		assign_ids(&|kind, _| kind == ProcedureKind::Function);
+		self.assign_ids(program, &|_, name| name == "main");
+		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Instrument);
+		self.assign_precompiled_ids(PRECOMPILED_MODULES, ProcedureKind::Module, &[Some(Scope::Static), Some(Scope::Dynamic)]);
+		self.assign_ids(program, &|kind, name| kind == ProcedureKind::Module && name != "main");
+		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, ProcedureKind::Function, &[None]);
+		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Function);
 	}
 
 	fn generate_static_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
@@ -380,14 +461,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						},
 					}
 				},
-				&ModuleCall::Call { proc_index, generic_width, args } => {
-					let (_, inputs, _) = &self.signatures[proc_index];
+				&ModuleCall::Call { ref inputs, static_proc_id, generic_width, args } => {
 					for (input_type, arg) in inputs.clone().iter().zip(args) {
 						if input_type.scope == Some(Scope::Static) {
 							self.generate(arg);
 						}
 					}
-					self.emit(code![Call(self.static_proc_id[proc_index], generic_width)]);
+					self.emit(code![Call(static_proc_id, generic_width)]);
 				},
 				ModuleCall::For { name, count, nested_calls } => {
 					self.generate(count);
@@ -468,8 +548,12 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn make_proc_type_list(&self, types: &Pattern, scope: Option<Scope>) -> Vec<ZingType> {
+		self.make_type_list(types.items.iter().map(|item| item.item_type), scope)
+	}
+
+	fn make_type_list(&self, types: impl IntoIterator<Item = Type>, scope: Option<Scope>) -> Vec<ZingType> {
 		let mut result = vec![];
-		for PatternItem { item_type, .. } in &types.items {
+		for item_type in types {
 			if scope.is_none() || item_type.scope == scope {
 				result.push(ZingType {
 					width: item_type.width.unwrap().into(),
@@ -571,36 +655,47 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									_ => panic!("Unknown built-in module"),
 								}
 							},
+							(Module, Precompiled { proc }) => {
+								let inputs = proc.1.inputs;
+								for (arg, input_type) in args.iter().zip(inputs) {
+									if input_type.scope == Some(Scope::Dynamic) {
+										self.find_cells(arg);
+									}
+								}
+								let key = *proc as *const PrecompiledProcedure;
+								self.module_call.push(ModuleCall::Call {
+									inputs: inputs.to_vec(),
+									static_proc_id: self.precompiled_proc_id[&key][0],
+									generic_width: self.retrieve_width(exp),
+									args,
+								});
+							},
 							(Module, Declaration { proc_index }) => {
-								let (_, inputs, _) = &self.signatures[*proc_index];
-								for (arg, input_type) in args.iter().zip(inputs.clone()) {
+								let inputs = self.signatures[*proc_index].1.clone();
+								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.find_cells(arg);
 									}
 								}
 								self.module_call.push(ModuleCall::Call {
-									proc_index: *proc_index,
+									inputs: inputs,
+									static_proc_id: self.static_proc_id[*proc_index],
 									generic_width: self.retrieve_width(exp),
 									args,
 								});
 							},
-							(Function, BuiltIn { .. }) => {
+							(Function, _) => {
 								for arg in args {
 									self.find_cells(arg);
 								}
 							},
-							(Function, Declaration { .. }) => {
-								for arg in args {
-									self.find_cells(arg);
-								}
-							},
-							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { .. }) => {
 								self.track_order.push(channel.unwrap() - 1);
 								for arg in args {
 									self.find_cells(arg);
 								}
 							},
+							(Instrument, _) => panic!("Built-in instrument"),
 						}
 					},
 					None => panic!("Procedure not found"),
@@ -754,9 +849,20 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									_ => panic!("Unknown built-in module"),
 								}
 							},
+							(Module, Precompiled { proc }) => {
+								let inputs = proc.1.inputs;
+								for (arg, input_type) in args.iter().zip(inputs) {
+									if input_type.scope == Some(Scope::Dynamic) {
+										self.generate(arg);
+									}
+								}
+								let key = *proc as *const PrecompiledProcedure;
+								let proc_id = self.precompiled_proc_id[&key][1];
+								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+							},
 							(Module, Declaration { proc_index }) => {
-								let (_, inputs, _) = &self.signatures[*proc_index];
-								for (arg, input_type) in args.iter().zip(inputs.clone()) {
+								let inputs = self.signatures[*proc_index].1.clone();
+								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
 									}
@@ -774,6 +880,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 								self.emit(code);
 							},
+							(Function, Precompiled { proc }) => {
+								for arg in args {
+									self.generate(arg);
+								}
+								let key = *proc as *const PrecompiledProcedure;
+								let proc_id = self.precompiled_proc_id[&key][0];
+								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+							},
 							(Function, Declaration { proc_index }) => {
 								for arg in args {
 									self.generate(arg);
@@ -781,7 +895,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let proc_id = self.function_proc_id[*proc_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
-							(Instrument, BuiltIn { .. }) => panic!("Built-in instrument"),
 							(Instrument, Declaration { proc_index }) => {
 								let static_proc_id = self.static_proc_id[*proc_index];
 								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
@@ -796,6 +909,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
 							},
+							(Instrument, _) => panic!("Built-in instrument"),
 						}
 					},
 					None => panic!("Procedure not found"),
