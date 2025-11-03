@@ -99,7 +99,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	/// Dynamic procedure ID for modules and instruments
 	dynamic_proc_id: Vec<u16>,
 	/// Procedure IDs for precompiled procedures
-	precompiled_proc_id: HashMap<*const PrecompiledProcedure, Vec<u16>>,
+	precompiled_proc_ids: HashMap<*const PrecompiledProcedure, Vec<u16>>,
 	/// Procedure and scope for ID
 	proc_for_id: Vec<(ProcedureRef, Option<Scope>)>,
 	/// The current procedure kind
@@ -150,7 +150,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			function_proc_id: vec![0; proc_count],
 			static_proc_id: vec![0; proc_count],
 			dynamic_proc_id: vec![0; proc_count],
-			precompiled_proc_id: HashMap::new(),
+			precompiled_proc_ids: HashMap::new(),
 			proc_for_id: vec![],
 			current_kind: ProcedureKind::Module,
 
@@ -227,7 +227,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	pub fn generate_code_for_program(&mut self, program: &'ast Program<'ast>) -> Result<(), CompileError> {
+		// Compute liveness
 		self.propagate_liveness(program.procedures.iter().position(|p| p.name.text == "main").unwrap());
+		let autokill_key = self.lookup_precompiled("$autokill");
+		self.live_precompiled.insert(autokill_key);
+
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
 			let (ref proc, scope) = self.proc_for_id[id];
@@ -310,6 +314,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					},
 					item_type: type_spec!(dynamic stereo number),
 				});
+				let autokill_key = self.lookup_precompiled("$autokill");
 				if scope == Some(Scope::Static) {
 					proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
@@ -318,10 +323,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 					self.generate_static_body(body)?;
 					// Init autokill
-					self.emit(code![
-						Constant(0),
-						CellInit
-					]);
+					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][0], None)]);
 					// Leave only the inputs (including the accumulator) on the stack.
 					self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 				} else {
@@ -333,22 +335,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
 					self.adjust_stack(&stack_adjust, self.stack_height);
 					// Run autokill code
-					self.emit(code![
-						Constant(0x46000000), // Counter threshold
-						StackLoad(1), // Copy of output
-						Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
-						SplitRL, Or, // 0 when both channels small
-						Constant(0), Eq, // True when small
-						CellPush, And, // Preserve counter when small
-						Constant(0x3F800000), Add, // Increment counter
-						IfGreaterEq, // Has counter reached threshold?
-						Kill, // Kill when counter reaches threshold
-						EndIf,
-						CellPop, // Update counter
-						Pop // Pop threshold
-					]);
-					// Add the output to the accumulator.
-					self.emit(code![Add]);
+					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][1], None)]);
 				}
 				proc_inputs = self.make_proc_type_list(inputs, None);
 				proc_outputs = self.make_proc_type_list(inputs, None);
@@ -408,7 +395,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		for proc in procs {
 			if self.live_precompiled.contains(&(proc as *const PrecompiledProcedure)) {
 				for &scope in scopes {
-					self.precompiled_proc_id.entry(proc).or_default().push(self.proc_for_id.len() as u16);
+					self.precompiled_proc_ids.entry(proc).or_default().push(self.proc_for_id.len() as u16);
 					let proc = ProcedureRef {
 						kind: kind,
 						definition: ProcedureDefinition::Precompiled { proc }
@@ -428,6 +415,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		self.assign_ids(program, &|kind, name| kind == ProcedureKind::Module && name != "main");
 		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, ProcedureKind::Function, &[None]);
 		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Function);
+	}
+
+	fn lookup_precompiled(&mut self, name: &str) -> *const PrecompiledProcedure {
+		let proc = self.names.lookup_procedure(name);
+		let Some(ProcedureRef { definition: ProcedureDefinition::Precompiled { proc }, .. }) = proc else {
+			panic!("Precompiled procedure not found: {}", name);
+		};
+		*proc as *const PrecompiledProcedure
 	}
 
 	fn generate_static_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
@@ -665,7 +660,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let key = *proc as *const PrecompiledProcedure;
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs.to_vec(),
-									static_proc_id: self.precompiled_proc_id[&key][0],
+									static_proc_id: self.precompiled_proc_ids[&key][0],
 									generic_width: self.retrieve_width(exp),
 									args,
 								});
@@ -857,7 +852,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									}
 								}
 								let key = *proc as *const PrecompiledProcedure;
-								let proc_id = self.precompiled_proc_id[&key][1];
+								let proc_id = self.precompiled_proc_ids[&key][1];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Module, Declaration { proc_index }) => {
@@ -885,7 +880,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									self.generate(arg);
 								}
 								let key = *proc as *const PrecompiledProcedure;
-								let proc_id = self.precompiled_proc_id[&key][0];
+								let proc_id = self.precompiled_proc_ids[&key][0];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Function, Declaration { proc_index }) => {
