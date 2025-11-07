@@ -88,13 +88,13 @@ impl<'ast> Names<'ast> {
 			});
 		}
 		for proc in PRECOMPILED_FUNCTIONS {
-			names.procedures.insert(proc.0, ProcedureRef {
+			names.procedures.insert(proc.name(), ProcedureRef {
 				kind: ProcedureKind::Function,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});
 		}
 		for proc in PRECOMPILED_MODULES {
-			names.procedures.insert(proc.0, ProcedureRef {
+			names.procedures.insert(proc.name(), ProcedureRef {
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});

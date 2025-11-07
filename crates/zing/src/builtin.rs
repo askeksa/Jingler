@@ -61,6 +61,21 @@ pub type BuiltinFunction = (&'static str, Signature<'static>, &'static [Instruct
 pub type BuiltinModule = (&'static str, Signature<'static>);
 pub type PrecompiledProcedure = (&'static str, Signature<'static>, &'static [&'static [Instruction]]);
 
+pub trait PrecompiledProcedureTrait {
+	fn name(&self) -> &'static str;
+	fn signature(&self) -> &Signature<'static>;
+	fn instructions(&self) -> &'static [&'static [Instruction]];
+
+	fn inputs(&self) -> &'static [Type] { self.signature().inputs }
+	fn outputs(&self) -> &'static [Type] { self.signature().outputs }
+}
+
+impl PrecompiledProcedureTrait for PrecompiledProcedure {
+	fn name(&self) -> &'static str { self.0 }
+	fn signature(&self) -> &Signature<'static> { &self.1 }
+	fn instructions(&self) -> &'static [&'static [Instruction]] { self.2 }
+}
+
 pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 	("atan2",      sig!([mono, mono] [mono]),          code![Atan2]),
 	("ceil",       sig!([generic] [generic]),          code![Ceil]),

@@ -566,7 +566,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 					ProcedureDefinition::Precompiled { proc } => {
 						self.precompiled_callees[self.current_proc_index].push(*proc);
-						self.check_call_signature(&proc.1, args, loc)
+						self.check_call_signature(&proc.signature(), args, loc)
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
 						self.callees[self.current_proc_index].push(*proc_index);

@@ -188,7 +188,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							(&inputs[..], &outputs[..])
 						},
 						ProcedureDefinition::Precompiled { proc } => {
-							(proc.1.inputs, proc.1.outputs)
+							(proc.inputs(), proc.outputs())
 						},
 						ProcedureDefinition::BuiltIn { .. } => {
 							panic!("Call of built-in procedure");
@@ -246,11 +246,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 						Some(Scope::Dynamic) => (ZingProcedureKind::Module { scope: ZingScope::Dynamic }, 1),
 					};
 					ZingProcedure {
-						name: proc.0.to_string(),
+						name: proc.name().to_string(),
 						kind,
-						inputs: self.make_type_list(proc.1.inputs.iter().copied(), scope),
-						outputs: self.make_type_list(proc.1.outputs.iter().copied(), scope),
-						code: proc.2[index].to_vec()
+						inputs: self.make_type_list(proc.inputs().iter().copied(), scope),
+						outputs: self.make_type_list(proc.outputs().iter().copied(), scope),
+						code: proc.instructions()[index].to_vec()
 					}
 				},
 				ProcedureDefinition::BuiltIn { .. } => {
@@ -651,7 +651,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Module, Precompiled { proc }) => {
-								let inputs = proc.1.inputs;
+								let inputs = proc.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.find_cells(arg);
@@ -666,7 +666,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								});
 							},
 							(Module, Declaration { proc_index }) => {
-								let inputs = self.signatures[*proc_index].1.clone();
+								let (_, inputs, _) = &self.signatures[*proc_index];
+								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.find_cells(arg);
@@ -845,7 +846,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Module, Precompiled { proc }) => {
-								let inputs = proc.1.inputs;
+								let inputs = proc.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
@@ -856,7 +857,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Module, Declaration { proc_index }) => {
-								let inputs = self.signatures[*proc_index].1.clone();
+								let (_, inputs, _) = &self.signatures[*proc_index];
+								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
