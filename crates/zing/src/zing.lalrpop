@@ -22,9 +22,15 @@ ParameterDefault: Option<f64> = {
 };
 
 Procedure: Procedure<'input> = {
-	<kind:ProcedureKind> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
+	<context:Context> <kind:ProcedureKind> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
 		=> Procedure {<>},
 };
+
+Context: Context = {
+	=> Context::Universal,
+	"global" => Context::Global,
+	"note" => Context::Note,
+}
 
 ProcedureKind: ProcedureKind = {
 	"module" => ProcedureKind::Module,

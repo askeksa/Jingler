@@ -211,6 +211,7 @@ impl<'input> Compiler<'input> {
 	pub fn compile(&mut self) -> Result<ZingProgram, CompileError> {
 		let processed_input = Rc::clone(&self.processed_input);
 		let mut program = self.parse(&processed_input)?;
+		self.check_contexts(&mut program)?;
 		let names = Names::find(&program, self)?;
 		let (signatures, stored_widths, callees, precompiled_callees) = infer_types(&mut program, &names, self)?;
 		let (procedures, main_static_proc_id, main_dynamic_proc_id, track_order)
@@ -252,6 +253,34 @@ impl<'input> Compiler<'input> {
 			}
 			self.make_error()
 		})
+	}
+
+	fn check_contexts(&mut self, program: &mut Program) -> Result<(), CompileError> {
+		let mut found_main = false;
+		for proc in &mut program.procedures {
+			match (proc.context, proc.kind, proc.name.text) {
+				(Context::Global, ProcedureKind::Module, "main") => {
+					found_main = true;
+				},
+				(_, _, "main") => {
+					self.report_error(&proc.name, "'main' must be a global module.");
+				},
+				(Context::Global, ProcedureKind::Instrument, _) => {
+					self.report_error(&proc.name, "Instruments can't be global.");
+				},
+				(Context::Note, ProcedureKind::Instrument, _) => {
+					self.report_error(&proc.name, "Instruments have implicit note context.");
+				},
+				(_, ProcedureKind::Instrument, _) => {
+					proc.context = Context::Note;
+				},
+				_ => {},
+			}
+		}
+		if !found_main {
+			self.report_error(&(0, 0), "No 'main' module.");
+		}
+		self.check_errors()
 	}
 
 	fn report(&mut self, loc: &dyn Location, category: MessageCategory, text: String) {

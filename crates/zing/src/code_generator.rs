@@ -13,21 +13,22 @@ use crate::names::*;
 pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
-		signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+		signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
 		stored_widths: HashMap<*const Expression<'ast>, Width>,
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 		compiler: &mut Compiler<'input>)
 -> Result<(Vec<ZingProcedure>, usize, usize, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
-	cg.generate_code_for_program(program)?;
 	let main_index = match names.lookup_procedure("main").unwrap().definition {
 		ProcedureDefinition::Declaration { proc_index } => proc_index,
 		_ => panic!("No main"),
 	};
+	cg.generate_code_for_program(program, main_index)?;
 	let main_static_proc_id = cg.static_proc_id[main_index] as usize;
 	let main_dynamic_proc_id = cg.dynamic_proc_id[main_index] as usize;
-	Ok((take(&mut cg.procedures), main_static_proc_id, main_dynamic_proc_id, take(&mut cg.track_order)))
+	let track_order = cg.compute_track_order(main_index);
+	Ok((take(&mut cg.procedures), main_static_proc_id, main_dynamic_proc_id, track_order))
 }
 
 fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
@@ -83,7 +84,7 @@ impl From<ValueType> for ZingValueType {
 struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
-	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+	signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
@@ -102,6 +103,8 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	precompiled_proc_ids: HashMap<*const PrecompiledProcedure, Vec<u16>>,
 	/// Procedure and scope for ID
 	proc_for_id: Vec<(ProcedureRef, Option<Scope>)>,
+	/// The current procedure index
+	current_proc_index: usize,
 	/// The current procedure kind
 	current_kind: ProcedureKind,
 
@@ -122,16 +125,22 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// Module calls in execution order
 	module_call: Vec<ModuleCall<'ast>>,
 	// Tracks in execution order
-	track_order: Vec<usize>,
+	track_order: Vec<Vec<TrackOrderNode>>,
 	// Queue for dynamic cell update expressions
 	update_stack: Vec<(StateKind, &'ast Expression<'ast>)>,
+}
+
+#[derive(Clone, Copy)]
+enum TrackOrderNode {
+	Midi { channel: usize },
+	Call { proc_index: usize },
 }
 
 impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	pub fn new(
 			names: &'ast Names<'ast>,
 			compiler: &'comp mut Compiler<'input>,
-			signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+			signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
 			stored_widths: HashMap<*const Expression<'ast>, Width>,
 			callees: Vec<Vec<usize>>,
 			precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>)
@@ -152,6 +161,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			dynamic_proc_id: vec![0; proc_count],
 			precompiled_proc_ids: HashMap::new(),
 			proc_for_id: vec![],
+			current_proc_index: 0,
 			current_kind: ProcedureKind::Module,
 
 			procedures: vec![],
@@ -164,7 +174,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			name_in_cell: HashMap::new(),
 			repetition_depth: 0,
 			module_call: vec![],
-			track_order: vec![],
+			track_order: vec![vec![]; proc_count],
 			update_stack: vec![],
 		}
 	}
@@ -184,7 +194,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					let (ref proc, scope) = self.proc_for_id[id as usize];
 					let (inputs, outputs) = match &proc.definition {
 						ProcedureDefinition::Declaration { proc_index } => {
-							let (_, inputs, outputs) = &self.signatures[*proc_index];
+							let (_, _, inputs, outputs) = &self.signatures[*proc_index];
 							(&inputs[..], &outputs[..])
 						},
 						ProcedureDefinition::Precompiled { proc } => {
@@ -226,9 +236,28 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	pub fn generate_code_for_program(&mut self, program: &'ast Program<'ast>) -> Result<(), CompileError> {
+	fn compute_track_order(&mut self, main_index: usize) -> Vec<usize> {
+		let mut track_order = vec![];
+		self.compute_track_order_inner(main_index, &mut track_order);
+		track_order
+	}
+
+	fn compute_track_order_inner(&mut self, proc_index: usize, track_order: &mut Vec<usize>) {
+		for node in take(&mut self.track_order[proc_index]) {
+			match node {
+				TrackOrderNode::Midi { channel } => {
+					track_order.push(channel - 1);
+				},
+				TrackOrderNode::Call { proc_index } => {
+					self.compute_track_order_inner(proc_index, track_order);
+				},
+			}
+		}
+	}
+
+	pub fn generate_code_for_program(&mut self, program: &'ast Program<'ast>, main_index: usize) -> Result<(), CompileError> {
 		// Compute liveness
-		self.propagate_liveness(program.procedures.iter().position(|p| p.name.text == "main").unwrap());
+		self.propagate_liveness(main_index);
 		let autokill_key = self.lookup_precompiled("$autokill");
 		self.live_precompiled.insert(autokill_key);
 
@@ -268,6 +297,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		scope: Option<Scope>,
 	) -> Result<ZingProcedure, CompileError> {
 		let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
+		self.current_proc_index = proc_index;
 		self.current_kind = *kind;
 		let proc_kind;
 		let proc_inputs;
@@ -369,6 +399,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
 					proc_id[proc_index] = self.proc_for_id.len() as u16;
 					let proc = ProcedureRef {
+						context: proc.context,
 						kind: proc.kind,
 						definition: ProcedureDefinition::Declaration { proc_index }
 					};
@@ -397,6 +428,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				for &scope in scopes {
 					self.precompiled_proc_ids.entry(proc).or_default().push(self.proc_for_id.len() as u16);
 					let proc = ProcedureRef {
+						context: proc.context(),
 						kind: kind,
 						definition: ProcedureDefinition::Precompiled { proc }
 					};
@@ -624,7 +656,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			Call { channel, name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
-					Some(ProcedureRef { kind, definition }) => {
+					Some(ProcedureRef { kind, definition, .. }) => {
 						use ProcedureKind::*;
 						use ProcedureDefinition::*;
 						match (kind, definition) {
@@ -666,7 +698,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								});
 							},
 							(Module, Declaration { proc_index }) => {
-								let (_, inputs, _) = &self.signatures[*proc_index];
+								let proc_index = *proc_index;
+								let (context, _, inputs, _) = &self.signatures[proc_index];
+								let context = *context;
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
@@ -675,10 +709,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs,
-									static_proc_id: self.static_proc_id[*proc_index],
+									static_proc_id: self.static_proc_id[proc_index],
 									generic_width: self.retrieve_width(exp),
 									args,
 								});
+								if context == Context::Global {
+									self.track_order[self.current_proc_index].push(TrackOrderNode::Call { proc_index });
+								}
 							},
 							(Function, _) => {
 								for arg in args {
@@ -686,7 +723,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Instrument, Declaration { .. }) => {
-								self.track_order.push(channel.unwrap() - 1);
+								self.track_order[self.current_proc_index].push(TrackOrderNode::Midi { channel: channel.unwrap() });
 								for arg in args {
 									self.find_cells(arg);
 								}
@@ -822,7 +859,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 			Call { name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
-					Some(ProcedureRef { kind, definition }) => {
+					Some(ProcedureRef { kind, definition, .. }) => {
 						use ProcedureKind::*;
 						use ProcedureDefinition::*;
 						match (kind, definition) {
@@ -857,7 +894,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Module, Declaration { proc_index }) => {
-								let (_, inputs, _) = &self.signatures[*proc_index];
+								let (_, _, inputs, _) = &self.signatures[*proc_index];
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
@@ -868,10 +905,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Function, BuiltIn { code, .. }) => {
-								let is_note_property = code.iter().any(|c| matches!(c, Instruction::ReadNoteProperty(_)));
-								if is_note_property && self.current_kind != ProcedureKind::Instrument {
-									self.unsupported(exp, "Note property outside instrument");
-								}
 								for arg in args {
 									self.generate(arg);
 								}
@@ -896,7 +929,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let static_proc_id = self.static_proc_id[*proc_index];
 								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
 
-								let (_, inputs, outputs) = &self.signatures[*proc_index];
+								let (_, _, inputs, outputs) = &self.signatures[*proc_index];
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
 									self.generate(arg);

@@ -27,6 +27,9 @@ impl<'input> Display for Parameter<'input> {
 
 impl<'input> Display for Procedure<'input> {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		if self.context != Context::Universal {
+			write!(f, "{} ", self.context)?;
+		}
 		write!(f, "{} {}", self.kind, self.name)?;
 		fmt_parenthesized_list(f, &self.inputs.items)?;
 		write!(f, " -> ")?;
@@ -36,6 +39,17 @@ impl<'input> Display for Procedure<'input> {
 			write!(f, "    {}\n", statement)?;
 		}
 		Ok(())
+	}
+}
+
+impl Display for Context {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		use Context::*;
+		match *self {
+			Universal => "universal",
+			Global => "global",
+			Note => "note",
+		}.fmt(f)
 	}
 }
 

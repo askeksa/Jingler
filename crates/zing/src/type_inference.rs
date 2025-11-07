@@ -13,7 +13,7 @@ pub fn infer_types<'ast, 'input, 'comp>(
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
 		-> Result<(
-			Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+			Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
 			HashMap<*const Expression<'ast>, Width>,
 			Vec<Vec<usize>>,
 			Vec<Vec<*const PrecompiledProcedure>>,
@@ -28,17 +28,17 @@ pub fn infer_types<'ast, 'input, 'comp>(
 struct TypeInferrer<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
-	signatures: Vec<(ProcedureKind, Vec<Type>, Vec<Type>)>,
+	signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	parameters: HashMap<&'ast str, TypeResult>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
-	seen_midi_channels: [bool; 16],
+	seen_midi_channels: [Option<PosRange>; 16],
+	seen_global_modules: Vec<Option<PosRange>>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
 	current_proc_index: usize,
-	current_is_main: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,10 +73,10 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			parameters,
 			callees: vec![],
 			precompiled_callees: vec![],
-			seen_midi_channels: [false; 16],
+			seen_midi_channels: [None; 16],
+			seen_global_modules: vec![],
 			ready: HashMap::new(),
 			current_proc_index: 0,
-			current_is_main: false,
 		}
 	}
 
@@ -171,12 +171,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				input_type
 			}).collect();
 			let output_types = proc.outputs.items.iter().map(|item| item.item_type).collect();
-			self.signatures.push((proc.kind, input_types, output_types));
+			self.signatures.push((proc.context, proc.kind, input_types, output_types));
 		}
 		self.compiler.check_errors()
 	}
 
 	pub fn infer_bodies(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
+		self.seen_global_modules.resize(program.procedures.len(), None);
 		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
 			self.current_proc_index = proc_index;
 			self.callees.push(vec![]);
@@ -209,11 +210,6 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_body(&mut self, proc: &mut Procedure<'ast>) -> Result<(), CompileError> {
-		self.current_is_main = proc.name.text == "main";
-		if self.current_is_main && proc.kind != ProcedureKind::Module {
-			self.compiler.report_error(&proc.name, "'main' must be a module.");
-		}
-
 		// Initialize ready variable to the set of parameters.
 		self.ready = self.parameters.clone();
 
@@ -350,7 +346,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_statement(&mut self,
 			node: &mut Pattern<'ast>,
 			exp: &mut Expression<'ast>) {
-		let (current_kind, _, _) = self.signatures[self.current_proc_index];
+		let (_, current_kind, _, _) = self.signatures[self.current_proc_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
 			self.compiler.report_error(node,
@@ -516,48 +512,79 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			channel: Option<usize>, name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_procedure(name.text) {
-			Some(ProcedureRef { kind, definition }) => {
-				let channel_loc = &(loc.pos_before(), name.before);
-				match kind {
-					ProcedureKind::Module => {
-						if channel.is_some() {
-							self.compiler.report_error(channel_loc,
-								"Modules can't be prefixed with a midi channel.");
-						}
-						let (current_kind, _, _) = self.signatures[self.current_proc_index];
-						if current_kind == ProcedureKind::Function {
-							self.compiler.report_error(name,
-								"Modules can't be called from functions.");
-						}
+			Some(ProcedureRef { context, kind, definition }) => {
+				let (current_context, current_kind, _, _) = self.signatures[self.current_proc_index];
+				let channel_loc = &(loc.pos_before(), name.before - loc.pos_before());
+				use Context::*;
+				use ProcedureKind::*;
+				match (channel, context, kind, current_context, current_kind) {
+					(Some(_), _, Module, _, _) => {
+						self.compiler.report_error(channel_loc,
+							"Modules can't be prefixed with a midi channel.");
 					},
-					ProcedureKind::Function => {
-						if channel.is_some() {
-							self.compiler.report_error(channel_loc,
-								"Functions can't be prefixed with a midi channel.");
-						}
+					(_, _, Module, _, Function) => {
+						self.compiler.report_error(name,
+							"Modules can't be called from functions.");
 					},
-					ProcedureKind::Instrument => {
-						if !self.current_is_main {
-							self.compiler.report_error(name,
-								"Instruments can only be called from the main module.");
-						}
-						match channel {
-							Some(channel) => {
-								if channel >= 1 && channel <= 16 {
-									if self.seen_midi_channels[channel - 1] {
-										self.compiler.report_error(channel_loc,
-											format!("Midi channel {} used multiple times.", channel));
-									}
-								} else {
-									self.compiler.report_error(channel_loc,
-										"Midi channel must be between 1 and 16.");
-								}
-							},
-							None => {
+					(_, Global, Module, Global, _) => {
+						if let ProcedureDefinition::Declaration { proc_index } = definition {
+							if let Some(range) = self.seen_global_modules[*proc_index] {
 								self.compiler.report_error(name,
-									"Instruments must be prefixed with midi channel and '::'.");
-							},
+									"Global modules can only be called in one place.");
+								self.compiler.report_context(&range,
+									"Also called here.");
+							} else {
+								self.seen_global_modules[*proc_index] = Some(PosRange::from(name));
+							}
 						}
+					},
+					(_, Global, Module, _, _) => {
+						self.compiler.report_error(name,
+							"Global modules can only be called from other global modules.");
+					},
+					(_, Note, Module, Note, _) => {},
+					(_, Note, Module, _, _) => {
+						self.compiler.report_error(name,
+							"Note modules can only be called from instruments and other note modules.");
+					},
+					(_, _, Module, _, _) => {},
+					(Some(_), _, Function, _, _) => {
+						self.compiler.report_error(channel_loc,
+							"Functions can't be prefixed with a midi channel.");
+					},
+					(_, Global, Function, Global, _) => {},
+					(_, Global, Function, _, _) => {
+						self.compiler.report_error(name,
+							"Global functions can only be called from global modules and other global functions.");
+					},
+					(_, Note, Function, Note, _) => {},
+					(_, Note, Function, _, _) => {
+						self.compiler.report_error(name,
+							"Note functions can only be called from instruments, note modules and other note functions.");
+					},
+					(_, _, Function, _, _) => {},
+					(Some(channel), _, Instrument, Global, Module) => {
+						if channel >= 1 && channel <= 16 {
+							if let Some(range) = self.seen_midi_channels[channel - 1] {
+								self.compiler.report_error(channel_loc,
+									format!("Midi channel {} used multiple times.", channel));
+								self.compiler.report_context(&range,
+									"Also used here.");
+							} else {
+								self.seen_midi_channels[channel - 1] = Some(PosRange::from(channel_loc));
+							}
+						} else {
+							self.compiler.report_error(channel_loc,
+								"Midi channel must be between 1 and 16.");
+						}
+					},
+					(Some(_), _, Instrument, _, _) => {
+						self.compiler.report_error(name,
+							"Instruments can only be called from global modules.");
+					},
+					(_, _, Instrument, _, _) => {
+						self.compiler.report_error(name,
+							"Instruments must be prefixed with midi channel and '::'.");
 					},
 				}
 				match definition {
@@ -570,7 +597,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
 						self.callees[self.current_proc_index].push(*proc_index);
-						let (_, ref inputs, ref outputs) = self.signatures[*proc_index].clone();
+						let (_, _, ref inputs, ref outputs) = self.signatures[*proc_index].clone();
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, args, loc)
 					},

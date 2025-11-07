@@ -1,7 +1,7 @@
 
 use program::instructions::*;
 
-use crate::ast::{BinOp, BinOpKind, Scope, Type, UnOp, UnOpKind, ValueType, Width};
+use crate::ast::{BinOp, BinOpKind, Context, Scope, Type, UnOp, UnOpKind, ValueType, Width};
 use crate::names::Signature;
 
 macro_rules! scope {
@@ -57,12 +57,13 @@ macro_rules! sig {
 	};
 }
 
-pub type BuiltinFunction = (&'static str, Signature<'static>, &'static [Instruction]);
-pub type BuiltinModule = (&'static str, Signature<'static>);
-pub type PrecompiledProcedure = (&'static str, Signature<'static>, &'static [&'static [Instruction]]);
+pub type BuiltinFunction = (&'static str, Context, Signature<'static>, &'static [Instruction]);
+pub type BuiltinModule = (&'static str, Context, Signature<'static>);
+pub type PrecompiledProcedure = (&'static str, Context, Signature<'static>, &'static [&'static [Instruction]]);
 
 pub trait PrecompiledProcedureTrait {
 	fn name(&self) -> &'static str;
+	fn context(&self) -> Context;
 	fn signature(&self) -> &Signature<'static>;
 	fn instructions(&self) -> &'static [&'static [Instruction]];
 
@@ -72,40 +73,45 @@ pub trait PrecompiledProcedureTrait {
 
 impl PrecompiledProcedureTrait for PrecompiledProcedure {
 	fn name(&self) -> &'static str { self.0 }
-	fn signature(&self) -> &Signature<'static> { &self.1 }
-	fn instructions(&self) -> &'static [&'static [Instruction]] { self.2 }
+	fn context(&self) -> Context { self.1 }
+	fn signature(&self) -> &Signature<'static> { &self.2 }
+	fn instructions(&self) -> &'static [&'static [Instruction]] { self.3 }
 }
 
+#[allow(unused)] const U: Context = Context::Universal;
+#[allow(unused)] const G: Context = Context::Global;
+#[allow(unused)] const N: Context = Context::Note;
+
 pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
-	("atan2",      sig!([mono, mono] [mono]),          code![Atan2]),
-	("ceil",       sig!([generic] [generic]),          code![Ceil]),
-	("cos",        sig!([mono] [mono]),                code![Cos]),
-	("exp2",       sig!([mono] [mono]),                code![Exp2]),
-	("floor",      sig!([generic] [generic]),          code![Floor]),
-	("gate",       sig!([] [mono bool]),               code![ReadNoteProperty(Gate)]),
-	("gmdls",      sig!([mono, mono] [mono]),          code![GmDlsSample, Constant(0x30000000), Mul]),
-	("key",        sig!([] [mono]),                    code![ReadNoteProperty(Key)]),
-	("max",        sig!([generic, generic] [generic]), code![Max]),
-	("min",        sig!([generic, generic] [generic]), code![Min]),
-	("mlog2",      sig!([mono, mono] [mono]),          code![Mlog2]),
-	("random",     sig!([mono, mono] [mono]),          code![Random, Constant(0x30000000), Mul]),
-	("round",      sig!([generic] [generic]),          code![Round]),
-	("samplerate", sig!([] [mono]),                    code![SampleRate]),
-	("sin",        sig!([mono] [mono]),                code![Sin]),
-	("sqrt",       sig!([generic] [generic]),          code![Sqrt]),
-	("tan",        sig!([mono] [mono]),                code![Tan]),
-	("trunc",      sig!([generic] [generic]),          code![Trunc]),
-	("velocity",   sig!([] [mono]),                    code![ReadNoteProperty(Velocity)]),
+	("atan2",      U, sig!([mono, mono] [mono]),          code![Atan2]),
+	("ceil",       U, sig!([generic] [generic]),          code![Ceil]),
+	("cos",        U, sig!([mono] [mono]),                code![Cos]),
+	("exp2",       U, sig!([mono] [mono]),                code![Exp2]),
+	("floor",      U, sig!([generic] [generic]),          code![Floor]),
+	("gate",       N, sig!([] [mono bool]),               code![ReadNoteProperty(Gate)]),
+	("gmdls",      U, sig!([mono, mono] [mono]),          code![GmDlsSample, Constant(0x30000000), Mul]),
+	("key",        N, sig!([] [mono]),                    code![ReadNoteProperty(Key)]),
+	("max",        U, sig!([generic, generic] [generic]), code![Max]),
+	("min",        U, sig!([generic, generic] [generic]), code![Min]),
+	("mlog2",      U, sig!([mono, mono] [mono]),          code![Mlog2]),
+	("random",     U, sig!([mono, mono] [mono]),          code![Random, Constant(0x30000000), Mul]),
+	("round",      U, sig!([generic] [generic]),          code![Round]),
+	("samplerate", U, sig!([] [mono]),                    code![SampleRate]),
+	("sin",        U, sig!([mono] [mono]),                code![Sin]),
+	("sqrt",       U, sig!([generic] [generic]),          code![Sqrt]),
+	("tan",        U, sig!([mono] [mono]),                code![Tan]),
+	("trunc",      U, sig!([generic] [generic]),          code![Trunc]),
+	("velocity",   N, sig!([] [mono]),                    code![ReadNoteProperty(Velocity)]),
 ];
 
 pub static BUILTIN_MODULES: &[BuiltinModule] = &[
-	("cell",     sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
-	("delay",    sig!([static mono number, dynamic generic typeless] [dynamic generic typeless])),
-	("dyndelay", sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
+	("cell",     U, sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
+	("delay",    U, sig!([static mono number, dynamic generic typeless] [dynamic generic typeless])),
+	("dyndelay", U, sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
 ];
 
 pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
-	("stereo2mono", sig!([stereo] [mono]), &[code![
+	("stereo2mono", U, sig!([stereo] [mono]), &[code![
 		SplitRL,
 		Add,
 		Constant(0.5f32.to_bits()),
@@ -114,7 +120,7 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
 ];
 
 pub static PRECOMPILED_MODULES: &[PrecompiledProcedure] = &[
-	("$autokill", sig!([stereo, stereo] [stereo]), &[code![
+	("$autokill", N, sig!([stereo, stereo] [stereo]), &[code![
 		Constant(0),
 		CellInit
 	], code![

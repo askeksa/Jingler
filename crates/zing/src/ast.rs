@@ -17,11 +17,19 @@ pub struct Parameter<'input> {
 
 #[derive(Clone, Debug)]
 pub struct Procedure<'input> {
+	pub context: Context,
 	pub kind: ProcedureKind,
 	pub name: Id<'input>,
 	pub inputs: Pattern<'input>,
 	pub outputs: Pattern<'input>,
 	pub body: Vec<Statement<'input>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Context {
+	Universal,
+	Global,
+	Note,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -35,6 +35,7 @@ pub enum VariableKind {
 /// A reference to a top-level module, function or instrument.
 #[derive(Clone, Debug)]
 pub struct ProcedureRef {
+	pub context: Context,
 	pub kind: ProcedureKind,
 	pub definition: ProcedureDefinition,
 }
@@ -75,26 +76,30 @@ impl<'ast> Names<'ast> {
 		};
 
 		// Insert built-in functions and modules
-		for (name, sig, code) in BUILTIN_FUNCTIONS {
+		for &(name, context, ref sig, code) in BUILTIN_FUNCTIONS {
 			names.procedures.insert(name, ProcedureRef {
+				context,
 				kind: ProcedureKind::Function,
 				definition: ProcedureDefinition::BuiltIn { sig, code },
 			});
 		}
-		for (name, sig) in BUILTIN_MODULES {
+		for &(name, context, ref sig) in BUILTIN_MODULES {
 			names.procedures.insert(name, ProcedureRef {
+				context,
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::BuiltIn { sig, code: &[] },
 			});
 		}
 		for proc in PRECOMPILED_FUNCTIONS {
 			names.procedures.insert(proc.name(), ProcedureRef {
+				context: proc.context(),
 				kind: ProcedureKind::Function,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});
 		}
 		for proc in PRECOMPILED_MODULES {
 			names.procedures.insert(proc.name(), ProcedureRef {
+				context: proc.context(),
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});
@@ -114,6 +119,7 @@ impl<'ast> Names<'ast> {
 		// Run through all procedures in the program
 		for (proc_index, proc) in program.procedures.iter().enumerate() {
 			let proc_ref = ProcedureRef {
+				context: proc.context,
 				kind: proc.kind,
 				definition: ProcedureDefinition::Declaration { proc_index },
 			};
