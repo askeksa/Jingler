@@ -141,7 +141,7 @@ impl Location for PosRange {
 /// (offset, length) pair.
 impl Location for (usize, usize) {
 	fn pos_before(&self) -> usize { self.0 }
-	fn pos_after(&self) -> usize { self.0 + self.1 }
+	fn pos_after(&self) -> usize { self.1 }
 }
 
 impl<'input> Location for Id<'input> {
@@ -238,16 +238,16 @@ impl<'input> Compiler<'input> {
 		zing::ProgramParser::new().parse(text).map_err(|err| {
 			match err {
 				ParseError::InvalidToken { location } => {
-					self.report_syntax_error(&(location, 1), "Invalid token.");
+					self.report_syntax_error(&(location, location + 1), "Invalid token.");
 				},
 				ParseError::UnrecognizedEof { location, expected: _ } => {
-					self.report_syntax_error(&(location, 1), "Unexpected end of file.");
+					self.report_syntax_error(&(location, location), "Unexpected end of file.");
 				},
 				ParseError::UnrecognizedToken { token: (loc1, _, loc2), expected: _ } => {
-					self.report_syntax_error(&(loc1, loc2 - loc1), "Unexpected token.");
+					self.report_syntax_error(&(loc1, loc2), "Unexpected token.");
 				},
 				ParseError::ExtraToken { token: (loc1, _, loc2) } => {
-					self.report_syntax_error(&(loc1, loc2 - loc1), "Extra token.");
+					self.report_syntax_error(&(loc1, loc2), "Extra token.");
 				},
 				_ => self.report_internal_error(&(0, 0), "Unknown parse error."),
 			}

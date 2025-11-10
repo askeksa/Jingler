@@ -514,7 +514,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		match self.names.lookup_procedure(name.text) {
 			Some(ProcedureRef { context, kind, definition }) => {
 				let (current_context, current_kind, _, _) = self.signatures[self.current_proc_index];
-				let channel_loc = &(loc.pos_before(), name.before - loc.pos_before());
+				let channel_loc = &(loc.pos_before(), name.before);
 				use Context::*;
 				use ProcedureKind::*;
 				match (channel, context, kind, current_context, current_kind) {
