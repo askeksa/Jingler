@@ -115,7 +115,7 @@ pub static BUILTIN_MODULES: &[BuiltinModule] = &[
 ];
 
 pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
-	("stereo2mono", U, sig!([stereo] [mono]), &[code![
+	("center", U, sig!([stereo] [mono]), &[code![
 		SplitRL,
 		Add,
 		Constant(0.5f32.to_bits()),
