@@ -773,9 +773,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(right);
 				self.find_cells(left);
 			},
-			Property { exp, .. } => {
-				self.find_cells(exp);
-			},
 			TupleIndex { .. } => {
 				self.unsupported(exp, "tuple indexing");
 			},
@@ -984,16 +981,6 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.generate(right);
 				self.generate(left);
 				self.emit(code![MergeLR]);
-			},
-			Property { exp, name } => {
-				self.generate(exp);
-				match name.text {
-					"left" => self.emit(code![Left]),
-					"right" => self.emit(code![Right]),
-					"index" => self.emit(code![BufferIndex]),
-					"length" => self.emit(code![BufferLength]),
-					_ => panic!("Unknown property"),
-				}
 			},
 			TupleIndex { .. } => {
 				self.unsupported(exp, "tuple indexing");

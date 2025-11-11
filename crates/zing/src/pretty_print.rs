@@ -282,10 +282,6 @@ impl<'input> Expression<'input> {
 			Merge { left, right, .. } => {
 				write!(f, "[{}, {}]", left, right)?;
 			},
-			Property { exp, name } => {
-				exp.fmt_with_precedence(f, Precedence::Primary)?;
-				write!(f, ".{}", name)?;
-			},
 			TupleIndex { exp, index, .. } => {
 				exp.fmt_with_precedence(f, Precedence::Primary)?;
 				write!(f, ".{}", index)?;
@@ -320,7 +316,6 @@ impl<'input> Expression<'input> {
 			Call { .. } => Precedence::Primary,
 			Tuple { .. } => Precedence::Primary,
 			Merge { .. } => Precedence::Primary,
-			Property { .. } => Precedence::Primary,
 			TupleIndex { .. } => Precedence::Primary,
 			BufferIndex { .. } => Precedence::Primary,
 			For { .. } => Precedence::Expression,

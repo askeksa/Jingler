@@ -429,7 +429,6 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			Call { channels, name, args, .. } => self.infer_call(channels, name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
-			Property { exp, name } => self.infer_property(exp, name, loc),
 			TupleIndex { exp, index, .. } => self.infer_tuple_index(exp, *index, loc),
 			BufferIndex { exp, index, .. } => self.infer_buffer_index(exp, index, loc),
 			For { name, count, combinator, body, .. }
@@ -649,67 +648,6 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let merge_sig = sig!([mono typeless, mono typeless] [stereo typeless]);
 		let results = self.check_signature(&merge_sig, &[left_operand, right_operand], loc);
 		(results, None)
-	}
-
-	fn infer_property(&mut self,
-			exp: &mut Expression<'ast>, name: &Id<'ast>,
-			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		if name.text == "left" || name.text == "right" {
-			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
-				TypeResult::Type {
-					inferred_type: Type {
-						scope,
-						width: Some(width),
-						value_type: Some(value_type),
-					}
-				} => {
-					if value_type == ValueType::Buffer {
-						self.compiler.report_error(loc,
-							format!("No '{}' property on buffer.", name.text));
-						(vec![TypeResult::Error], None)
-					} else if width != Width::Stereo {
-						self.compiler.report_error(loc,
-							format!("Can only take '{}' property on stereo value.", name.text));
-						(vec![TypeResult::Error], None)
-					} else {
-						let result = TypeResult::Type {
-							inferred_type: Type {
-								scope, width: Some(Width::Mono), value_type: Some(value_type)
-							}
-						};
-						(vec![result], None)
-					}
-				},
-				_ => (vec![TypeResult::Error], None)
-			}
-		} else if name.text == "index" || name.text == "length" {
-			match self.expect_single(exp, &format!("operand of '{}' property", name.text)) {
-				TypeResult::Type {
-					inferred_type: Type {
-						scope,
-						value_type: Some(value_type),
-						..
-					}
-				} => {
-					if value_type != ValueType::Buffer {
-						self.compiler.report_error(loc,
-							format!("Can only take '{}' property on buffer.", name.text));
-						(vec![TypeResult::Error], None)
-					} else {
-						let result = TypeResult::Type {
-							inferred_type: Type {
-								scope, width: Some(Width::Mono), value_type: Some(ValueType::Number)
-							}
-						};
-						(vec![result], None)
-					}
-				},
-				_ => (vec![TypeResult::Error], None),
-			}
-		} else {
-			self.compiler.report_error(name, format!("Invalid property '{}'.", name));
-			(vec![TypeResult::Error], None)
-		}
 	}
 
 	fn infer_tuple_index(&mut self,

@@ -132,7 +132,6 @@ pub enum Expression<'input> {
 	},
 	Tuple { before: Pos, elements: Vec<Expression<'input>>, after: Pos },
 	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
-	Property { exp: Box<Expression<'input>>, name: Id<'input> },
 	TupleIndex { exp: Box<Expression<'input>>, index: u64, after: Pos },
 	BufferIndex { exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
 	For {
@@ -192,7 +191,6 @@ impl<'input> Expression<'input> {
 			Call { before, .. } => before,
 			Tuple { before, .. } => before,
 			Merge { before, .. } => before,
-			Property { ref exp, .. } => exp.pos_before(),
 			TupleIndex { ref exp, .. } => exp.pos_before(),
 			BufferIndex { ref exp, .. } => exp.pos_before(),
 			For { before, .. } => before,
@@ -212,7 +210,6 @@ impl<'input> Expression<'input> {
 			Call { after, .. } => after,
 			Tuple { after, .. } => after,
 			Merge { after, .. } => after,
-			Property { ref name, .. } => name.before + name.text.len(),
 			TupleIndex { after, .. } => after,
 			BufferIndex { after, .. } => after,
 			For { ref body, .. } => body.pos_after(),
@@ -254,9 +251,6 @@ impl<'input> Expression<'input> {
 			Merge { left, right, .. } => {
 				left.traverse(pre, post);
 				right.traverse(pre, post);
-			},
-			Property { exp, .. } => {
-				exp.traverse(pre, post);
 			},
 			TupleIndex { exp, .. } => {
 				exp.traverse(pre, post);

@@ -148,13 +148,21 @@ PrimaryExpression: Expression<'input> = {
 	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
 	<before:@L> <value:Bool> => Expression::Bool {<>},
 	<name:Id> => Expression::Variable {<>},
-	<before:@L> <channels:MidiArg*> <name:Id> "(" <args:Comma<Expression>> ")" <after:@R> => Expression::Call {<>},
-	<before:@L> "(" <elements:Comma<Expression>> ")" <after:@R> => Expression::Tuple {<>},
+	<before:@L> <channels:MidiArg*> <name:Id> <args:ParenthesizedExpressions> <after:@R> => Expression::Call {<>},
+	<before:@L> <elements:ParenthesizedExpressions> <after:@R> => Expression::Tuple {<>},
 	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
-	<exp:Box<PrimaryExpression>> "." <name:Id> => Expression::Property {<>},
+	<exp:Box<PrimaryExpression>> "." <name:Id> <args:ParenthesizedExpressions?> <after:@R> => Expression::Call {
+		before: exp.pos_before(),
+		channels: vec![],
+		name,
+		args: [*exp].into_iter().chain(args.into_iter().flatten()).collect(),
+		after,
+	},
 	<exp:Box<PrimaryExpression>> "." <index:Uint> <after:@R> => Expression::TupleIndex {<>},
 	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
+
+ParenthesizedExpressions: Vec<Expression<'input>> = "(" <elements:Comma<Expression>> ")" => elements;
 
 MidiParam: Id<'input> = <name:Id> "::" => name;
 
