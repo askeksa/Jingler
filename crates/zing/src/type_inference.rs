@@ -8,12 +8,20 @@ use crate::builtin::*;
 use crate::compiler::{CompileError, Compiler, Location, PosRange};
 use crate::names::*;
 
+#[derive(Clone, Debug)]
+pub struct FullSignature {
+	pub context: Context,
+	pub kind: ProcedureKind,
+	pub inputs: Vec<Type>,
+	pub outputs: Vec<Type>,
+}
+
 pub fn infer_types<'ast, 'input, 'comp>(
 		program: &mut Program<'ast>,
 		names: &'ast Names<'ast>,
 		compiler: &'comp mut Compiler<'input>)
 		-> Result<(
-			Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
+			Vec<FullSignature>,
 			HashMap<*const Expression<'ast>, Width>,
 			Vec<Vec<usize>>,
 			Vec<Vec<*const PrecompiledProcedure>>,
@@ -28,7 +36,7 @@ pub fn infer_types<'ast, 'input, 'comp>(
 struct TypeInferrer<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
-	signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
+	signatures: Vec<FullSignature>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	parameters: HashMap<&'ast str, TypeResult>,
 	callees: Vec<Vec<usize>>,
@@ -171,7 +179,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				input_type
 			}).collect();
 			let output_types = proc.outputs.items.iter().map(|item| item.item_type).collect();
-			self.signatures.push((proc.context, proc.kind, input_types, output_types));
+			let signature = FullSignature {
+				context: proc.context,
+				kind: proc.kind,
+				inputs: input_types,
+				outputs: output_types,
+			};
+			self.signatures.push(signature);
 		}
 		self.compiler.check_errors()
 	}
@@ -346,7 +360,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	fn infer_statement(&mut self,
 			node: &mut Pattern<'ast>,
 			exp: &mut Expression<'ast>) {
-		let (_, current_kind, _, _) = self.signatures[self.current_proc_index];
+		let FullSignature { kind: current_kind, .. } = self.signatures[self.current_proc_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
 			self.compiler.report_error(node,
@@ -513,7 +527,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_procedure(name.text) {
 			Some(ProcedureRef { context, kind, definition }) => {
-				let (current_context, current_kind, _, _) = self.signatures[self.current_proc_index];
+				let FullSignature {
+					context: current_context, kind: current_kind, ..
+				} = self.signatures[self.current_proc_index];
 				let channel_loc = &(loc.pos_before(), name.before);
 				use Context::*;
 				use ProcedureKind::*;
@@ -597,7 +613,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
 						self.callees[self.current_proc_index].push(*proc_index);
-						let (_, _, ref inputs, ref outputs) = self.signatures[*proc_index].clone();
+						let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index].clone();
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, args, loc)
 					},

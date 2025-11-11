@@ -9,11 +9,12 @@ use crate::ast::*;
 use crate::builtin::*;
 use crate::compiler::*;
 use crate::names::*;
+use crate::type_inference::FullSignature;
 
 pub fn generate_code<'ast, 'input, 'comp>(
 		program: &'ast Program<'ast>,
 		names: &'ast Names<'ast>,
-		signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
+		signatures: Vec<FullSignature>,
 		stored_widths: HashMap<*const Expression<'ast>, Width>,
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
@@ -84,7 +85,7 @@ impl From<ValueType> for ZingValueType {
 struct CodeGenerator<'ast, 'input, 'comp> {
 	names: &'ast Names<'ast>,
 	compiler: &'comp mut Compiler<'input>,
-	signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
+	signatures: Vec<FullSignature>,
 	stored_widths: HashMap<*const Expression<'ast>, Width>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
@@ -140,7 +141,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	pub fn new(
 			names: &'ast Names<'ast>,
 			compiler: &'comp mut Compiler<'input>,
-			signatures: Vec<(Context, ProcedureKind, Vec<Type>, Vec<Type>)>,
+			signatures: Vec<FullSignature>,
 			stored_widths: HashMap<*const Expression<'ast>, Width>,
 			callees: Vec<Vec<usize>>,
 			precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>)
@@ -194,7 +195,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					let (ref proc, scope) = self.proc_for_id[id as usize];
 					let (inputs, outputs) = match &proc.definition {
 						ProcedureDefinition::Declaration { proc_index } => {
-							let (_, _, inputs, outputs) = &self.signatures[*proc_index];
+							let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index];
 							(&inputs[..], &outputs[..])
 						},
 						ProcedureDefinition::Precompiled { proc } => {
@@ -699,7 +700,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 							},
 							(Module, Declaration { proc_index }) => {
 								let proc_index = *proc_index;
-								let (context, _, inputs, _) = &self.signatures[proc_index];
+								let FullSignature { context, inputs, .. } = &self.signatures[proc_index];
 								let context = *context;
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
@@ -894,7 +895,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
 							},
 							(Module, Declaration { proc_index }) => {
-								let (_, _, inputs, _) = &self.signatures[*proc_index];
+								let FullSignature { inputs, .. } = &self.signatures[*proc_index];
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
@@ -929,7 +930,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let static_proc_id = self.static_proc_id[*proc_index];
 								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
 
-								let (_, _, inputs, outputs) = &self.signatures[*proc_index];
+								let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index];
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
 									self.generate(arg);
