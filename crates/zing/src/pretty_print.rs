@@ -30,7 +30,11 @@ impl<'input> Display for Procedure<'input> {
 		if self.context != Context::Universal {
 			write!(f, "{} ", self.context)?;
 		}
-		write!(f, "{} {}", self.kind, self.name)?;
+		write!(f, "{} ", self.kind)?;
+		for channel in &self.channels {
+			write!(f, "{}::", channel)?;
+		}
+		write!(f, "{}", self.name)?;
 		fmt_parenthesized_list(f, &self.inputs.items)?;
 		write!(f, " -> ")?;
 		fmt_parenthesized_list(f, &self.outputs.items)?;
@@ -261,8 +265,8 @@ impl<'input> Expression<'input> {
 				write!(f, " : ")?;
 				otherwise.fmt_with_precedence(f, Precedence::Expression)?;
 			},
-			Call { channel, name, args, .. } => {
-				if let Some(channel) = channel {
+			Call { channels, name, args, .. } => {
+				for channel in channels {
 					write!(f, "{}::", channel)?;
 				}
 				write!(f, "{}", name)?;
@@ -321,6 +325,15 @@ impl<'input> Expression<'input> {
 			BufferIndex { .. } => Precedence::Primary,
 			For { .. } => Precedence::Expression,
 			Expand { .. } => Precedence::Primary,
+		}
+	}
+}
+
+impl<'input> Display for MidiChannel<'input> {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		match self {
+			MidiChannel::Value { channel } => write!(f, "{}", channel),
+			MidiChannel::Named { name } => write!(f, "{}", name),
 		}
 	}
 }

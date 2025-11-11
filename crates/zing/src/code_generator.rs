@@ -131,10 +131,16 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	update_stack: Vec<(StateKind, &'ast Expression<'ast>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug)]
 enum TrackOrderNode {
-	Midi { channel: usize },
-	Call { proc_index: usize },
+	Instrument { channel: MidiChannelArg },
+	Module { proc_index: usize, args: Vec<MidiChannelArg> },
+}
+
+#[derive(Clone, Debug)]
+enum MidiChannelArg {
+	Value { channel: usize },
+	Input { index: usize },
 }
 
 impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
@@ -239,18 +245,25 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 
 	fn compute_track_order(&mut self, main_index: usize) -> Vec<usize> {
 		let mut track_order = vec![];
-		self.compute_track_order_inner(main_index, &mut track_order);
+		self.compute_track_order_inner(main_index, &vec![], &mut track_order);
 		track_order
 	}
 
-	fn compute_track_order_inner(&mut self, proc_index: usize, track_order: &mut Vec<usize>) {
-		for node in take(&mut self.track_order[proc_index]) {
+	fn resolve_midi_channel_arg(&self, channel: &MidiChannelArg, inputs: &Vec<MidiChannelArg>) -> usize {
+		match channel {
+			MidiChannelArg::Value { channel } => channel - 1,
+			MidiChannelArg::Input { index } => self.resolve_midi_channel_arg(&inputs[*index], inputs),
+		}
+	}
+
+	fn compute_track_order_inner(&mut self, proc_index: usize, inputs: &Vec<MidiChannelArg>, track_order: &mut Vec<usize>) {
+		for node in self.track_order[proc_index].clone() {
 			match node {
-				TrackOrderNode::Midi { channel } => {
-					track_order.push(channel - 1);
+				TrackOrderNode::Instrument { channel } => {
+					track_order.push(self.resolve_midi_channel_arg(&channel, inputs));
 				},
-				TrackOrderNode::Call { proc_index } => {
-					self.compute_track_order_inner(proc_index, track_order);
+				TrackOrderNode::Module { proc_index, args  } => {
+					self.compute_track_order_inner(proc_index, &args, track_order);
 				},
 			}
 		}
@@ -655,9 +668,21 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(then);
 				self.find_cells(otherwise);
 			},
-			Call { channel, name, args, .. } => {
+			Call { channels, name, args, .. } => {
 				match self.names.lookup_procedure(name.text) {
 					Some(ProcedureRef { kind, definition, .. }) => {
+						let current_proc_index = self.current_proc_index;
+						let convert_midi_channel = |channel: &MidiChannel| -> MidiChannelArg {
+							match channel {
+								&MidiChannel::Value { channel } => MidiChannelArg::Value {
+									channel
+								},
+								MidiChannel::Named { name } => MidiChannelArg::Input {
+									index: self.names.lookup_midi_input(current_proc_index, name.text).unwrap()
+								},
+							}
+						};
+
 						use ProcedureKind::*;
 						use ProcedureDefinition::*;
 						match (kind, definition) {
@@ -715,7 +740,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									args,
 								});
 								if context == Context::Global {
-									self.track_order[self.current_proc_index].push(TrackOrderNode::Call { proc_index });
+									let args = channels.iter().map(convert_midi_channel).collect();
+									let node = TrackOrderNode::Module { proc_index, args };
+									self.track_order[current_proc_index].push(node);
 								}
 							},
 							(Function, _) => {
@@ -724,7 +751,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								}
 							},
 							(Instrument, Declaration { .. }) => {
-								self.track_order[self.current_proc_index].push(TrackOrderNode::Midi { channel: channel.unwrap() });
+								let channel = convert_midi_channel(&channels[0]);
+								let node = TrackOrderNode::Instrument { channel };
+								self.track_order[current_proc_index].push(node);
 								for arg in args {
 									self.find_cells(arg);
 								}

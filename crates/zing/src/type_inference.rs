@@ -12,6 +12,7 @@ use crate::names::*;
 pub struct FullSignature {
 	pub context: Context,
 	pub kind: ProcedureKind,
+	pub midi_input_count: usize,
 	pub inputs: Vec<Type>,
 	pub outputs: Vec<Type>,
 }
@@ -41,12 +42,11 @@ struct TypeInferrer<'ast, 'input, 'comp> {
 	parameters: HashMap<&'ast str, TypeResult>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
-	seen_midi_channels: [Option<PosRange>; 16],
-	seen_global_modules: Vec<Option<PosRange>>,
 
 	// Procedure-local state
 	ready: HashMap<&'ast str, TypeResult>,
 	current_proc_index: usize,
+	current_proc_name_loc: PosRange,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -81,10 +81,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			parameters,
 			callees: vec![],
 			precompiled_callees: vec![],
-			seen_midi_channels: [None; 16],
-			seen_global_modules: vec![],
 			ready: HashMap::new(),
 			current_proc_index: 0,
+			current_proc_name_loc: PosRange::default(),
 		}
 	}
 
@@ -182,6 +181,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			let signature = FullSignature {
 				context: proc.context,
 				kind: proc.kind,
+				midi_input_count: proc.channels.len(),
 				inputs: input_types,
 				outputs: output_types,
 			};
@@ -191,9 +191,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	pub fn infer_bodies(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
-		self.seen_global_modules.resize(program.procedures.len(), None);
 		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
 			self.current_proc_index = proc_index;
+			self.current_proc_name_loc = PosRange::from(&proc.name);
 			self.callees.push(vec![]);
 			self.precompiled_callees.push(vec![]);
 			self.infer_body(proc)?;
@@ -426,7 +426,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
 			Conditional { condition, then, otherwise }
 				=> self.infer_conditional(condition, then, otherwise, loc),
-			Call { channel, name, args, .. } => self.infer_call(*channel, name, args, loc),
+			Call { channels, name, args, .. } => self.infer_call(channels, name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
 			Property { exp, name } => self.infer_property(exp, name, loc),
@@ -523,40 +523,29 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_call(&mut self,
-			channel: Option<usize>, name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
+			channels: &Vec<MidiChannel<'ast>>, name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_procedure(name.text) {
 			Some(ProcedureRef { context, kind, definition }) => {
 				let FullSignature {
 					context: current_context, kind: current_kind, ..
 				} = self.signatures[self.current_proc_index];
-				let channel_loc = &(loc.pos_before(), name.before);
+				let channels_loc = &(loc.pos_before(), name.before);
 				use Context::*;
 				use ProcedureKind::*;
-				match (channel, context, kind, current_context, current_kind) {
-					(Some(_), _, Module, _, _) => {
-						self.compiler.report_error(channel_loc,
-							"Modules can't be prefixed with a midi channel.");
-					},
+				match (channels.len(), context, kind, current_context, current_kind) {
 					(_, _, Module, _, Function) => {
 						self.compiler.report_error(name,
 							"Modules can't be called from functions.");
 					},
-					(_, Global, Module, Global, _) => {
-						if let ProcedureDefinition::Declaration { proc_index } = definition {
-							if let Some(range) = self.seen_global_modules[*proc_index] {
-								self.compiler.report_error(name,
-									"Global modules can only be called in one place.");
-								self.compiler.report_context(&range,
-									"Also called here.");
-							} else {
-								self.seen_global_modules[*proc_index] = Some(PosRange::from(name));
-							}
-						}
-					},
+					(_, Global, Module, Global, _) => {},
 					(_, Global, Module, _, _) => {
 						self.compiler.report_error(name,
 							"Global modules can only be called from other global modules.");
+					},
+					(1.., _, Module, _, _) => {
+						self.compiler.report_error(channels_loc,
+							"Only global modules can be prefixed with midi channels.");
 					},
 					(_, Note, Module, Note, _) => {},
 					(_, Note, Module, _, _) => {
@@ -564,9 +553,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							"Note modules can only be called from instruments and other note modules.");
 					},
 					(_, _, Module, _, _) => {},
-					(Some(_), _, Function, _, _) => {
-						self.compiler.report_error(channel_loc,
-							"Functions can't be prefixed with a midi channel.");
+					(1.., _, Function, _, _) => {
+						self.compiler.report_error(channels_loc,
+							"Functions can't be prefixed with midi channels.");
 					},
 					(_, Global, Function, Global, _) => {},
 					(_, Global, Function, _, _) => {
@@ -579,28 +568,18 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 							"Note functions can only be called from instruments, note modules and other note functions.");
 					},
 					(_, _, Function, _, _) => {},
-					(Some(channel), _, Instrument, Global, Module) => {
-						if channel >= 1 && channel <= 16 {
-							if let Some(range) = self.seen_midi_channels[channel - 1] {
-								self.compiler.report_error(channel_loc,
-									format!("Midi channel {} used multiple times.", channel));
-								self.compiler.report_context(&range,
-									"Also used here.");
-							} else {
-								self.seen_midi_channels[channel - 1] = Some(PosRange::from(channel_loc));
-							}
-						} else {
-							self.compiler.report_error(channel_loc,
-								"Midi channel must be between 1 and 16.");
-						}
+					(1, _, Instrument, Global, Module) => {},
+					(0, _, Instrument, _, _) => {
+						self.compiler.report_error(channels_loc,
+							"Instruments must be prefixed with a midi channel and '::'.");
 					},
-					(Some(_), _, Instrument, _, _) => {
-						self.compiler.report_error(name,
-							"Instruments can only be called from global modules.");
+					(2.., _, Instrument, _, _) => {
+						self.compiler.report_error(channels_loc,
+							"Instruments only take a single midi channel input.");
 					},
 					(_, _, Instrument, _, _) => {
 						self.compiler.report_error(name,
-							"Instruments must be prefixed with midi channel and '::'.");
+							"Instruments can only be called from global modules.");
 					},
 				}
 				match definition {
@@ -613,7 +592,33 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					}
 					ProcedureDefinition::Declaration { proc_index } => {
 						self.callees[self.current_proc_index].push(*proc_index);
-						let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index].clone();
+						let FullSignature {
+							midi_input_count, inputs, outputs, ..
+						} = &self.signatures[*proc_index].clone();
+						if *kind == Instrument || channels.len() == *midi_input_count {
+							for channel in channels {
+								match channel {
+									MidiChannel::Value { channel } => {
+										if *channel < 1 || *channel > 16 {
+											self.compiler.report_error(channels_loc,
+												"Midi channel must be between 1 and 16.");
+										}
+									},
+									MidiChannel::Named { name } => {
+										if let None = self.names.lookup_midi_input(self.current_proc_index, name.text) {
+											self.compiler.report_error(name,
+												format!("Midi channel input not found: '{}'.", name));
+											self.compiler.report_context(&self.current_proc_name_loc,
+												"Declare midi channel inputs in front of the module name, separated by '::'.");
+										}
+									}
+								}
+							}
+						} else {
+							self.compiler.report_error(name,
+								format!("Incorrect number of midi channels: {} given, {} expected",
+									channels.len(), midi_input_count));
+						}
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, args, loc)
 					},

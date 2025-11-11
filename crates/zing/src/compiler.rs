@@ -118,7 +118,7 @@ pub trait Location {
 	fn pos_after(&self) -> usize;
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PosRange {
 	before: usize,
 	after: usize,
@@ -176,6 +176,15 @@ impl<'input> Location for Expression<'input> {
 
 	fn pos_after(&self) -> usize {
 		self.pos_after()
+	}
+}
+
+impl<'input> Procedure<'input> {
+	pub fn midi_channels_location(&self) -> impl Location {
+		match self.channels.first() {
+			Some(channel) => (channel.pos_before(), self.name.pos_before()),
+			None => (self.name.pos_before(), self.name.pos_after()),
+		}
 	}
 }
 
@@ -261,6 +270,10 @@ impl<'input> Compiler<'input> {
 			match (proc.context, proc.kind, proc.name.text) {
 				(Context::Global, ProcedureKind::Module, "main") => {
 					found_main = true;
+					if !proc.channels.is_empty() {
+						self.report_error(&proc.midi_channels_location(),
+							"'main' can't have midi channel inputs.");
+					}
 				},
 				(_, _, "main") => {
 					self.report_error(&proc.name, "'main' must be a global module.");
@@ -274,7 +287,13 @@ impl<'input> Compiler<'input> {
 				(_, ProcedureKind::Instrument, _) => {
 					proc.context = Context::Note;
 				},
-				_ => {},
+				(Context::Global, ProcedureKind::Module, _) => {},
+				_ => {
+					if !proc.channels.is_empty() {
+						self.report_error(&proc.midi_channels_location(),
+							"Only global modules can have midi channel inputs.");
+					}
+				},
 			}
 		}
 		if !found_main {

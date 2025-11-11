@@ -12,6 +12,7 @@ use crate::compiler::{Compiler, CompileError, Location, PosRange};
 pub struct Names<'ast> {
 	parameters: HashMap<&'ast str, VariableRef>,
 	procedures: HashMap<&'ast str, ProcedureRef>,
+	channels: Vec<HashMap<&'ast str, (usize, PosRange)>>,
 	variables: Vec<HashMap<&'ast str, VariableRef>>,
 	combinators: HashMap<&'ast str, Combinator>,
 }
@@ -71,6 +72,7 @@ impl<'ast> Names<'ast> {
 		let mut names = Names {
 			parameters: HashMap::new(),
 			procedures: HashMap::new(),
+			channels: vec![HashMap::new(); program.procedures.len()],
 			variables: vec![HashMap::new(); program.procedures.len()],
 			combinators: HashMap::new(),
 		};
@@ -125,6 +127,11 @@ impl<'ast> Names<'ast> {
 			};
 			names.insert_procedure(program, compiler, &proc.name, proc_ref);
 
+			// Insert midi channel inputs
+			for (index, name) in proc.channels.iter().enumerate() {
+				names.insert_channel(compiler, proc_index, name, index);
+			}
+
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
 			for (tuple_index, item) in proc.inputs.items.iter().enumerate() {
@@ -177,6 +184,15 @@ impl<'ast> Names<'ast> {
 		}).or_insert(proc_ref);
 	}
 
+	fn insert_channel(&mut self,
+			compiler: &mut Compiler,
+			proc_index: usize, name: &Id<'ast>, index: usize) {
+		if name.text == "_" { return; }
+		self.channels[proc_index].entry(name.text).and_modify(|_| {
+			compiler.report_error(name, format!("Duplicate midi channel input '{}'.", name));
+		}).or_insert((index, PosRange::from(name)));
+	}
+
 	fn insert_variable(&mut self,
 			program: &Program<'ast>, compiler: &mut Compiler,
 			proc_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
@@ -199,6 +215,11 @@ impl<'ast> Names<'ast> {
 	/// Look up a module, function or instrument by name.
 	pub fn lookup_procedure(&self, name: &str) -> Option<&ProcedureRef> {
 		self.procedures.get(name)
+	}
+
+	/// Look up a MIDI channel input by name inside a specific procedure.
+	pub fn lookup_midi_input(&self, proc_index: usize, name: &str) -> Option<usize> {
+		self.channels[proc_index].get(name).map(|(index, _)| *index)
 	}
 
 	/// Look up a variable by name inside a specific procedure.

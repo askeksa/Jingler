@@ -19,6 +19,7 @@ pub struct Parameter<'input> {
 pub struct Procedure<'input> {
 	pub context: Context,
 	pub kind: ProcedureKind,
+	pub channels: Vec<Id<'input>>,
 	pub name: Id<'input>,
 	pub inputs: Pattern<'input>,
 	pub outputs: Pattern<'input>,
@@ -122,7 +123,13 @@ pub enum Expression<'input> {
 		then: Box<Expression<'input>>,
 		otherwise: Box<Expression<'input>>,
 	},
-	Call { before: Pos, channel: Option<usize>, name: Id<'input>, args: Vec<Expression<'input>>, after: Pos },
+	Call {
+		before: Pos,
+		channels: Vec<MidiChannel<'input>>,
+		name: Id<'input>,
+		args: Vec<Expression<'input>>,
+		after: Pos
+	},
 	Tuple { before: Pos, elements: Vec<Expression<'input>>, after: Pos },
 	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
 	Property { exp: Box<Expression<'input>>, name: Id<'input> },
@@ -158,6 +165,12 @@ pub struct BinOp {
 #[derive(Clone, Copy, Debug)]
 pub enum BinOpKind {
 	Add, Sub, Mul, Div, And, Or, Xor, Eq, Neq, Less, LessEq, Greater, GreaterEq,
+}
+
+#[derive(Clone, Debug)]
+pub enum MidiChannel<'input> {
+	Value { channel: usize },
+	Named { name: Id<'input> },
 }
 
 #[derive(Clone, Debug)]
