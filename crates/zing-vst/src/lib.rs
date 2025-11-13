@@ -44,7 +44,7 @@ struct ZingPlugin {
 	program: Option<ZingProgram>,
 	constants: Vec<u32>,
 	parameter_offset: usize,
-	midi_channel_mapping: [Option<u32>; 16],
+	track_order: Vec<usize>,
 	bytecode_compiled: bool,
 
 	parameters: Arc<ZingParameters>,
@@ -95,7 +95,7 @@ impl Default for ZingPlugin {
 			program: None,
 			constants: vec![],
 			parameter_offset: 0,
-			midi_channel_mapping: [None; 16],
+			track_order: vec![],
 
 			parameters: Arc::new(ZingParameters::default()),
 		}
@@ -138,12 +138,7 @@ impl ZingPlugin {
 					self.constants = constants;
 					self.parameter_offset = parameter_offset;
 
-					self.midi_channel_mapping.fill(None);
-					for (index, &inst) in program.track_order.iter().enumerate() {
-						if inst < 16 {
-							self.midi_channel_mapping[inst] = Some(index as u32);
-						}
-					}
+					self.track_order = program.track_order.clone();
 				},
 				Err(message) => {
 					let message = format!("Encoding error: {}", message);
@@ -248,15 +243,19 @@ impl Plugin for ZingPlugin {
 					match data[0] & 0xF0 {
 						0x90 => unsafe {
 							// Note On
-							if let Some(inst) = self.midi_channel_mapping[channel] {
-								NoteOn(inst, 0, key, velocity);
-								dirty = true;
+							for (track, track_channel) in self.track_order.iter().enumerate() {
+								if *track_channel == channel {
+									NoteOn(track as u32, 0, key, velocity);
+									dirty = true;
+								}
 							}
 						},
 						0x80 => unsafe {
 							// Note Off
-							if let Some(inst) = self.midi_channel_mapping[channel] {
-								NoteOff(inst, 0, key);
+							for (track, track_channel) in self.track_order.iter().enumerate() {
+								if *track_channel == channel {
+									NoteOff(track as u32, 0, key);
+								}
 							}
 						},
 						0xB0 if data[1] == 120 => {
