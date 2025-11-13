@@ -190,21 +190,10 @@ impl<'input> Procedure<'input> {
 
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
-		let r_process = Regex::new(r"(?m:^(?:([ \t]*)([^#]+?)([;\\]?))?[ \t]*(?:#.*)?\r?$)").unwrap();
+		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
 		let process_fn = |caps: &Captures| -> String {
-			match (caps.get(1), caps.get(2), caps.get(3)) {
-				(Some(indent), Some(text), Some(term)) => {
-					// Insert semicolon if line is indented and does not end with
-					// a semicolon or backslash. Remove trailing backslash.
-					let semi = match (indent.as_str(), term.as_str()) {
-						("", _) => term.as_str(),
-						(_, "\\") => "",
-						_ => ";",
-					};
-					format!("{}{}{}", indent.as_str(), text.as_str(), semi)
-				},
-				_ => format!(""),
-			}
+			let (_, [line]) = caps.extract::<1>();
+			line.to_string()
 		};
 		let processed_input = Rc::from(r_process.replace_all(raw_input, process_fn).as_ref());
 

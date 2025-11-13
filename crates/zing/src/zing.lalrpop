@@ -42,8 +42,8 @@ Pattern: Pattern<'input> = {
 	<before:@L> <items:PatternItems> <after:@R> => Pattern {<>},
 };
 
-PatternOptParen: Pattern<'input> = {
-	<before:@L> <items:PatternItemsOptParen> <after:@R> => Pattern {<>},
+PatternNoParen: Pattern<'input> = {
+	<before:@L> <items:PatternItemsNoParen> <after:@R> => Pattern {<>},
 };
 
 PatternItems: Vec<PatternItem<'input>> = {
@@ -51,9 +51,8 @@ PatternItems: Vec<PatternItem<'input>> = {
 	"(" <Comma<PatternItem>> ")",
 };
 
-PatternItemsOptParen: Vec<PatternItem<'input>> = {
+PatternItemsNoParen: Vec<PatternItem<'input>> = {
 	<Comma<PatternItem>>,
-	"(" <Comma<PatternItem>> ")",
 };
 
 PatternItem: PatternItem<'input> = {
@@ -86,7 +85,7 @@ ValueType: ValueType = {
 }
 
 Statement: Statement<'input> = {
-	<node:PatternOptParen> "=" <exp:Expression> ";" => Statement::Assign {<>},
+	<node:PatternNoParen> "=" <exp:Expression> => Statement::Assign {<>},
 };
 
 Expression: Expression<'input> = {
