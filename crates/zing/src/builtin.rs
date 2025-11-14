@@ -109,9 +109,9 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 ];
 
 pub static BUILTIN_MODULES: &[BuiltinModule] = &[
-	("cell",     U, sig!([static generic typeless, dynamic generic typeless] [dynamic generic typeless])),
-	("delay",    U, sig!([static mono number, dynamic generic typeless] [dynamic generic typeless])),
-	("dyndelay", U, sig!([static mono number, dynamic mono number, dynamic generic typeless] [dynamic generic typeless])),
+	("cell",     U, sig!([dynamic generic typeless, static generic typeless] [dynamic generic typeless])),
+	("delay",    U, sig!([dynamic generic typeless, static mono number] [dynamic generic typeless])),
+	("dyndelay", U, sig!([dynamic generic typeless, dynamic mono number, static mono number] [dynamic generic typeless])),
 ];
 
 pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[

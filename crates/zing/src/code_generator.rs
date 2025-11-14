@@ -693,17 +693,17 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								let width = self.retrieve_width(exp).unwrap();
 								match name.text {
 									"cell" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[0], width });
-										self.update_stack.push((StateKind::Cell, &args[1]));
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], width });
+										self.update_stack.push((StateKind::Cell, &args[0]));
 									},
 									"delay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[0], width });
-										self.update_stack.push((StateKind::Delay, &args[1]));
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[1], width });
+										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									"dyndelay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[0], width });
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[2], width });
 										self.find_cells(&args[1]);
-										self.update_stack.push((StateKind::Delay, &args[2]));
+										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}
@@ -894,17 +894,17 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 								match name.text {
 									"cell" => {
 										self.emit(code![CellPush]);
-										self.update_stack.push((StateKind::Cell, &args[1]));
+										self.update_stack.push((StateKind::Cell, &args[0]));
 									},
 									"delay" => {
 										self.emit(code![CellPush, BufferLoad]);
-										self.update_stack.push((StateKind::Delay, &args[1]));
+										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									"dyndelay" => {
 										self.emit(code![CellPush]);
 										self.generate(&args[1]);
 										self.emit(code![BufferLoadWithOffset]);
-										self.update_stack.push((StateKind::Delay, &args[2]));
+										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									_ => panic!("Unknown built-in module"),
 								}
