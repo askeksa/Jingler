@@ -2,7 +2,7 @@
 use std::mem::replace;
 use std::rc::Rc;
 
-use regex::{Captures, Regex};
+use regex::Regex;
 
 use lalrpop_util::ParseError;
 
@@ -19,7 +19,7 @@ lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 pub struct Compiler<'input> {
 	filename: &'input str,
 	raw_input: &'input str,
-	processed_input: Rc<str>, // Comments removed, semicolons added
+	processed_input: Rc<str>, // Comments removed
 	messages: Vec<Message>,
 
 	r_line_break: Regex,
@@ -190,12 +190,9 @@ impl<'input> Procedure<'input> {
 
 impl<'input> Compiler<'input> {
 	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
+		// Remove comments
 		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
-		let process_fn = |caps: &Captures| -> String {
-			let (_, [line]) = caps.extract::<1>();
-			line.to_string()
-		};
-		let processed_input = Rc::from(r_process.replace_all(raw_input, process_fn).as_ref());
+		let processed_input = Rc::from(r_process.replace_all(raw_input, "$1").as_ref());
 
 		Compiler {
 			filename,
