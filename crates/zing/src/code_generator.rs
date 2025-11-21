@@ -2,8 +2,7 @@
 use std::collections::{HashMap, HashSet};
 use std::mem::{replace, take};
 
-use program::program::*;
-use program::instructions::*;
+use ir::{code, Instruction};
 
 use crate::ast::*;
 use crate::builtin::*;
@@ -19,7 +18,7 @@ pub fn generate_code<'ast, 'input, 'comp>(
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 		compiler: &mut Compiler<'input>)
--> Result<(Vec<ZingProcedure>, usize, usize, Vec<usize>), CompileError> {
+-> Result<(Vec<ir::Procedure>, usize, usize, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
 	let main_index = match names.lookup_procedure("main").unwrap().definition {
 		ProcedureDefinition::Declaration { proc_index } => proc_index,
@@ -46,12 +45,12 @@ enum ModuleCall<'ast> {
 	Init {
 		kind: StateKind,
 		value: &'ast Expression<'ast>,
-		width: ZingWidth,
+		width: ir::Width,
 	},
 	Call {
 		inputs: Vec<Type>,
 		static_proc_id: u16,
-		generic_width: Option<ZingWidth>,
+		generic_width: Option<ir::Width>,
 		args: &'ast Vec<Expression<'ast>>,
 	},
 	For {
@@ -61,22 +60,22 @@ enum ModuleCall<'ast> {
 	},
 }
 
-impl From<Width> for ZingWidth {
+impl From<Width> for ir::Width {
 	fn from(width: Width) -> Self {
 		match width {
-			Width::Mono => ZingWidth::Mono,
-			Width::Stereo => ZingWidth::Stereo,
-			Width::Generic => ZingWidth::Generic,
+			Width::Mono => ir::Width::Mono,
+			Width::Stereo => ir::Width::Stereo,
+			Width::Generic => ir::Width::Generic,
 		}
 	}
 }
 
-impl From<ValueType> for ZingValueType {
+impl From<ValueType> for ir::ValueType {
 	fn from(value_type: ValueType) -> Self {
 		match value_type {
-			ValueType::Number => ZingValueType::Number,
-			ValueType::Bool => ZingValueType::Number,
-			ValueType::Buffer => ZingValueType::Buffer,
+			ValueType::Number => ir::ValueType::Number,
+			ValueType::Bool => ir::ValueType::Number,
+			ValueType::Buffer => ir::ValueType::Buffer,
 			ValueType::Typeless => panic!("Typeless parameter in signature"),
 		}
 	}
@@ -109,7 +108,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	/// The current procedure kind
 	current_kind: ProcedureKind,
 
-	procedures: Vec<ZingProcedure>,
+	procedures: Vec<ir::Procedure>,
 	code: Vec<Instruction>,
 	stack_height: usize,
 
@@ -186,7 +185,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn retrieve_width(&self, exp: &Expression<'ast>) -> Option<ZingWidth> {
+	fn retrieve_width(&self, exp: &Expression<'ast>) -> Option<ir::Width> {
 		self.stored_widths.get(&(exp as *const Expression<'ast>)).map(|&w| w.into())
 	}
 
@@ -284,11 +283,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				},
 				ProcedureDefinition::Precompiled { proc } => {
 					let (kind, index) = match scope {
-						None => (ZingProcedureKind::Function, 0),
-						Some(Scope::Static) => (ZingProcedureKind::Module { scope: ZingScope::Static }, 0),
-						Some(Scope::Dynamic) => (ZingProcedureKind::Module { scope: ZingScope::Dynamic }, 1),
+						None => (ir::ProcedureKind::Function, 0),
+						Some(Scope::Static) => (ir::ProcedureKind::Module { scope: ir::Scope::Static }, 0),
+						Some(Scope::Dynamic) => (ir::ProcedureKind::Module { scope: ir::Scope::Dynamic }, 1),
 					};
-					ZingProcedure {
+					ir::Procedure {
 						name: proc.name().to_string(),
 						kind,
 						inputs: self.make_type_list(proc.inputs().iter().copied(), scope),
@@ -309,7 +308,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		program: &'ast Program<'ast>,
 		proc_index: usize,
 		scope: Option<Scope>,
-	) -> Result<ZingProcedure, CompileError> {
+	) -> Result<ir::Procedure, CompileError> {
 		let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
 		self.current_proc_index = proc_index;
 		self.current_kind = *kind;
@@ -319,7 +318,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		match kind {
 			ProcedureKind::Module => {
 				if scope == Some(Scope::Static) {
-					proc_kind = ZingProcedureKind::Module { scope: ZingScope::Static };
+					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Static };
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
 					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
 					self.initialize_stack(inputs, Some(Scope::Static), false);
@@ -329,7 +328,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.generate_static_body(body)?;
 					self.adjust_stack(&[], self.stack_height);
 				} else {
-					proc_kind = ZingProcedureKind::Module { scope: ZingScope::Dynamic };
+					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Dynamic };
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
 					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
 					self.initialize_stack(inputs, Some(Scope::Dynamic), false);
@@ -339,7 +338,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				}
 			},
 			ProcedureKind::Function => {
-				proc_kind = ZingProcedureKind::Function;
+				proc_kind = ir::ProcedureKind::Function;
 				proc_inputs = self.make_proc_type_list(inputs, None);
 				proc_outputs = self.make_proc_type_list(outputs, None);
 				self.initialize_stack(inputs, None, false);
@@ -360,7 +359,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				});
 				let autokill_key = self.lookup_precompiled("$autokill");
 				if scope == Some(Scope::Static) {
-					proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Static };
+					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 					self.find_cells_in_body(body)?;
 					self.mark_implicit_cells_from_outputs(outputs);
@@ -371,7 +370,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					// Leave only the inputs (including the accumulator) on the stack.
 					self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 				} else {
-					proc_kind = ZingProcedureKind::Instrument { scope: ZingScope::Dynamic };
+					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Dynamic };
 					self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 					self.generate_dynamic_body(body)?;
 					// Leave the inputs (including the accumulator) and the output on the stack.
@@ -386,7 +385,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			},
 		}
 
-		Ok(ZingProcedure {
+		Ok(ir::Procedure {
 			name: name.text.into(),
 			kind: proc_kind,
 			inputs: proc_inputs,
@@ -588,15 +587,15 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn make_proc_type_list(&self, types: &Pattern, scope: Option<Scope>) -> Vec<ZingType> {
+	fn make_proc_type_list(&self, types: &Pattern, scope: Option<Scope>) -> Vec<ir::Type> {
 		self.make_type_list(types.items.iter().map(|item| item.item_type), scope)
 	}
 
-	fn make_type_list(&self, types: impl IntoIterator<Item = Type>, scope: Option<Scope>) -> Vec<ZingType> {
+	fn make_type_list(&self, types: impl IntoIterator<Item = Type>, scope: Option<Scope>) -> Vec<ir::Type> {
 		let mut result = vec![];
 		for item_type in types {
 			if scope.is_none() || item_type.scope == scope {
-				result.push(ZingType {
+				result.push(ir::Type {
 					width: item_type.width.unwrap().into(),
 					value_type:  item_type.value_type.unwrap().into(),
 				});
@@ -1011,11 +1010,11 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn expand(&mut self, width: ZingWidth) {
+	fn expand(&mut self, width: ir::Width) {
 		match width {
-			ZingWidth::Mono => {},
-			ZingWidth::Stereo => self.emit(code![ExpandStereo]),
-			ZingWidth::Generic => self.emit(code![ExpandGeneric]),
+			ir::Width::Mono => {},
+			ir::Width::Stereo => self.emit(code![ExpandStereo]),
+			ir::Width::Generic => self.emit(code![ExpandGeneric]),
 		}
 	}
 }

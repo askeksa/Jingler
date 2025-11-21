@@ -11,7 +11,7 @@ rfd = "0.6.3"
 simple-message-box = "0.0.2"
 vst = "0.2.0"
 
-program = { path = "../program" }
+ir = { path = "../ir" }
 zing = { path = "../zing" }
 
 [build-dependencies]

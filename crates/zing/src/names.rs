@@ -1,7 +1,7 @@
 
 use std::collections::HashMap;
 
-use program::instructions::Instruction;
+use ir::Instruction;
 
 use crate::ast::*;
 use crate::builtin::*;

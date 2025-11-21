@@ -3,11 +3,11 @@ use std::fmt::{Display, Error, Formatter};
 use crate::instructions::Instruction;
 
 #[derive(Clone, Debug)]
-pub struct ZingProgram {
+pub struct Program {
 	// Parameters
-	pub parameters: Vec<ZingParameter>,
+	pub parameters: Vec<Parameter>,
 	// Procedures
-	pub procedures: Vec<ZingProcedure>,
+	pub procedures: Vec<Procedure>,
 	// Static procedure ID of the main module
 	pub main_static_proc_id: usize,
 	// Dynamic procedure ID of the main module
@@ -17,7 +17,7 @@ pub struct ZingProgram {
 }
 
 #[derive(Clone, Debug)]
-pub struct ZingParameter {
+pub struct Parameter {
 	pub name: String,
 	pub min: f32,
 	pub max: f32,
@@ -25,47 +25,47 @@ pub struct ZingParameter {
 }
 
 #[derive(Clone, Debug)]
-pub struct ZingProcedure {
+pub struct Procedure {
 	pub name: String,
-	pub kind: ZingProcedureKind,
-	pub inputs: Vec<ZingType>,
-	pub outputs: Vec<ZingType>,
+	pub kind: ProcedureKind,
+	pub inputs: Vec<Type>,
+	pub outputs: Vec<Type>,
 	pub code: Vec<Instruction>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ZingProcedureKind {
+pub enum ProcedureKind {
 	Function,
-	Module { scope: ZingScope },
-	Instrument { scope: ZingScope },
+	Module { scope: Scope },
+	Instrument { scope: Scope },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ZingScope {
+pub enum Scope {
 	Static,
 	Dynamic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ZingWidth {
+pub enum Width {
 	Mono,
 	Stereo,
 	Generic,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ZingValueType {
+pub enum ValueType {
 	Number,
 	Buffer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ZingType {
-	pub width: ZingWidth,
-	pub value_type: ZingValueType,
+pub struct Type {
+	pub width: Width,
+	pub value_type: ValueType,
 }
 
-impl Display for ZingProcedure {
+impl Display for Procedure {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "{} [{}]: ", self.name, self.kind)?;
 		write_list(f, &self.inputs)?;
@@ -74,45 +74,45 @@ impl Display for ZingProcedure {
 	}
 }
 
-impl Display for ZingProcedureKind {
+impl Display for ProcedureKind {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match *self {
-			ZingProcedureKind::Function => write!(f, "function"),
-			ZingProcedureKind::Module { scope } => write!(f, "module, {} part", scope),
-			ZingProcedureKind::Instrument { scope } => write!(f, "instrument, {} part", scope),
+			ProcedureKind::Function => write!(f, "function"),
+			ProcedureKind::Module { scope } => write!(f, "module, {} part", scope),
+			ProcedureKind::Instrument { scope } => write!(f, "instrument, {} part", scope),
 		}
 	}
 }
 
-impl Display for ZingScope {
+impl Display for Scope {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match *self {
-			ZingScope::Static => write!(f, "static"),
-			ZingScope::Dynamic => write!(f, "dynamic"),
+			Scope::Static => write!(f, "static"),
+			Scope::Dynamic => write!(f, "dynamic"),
 		}
 	}
 }
 
-impl Display for ZingWidth {
+impl Display for Width {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match *self {
-			ZingWidth::Mono => write!(f, "mono"),
-			ZingWidth::Stereo => write!(f, "stereo"),
-			ZingWidth::Generic => write!(f, "generic"),
+			Width::Mono => write!(f, "mono"),
+			Width::Stereo => write!(f, "stereo"),
+			Width::Generic => write!(f, "generic"),
 		}
 	}
 }
 
-impl Display for ZingValueType {
+impl Display for ValueType {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match *self {
-			ZingValueType::Number => write!(f, "number"),
-			ZingValueType::Buffer => write!(f, "buffer"),
+			ValueType::Number => write!(f, "number"),
+			ValueType::Buffer => write!(f, "buffer"),
 		}
 	}
 }
 
-impl Display for ZingType {
+impl Display for Type {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "{} {}", self.width, self.value_type)
 	}

@@ -1,8 +1,6 @@
 
 #[macro_use] extern crate lalrpop_util;
 
-#[macro_use] extern crate program;
-
 pub mod compiler;
 
 mod ast;

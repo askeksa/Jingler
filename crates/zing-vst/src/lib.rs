@@ -1,6 +1,5 @@
 
-use program::encode::encode_bytecodes_binary;
-use program::program::{ZingProgram, ZingParameter};
+use ir::encode::encode_bytecodes_binary;
 
 use zing::compiler;
 
@@ -41,7 +40,7 @@ struct ZingPlugin {
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
-	program: Option<ZingProgram>,
+	program: Option<ir::Program>,
 	constants: Vec<u32>,
 	parameter_offset: usize,
 	track_order: Vec<usize>,
@@ -52,12 +51,12 @@ struct ZingPlugin {
 
 #[derive(Default)]
 struct ZingParameters {
-	zing_parameters: RwLock<Vec<ZingParameter>>,
+	zing_parameters: RwLock<Vec<ir::Parameter>>,
 	values: [AtomicFloat; NUM_PARAMETERS],
 }
 
 impl ZingParameters {
-	fn update_zing(&self, new: &Vec<ZingParameter>) {
+	fn update_zing(&self, new: &Vec<ir::Parameter>) {
 		let new = new.clone();
 		let mut new_values = [0f32; NUM_PARAMETERS];
 		let mut old = self.zing_parameters.write().unwrap();

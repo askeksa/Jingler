@@ -1,5 +1,5 @@
 [package]
-name = "program"
+name = "ir"
 version = "0.1.0"
 authors = ["Aske Simon Christensen <askesc@gmail.com>"]
 edition = "2021"

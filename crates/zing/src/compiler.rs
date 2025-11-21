@@ -6,8 +6,6 @@ use regex::Regex;
 
 use lalrpop_util::ParseError;
 
-use program::program::*;
-
 use crate::ast::*;
 use crate::code_generator::generate_code;
 use crate::names::Names;
@@ -203,7 +201,7 @@ impl<'input> Compiler<'input> {
 		}
 	}
 
-	pub fn compile(&mut self) -> Result<ZingProgram, CompileError> {
+	pub fn compile(&mut self) -> Result<ir::Program, CompileError> {
 		let processed_input = Rc::clone(&self.processed_input);
 		let mut program = self.parse(&processed_input)?;
 		self.check_contexts(&mut program)?;
@@ -212,7 +210,7 @@ impl<'input> Compiler<'input> {
 		let (procedures, main_static_proc_id, main_dynamic_proc_id, track_order)
 			= generate_code(&program, &names, signatures, stored_widths, callees, precompiled_callees, self)?;
 		let parameters = program.parameters.iter().map(|p| {
-			ZingParameter {
+			ir::Parameter {
 				name: p.name.to_string(),
 				min: p.min as f32,
 				max: p.max as f32,
@@ -220,7 +218,7 @@ impl<'input> Compiler<'input> {
 			}
 		}).collect();
 
-		Ok(ZingProgram {
+		Ok(ir::Program {
 			parameters,
 			procedures,
 			main_static_proc_id,

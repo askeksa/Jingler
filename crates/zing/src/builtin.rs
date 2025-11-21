@@ -1,5 +1,5 @@
 
-use program::instructions::*;
+use ir::{code, Instruction};
 
 use crate::ast::{BinOp, BinOpKind, Context, Scope, Type, UnOp, UnOpKind, ValueType, Width};
 use crate::names::Signature;

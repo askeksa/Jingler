@@ -12,7 +12,7 @@ hound = "3.4.0"
 notify = "4.0.15"
 rodio = "0.11.0"
 
-program = { path = "../program" }
+ir = { path = "../ir" }
 zing = { path = "../zing" }
 
 [build-dependencies]

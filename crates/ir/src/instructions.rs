@@ -2,14 +2,15 @@
 use std::f32;
 use std::fmt::{Display, Error, Formatter};
 
-use crate::program::ZingWidth;
+use crate::program::Width;
 
 #[macro_export]
 macro_rules! code {
 	{ $($b:expr),* } => {
 		{
-			#[allow(unused)] use Instruction::*;
-			#[allow(unused)] use NoteProperty::*;
+			#[allow(unused)] use ir::Instruction::*;
+			#[allow(unused)] use ir::NoteProperty::*;
+			#[allow(unused)] use ir::Width::*;
 			&[$($b),*]
 		}
 	}
@@ -82,7 +83,7 @@ pub enum Instruction {
 	StateLeave,
 
 	// Buffers
-	BufferAlloc(ZingWidth),
+	BufferAlloc(Width),
 	BufferLoad,
 	BufferLoadWithOffset,
 	BufferStoreAndStep,
@@ -90,7 +91,7 @@ pub enum Instruction {
 	BufferLength,
 
 	// Procedures/instruments/notes
-	Call(u16, Option<ZingWidth>),
+	Call(u16, Option<Width>),
 	PlayInstrument(u16, u16),
 	Kill,
 	ReadNoteProperty(NoteProperty),

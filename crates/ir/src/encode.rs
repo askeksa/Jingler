@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::program::{ZingProcedureKind, ZingProgram};
+use crate::program::{ProcedureKind, Program};
 use crate::instructions::{Instruction, NoteProperty};
 
 
@@ -352,7 +352,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 	}
 }
 
-fn collect_capacities(program: &ZingProgram, sample_rate: f32) -> (Vec<u16>, BTreeSet<u32>) {
+fn collect_capacities(program: &Program, sample_rate: f32) -> (Vec<u16>, BTreeSet<u32>) {
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
@@ -372,7 +372,7 @@ fn collect_capacities(program: &ZingProgram, sample_rate: f32) -> (Vec<u16>, BTr
 	(opcode_capacity, constant_set)
 }
 
-fn build_constant_list(program: &ZingProgram, constant_set: &BTreeSet<u32>) -> (Vec<u32>, BTreeMap<u32, u16>) {
+fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<u32>, BTreeMap<u32, u16>) {
 	let mut constants: Vec<u32> = vec![0; program.parameters.len()];
 	constants.extend(constant_set.into_iter());
 	let mut constant_map = BTreeMap::new();
@@ -392,7 +392,7 @@ fn check_opcode_space(opcode_capacity: &Vec<u16>) -> Result<()> {
 }
 
 pub fn encode_bytecodes_source(
-		program: &ZingProgram, jingler_asm_path: &String,
+		program: &Program, jingler_asm_path: &String,
 		sample_rate: f32, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
 	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
@@ -421,9 +421,9 @@ pub fn encode_bytecodes_source(
 	writeln!(out, "\tdb\tb(proc)")?;
 	for procedure in &program.procedures {
 		match procedure.kind {
-			ZingProcedureKind::Function => writeln!(out, ".function_{}:", procedure.name),
-			ZingProcedureKind::Module { scope } => writeln!(out, ".module_{}_{}:", procedure.name, scope),
-			ZingProcedureKind::Instrument { scope } => writeln!(out, ".instrument_{}_{}:", procedure.name, scope),
+			ProcedureKind::Function => writeln!(out, ".function_{}:", procedure.name),
+			ProcedureKind::Module { scope } => writeln!(out, ".module_{}_{}:", procedure.name, scope),
+			ProcedureKind::Instrument { scope } => writeln!(out, ".instrument_{}_{}:", procedure.name, scope),
 		}?;
 		let mut first = true;
 		for &inst in &procedure.code {
@@ -486,7 +486,7 @@ pub fn encode_bytecodes_source(
 	Ok(())
 }
 
-pub fn encode_bytecodes_binary(program: &ZingProgram, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>, usize)> {
+pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>, usize)> {
 	if (program.main_static_proc_id, program.main_dynamic_proc_id) != (0, 1) {
 		return Err(anyhow!("Procedures for the main module must be first."));
 	}

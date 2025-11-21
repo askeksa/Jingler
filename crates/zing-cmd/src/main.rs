@@ -1,5 +1,5 @@
 
-use program::encode::{encode_bytecodes_binary, encode_bytecodes_source};
+use ir::encode::{encode_bytecodes_binary, encode_bytecodes_source};
 use zing::compiler;
 
 use std::error::Error;
