@@ -7,7 +7,7 @@ import struct
 import datetime
 
 TOTAL_SEMITONES = 120
-SAMPLE_RATE = 44100
+DEFAULT_SAMPLE_RATE = 44100
 
 PARAMETER_QUANTIZATION_LEVELS = 16
 
@@ -133,7 +133,8 @@ class Track:
 
 
 class Music:
-	def __init__(self, tracks, instruments, length, ticklength, autos, track_order):
+	def __init__(self, sample_rate, tracks, instruments, length, ticklength, autos, track_order):
+		self.sample_rate = sample_rate
 		self.tracks = tracks
 		self.instruments = instruments
 		self.length = length
@@ -209,8 +210,8 @@ class Music:
 		self.datainit = "\tdb\t"
 		self.out = ""
 
-		spt = int(self.ticklength * SAMPLE_RATE)
-		total_samples = (self.length * self.ticklength) * SAMPLE_RATE
+		spt = int(self.ticklength * self.sample_rate)
+		total_samples = (self.length * self.ticklength) * self.sample_rate
 
 		def roundup(v):
 			return (int(v) & -0x10000) + 0x10000
@@ -218,7 +219,7 @@ class Music:
 		global infile
 		self.out += "; Music converted from %s %s\n" % (infile, str(datetime.datetime.now())[:-7])
 		self.out += "\n"
-		self.out += "%%define SAMPLE_RATE %d\n" % SAMPLE_RATE
+		self.out += "%%define SAMPLE_RATE %d\n" % self.sample_rate
 		self.out += "\n"
 		self.out += "%%define NUM_TRACKS %d\n" % len(self.track_order)
 		self.out += "\n"
@@ -502,7 +503,7 @@ def computeNoteLengths(notes):
 			prev.length = note.line - prev.line
 		prev = note
 
-def makeMusic(xsong, track_order, num_parameters):
+def makeMusic(xsong, sample_rate, track_order, num_parameters):
 	xgsd = xsong.GlobalSongData
 	if xgsd.PlaybackEngineVersion and int(xgsd.PlaybackEngineVersion) >= 4:
 		lines_per_minute = float(xgsd.BeatsPerMin) * float(xgsd.LinesPerBeat)
@@ -531,7 +532,7 @@ def makeMusic(xsong, track_order, num_parameters):
 		nlines = int(xpat.NumberOfLines)
 		length += nlines
 
-	return Music(tracks, instruments, length, ticklength, autos, track_order)
+	return Music(sample_rate, tracks, instruments, length, ticklength, autos, track_order)
 
 
 def printMusicStats(music, ansi):
@@ -578,14 +579,21 @@ def writefile(filename, s):
 if __name__ == "__main__": 
 	ansi = False
 	args = []
+	sample_rate = DEFAULT_SAMPLE_RATE
+	sample_rate_option = False
 	for a in sys.argv[1:]:
 		if a == "-ansi":
 			ansi = True
+		elif a == "--samplerate" or a == "-s":
+			sample_rate_option = True
+		elif sample_rate_option:
+			sample_rate = int(a)
+			sample_rate_option = False
 		else:
 			args.append(a)
 
 	if len(args) < 4:
-		print("Usage: %s [-ansi] <input xrns file> <output asm file> <num parameters> <midi channel for each track>" % sys.argv[0])
+		print("Usage: %s [-ansi] [--samplerate | -s <sample rate>] <input xrns file> <output asm file> <num parameters> <midi channel for each track>" % sys.argv[0])
 		sys.exit(1)
 
 	infile = args[0]
@@ -595,7 +603,7 @@ if __name__ == "__main__":
 
 	x = XML.makeXML(zipfile.ZipFile(infile).read("Song.xml"))
 	try:
-		music = makeMusic(x.RenoiseSong, track_order, num_parameters)
+		music = makeMusic(x.RenoiseSong, sample_rate, track_order, num_parameters)
 		print()
 		printMusicStats(music, ansi)
 		print()
