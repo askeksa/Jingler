@@ -393,6 +393,10 @@ JinglerRenderSamples:
 section reset text align=1
 
 JinglerResetState:
+	; Empty note space
+	mov			rdi, NoteSpace
+	mov			[rel NoteAllocPtr], rdi
+
 	; Clear buffer space
 	mov			rdi, BufferSpace
 	mov			rcx, [rel BufferAllocPtr]
@@ -402,7 +406,7 @@ JinglerResetState:
 	xor			eax, eax
 	rep stosd
 
-	; Clear note space
+	; Clear note headers
 	mov			rdi, NoteHeaders
 	mov			rcx, MAX_NOTE_COUNT*(16/4)
 	xor			eax, eax
@@ -414,7 +418,7 @@ JinglerResetState:
 	xor			eax, eax
 	rep stosd
 
-	; Make space for notes
+	; Set up note header lists for tracks
 	mov			rdi, TrackStarts
 	mov			rbx, NoteHeaders
 	mov			rcx, MAX_TRACKS
