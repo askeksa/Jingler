@@ -2,15 +2,22 @@
 %include "../../runtime/used_instructions.inc"
 %include "../../runtime/jingler.asm"
 
+%if __BITS__ == 32
 extern __imp__VirtualAlloc@16
 extern __imp__VirtualFree@12
+%define L(label) _%+label
+%else
+extern __imp_VirtualAlloc
+extern __imp_VirtualFree
+%define L(label) label
+%endif
 
-global _CompileBytecode
-global _ReleaseBytecode
-global _RunStaticCode
-global _RenderSamples
-global _NoteOn
-global _NoteOff
+global L(CompileBytecode)
+global L(ReleaseBytecode)
+global L(RunStaticCode)
+global L(RenderSamples)
+global L(NoteOn)
+global L(NoteOff)
 
 %define CODE_SPACE 0x10000
 
@@ -19,17 +26,18 @@ global _NoteOff
 %define MEM_RELEASE 0x00008000
 %define PAGE_EXECUTE_READWRITE 0x40
 
-section codemem bss align=4
+section codemem bss align=8
 CodeMemory:
-	resd 1
+	resq 1
 
 section cmd text align=1
 
-_CompileBytecode:
+L(CompileBytecode):
 	; Parameters: Bytecode
+%if __BITS__ == 32
 	pusha
 
-	call	LoadGmDls
+	call	JinglerLoadGmDls
 
 	push	PAGE_EXECUTE_READWRITE
 	push	MEM_COMMIT | MEM_RESERVE
@@ -40,63 +48,165 @@ _CompileBytecode:
 
 	mov		esi, [esp + (8+1)*4]
 	mov		edi, eax
-	call	GenerateCode
+	call	JinglerGenerateCode
 
 	popa
+%else
+	push	rbx
+	push	rsi
+	push	rdi
+	push	rbp
+	push	rcx
+
+	call	JinglerLoadGmDls
+
+	mov		rcx, 0
+	mov		rdx, CODE_SPACE
+	mov		r8, MEM_COMMIT | MEM_RESERVE
+	mov		r9, PAGE_EXECUTE_READWRITE
+	sub		rsp, 32
+	call	[rel __imp_VirtualAlloc]
+	add		rsp, 32
+	mov		[rel CodeMemory], rax
+
+	pop		rsi
+	mov		rdi, rax
+	call	JinglerGenerateCode
+
+	pop		rbp
+	pop		rdi
+	pop		rsi
+	pop		rbx
+%endif
 	ret
 
-_ReleaseBytecode:
+L(ReleaseBytecode):
+%if __BITS__ == 32
 	push	MEM_RELEASE
 	push	0
 	push	dword [CodeMemory]
 	call	[__imp__VirtualFree@12]
+%else
+	mov		rcx, [rel CodeMemory]
+	mov		rdx, 0
+	mov		r8, MEM_RELEASE
+	sub		rsp, 40
+	call	[rel __imp_VirtualFree]
+	add		rsp, 40
+%endif
 	ret
 
-_RunStaticCode:
+L(RunStaticCode):
 	; Parameters: Constants
+%if __BITS__ == 32
 	pusha
 
-	call	ResetState
+	call	JinglerResetState
 
 	mov		esi, [esp + (8+1)*4]
-	call	RunStaticCode
+	call	JinglerRunStaticCode
 
 	popa
+%else
+	push	rbx
+	push	rsi
+	push	rdi
+	push	rbp
+	push	rcx
+
+	call	JinglerResetState
+
+	pop		rsi
+	call	JinglerRunStaticCode
+
+	pop		rbp
+	pop		rdi
+	pop		rsi
+	pop		rbx
+%endif
 	ret
 
-_RenderSamples:
+L(RenderSamples):
 	; Parameters: Constants, Length
+%if __BITS__ == 32
 	pusha
 
 	mov		esi, [esp + (8+1)*4]
 	mov		eax, [esp + (8+2)*4]
-	call	RenderSamples
+	call	JinglerRenderSamples
 
 	popa
-	mov		eax, MusicBuffer
+	mov		eax, JinglerMusicBuffer
+%else
+	push	rbx
+	push	rsi
+	push	rdi
+	push	rbp
+
+	mov		rsi, rcx
+	mov		rax, rdx
+	call	JinglerRenderSamples
+
+	pop		rbp
+	pop		rdi
+	pop		rsi
+	pop		rbx
+	mov		rax, JinglerMusicBuffer
+%endif
 	ret
 
-_NoteOn:
+L(NoteOn):
 	; Parameters: Channel, Sample offset, Key, Velocity
+%if __BITS__ == 32
 	pusha
 
 	mov		eax, [esp + (8+1)*4]
 	mov		ebx, [esp + (8+2)*4]
 	mov		ecx, [esp + (8+3)*4]
 	mov		edx, [esp + (8+4)*4]
-	call	NoteOn
+	call	JinglerNoteOn
 
 	popa
+%else
+	push	rbx
+	push	rsi
+	push	rdi
+
+	mov		eax, ecx
+	mov		ebx, edx
+	mov		ecx, r8d
+	mov		edx, r9d
+	call	JinglerNoteOn
+
+	pop		rdi
+	pop		rsi
+	pop		rbx
+%endif
 	ret
 
-_NoteOff:
+L(NoteOff):
 	; Parameters: Channel, Sample offset, Key
+%if __BITS__ == 32
 	pusha
 
 	mov		eax, [esp + (8+1)*4]
 	mov		ebx, [esp + (8+2)*4]
 	mov		ecx, [esp + (8+3)*4]
-	call	NoteOff
+	call	JinglerNoteOff
 
 	popa
+%else
+	push	rbx
+	push	rsi
+	push	rdi
+
+	mov		eax, ecx
+	mov		ebx, edx
+	mov		ecx, r8d
+	call	JinglerNoteOff
+
+	pop		rdi
+	pop		rsi
+	pop		rbx
+%endif
 	ret

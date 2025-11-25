@@ -1,16 +1,62 @@
 
-extern __imp__OpenFile@12
-extern __imp__ReadFile@20
-extern __imp__CloseHandle@4
+; Various helpers for writing code that assembles as both 32 and 64 bit
+%if __BITS__ == 32
+	; Use 64 bit register name whenever the size differs
+	%define rax eax
+	%define rbx ebx
+	%define rcx ecx
+	%define rdx edx
+	%define rsi esi
+	%define rdi edi
+	%define rbp ebp
+	%define rsp esp
 
-global UnpackNotes
-global LoadGmDls
-global GenerateCode
-global RunStaticCode
-global RenderSamples
-global ResetState
-global NoteOn
-global NodeOff
+	; Scale, data, space and instructions for 32-bit pointers
+	%define PSIZE 4
+	%define dp dd
+	%define resp resd
+	%define stosp stosd
+	%define scasp scasd
+
+	; Use label directly in addressing
+	%macro rlea 1
+	%endmacro
+	%define rlabel(addr) addr
+
+	extern __imp__OpenFile@12
+	extern __imp__ReadFile@20
+	extern __imp__CloseHandle@4
+%else
+	; Scale, data, space and instructions for 64-bit pointers
+	%define PSIZE 8
+	%define dp dq
+	%define resp resq
+	%define stosp stosq
+	%define scasp scasq
+
+	; Load label into register before using it in addressing
+	%macro rlea 1
+		mov		r8, %1
+	%endmacro
+	%define rlabel(addr) r8
+
+	extern __imp_OpenFile
+	extern __imp_ReadFile
+	extern __imp_CloseHandle
+%endif
+
+; Size of a proc_call instruction
+%define CALL_SIZE (_snip_proc_call.end - _snip_proc_call)
+
+
+global JinglerUnpackNotes
+global JinglerLoadGmDls
+global JinglerGenerateCode
+global JinglerRunStaticCode
+global JinglerRenderSamples
+global JinglerResetState
+global JinglerNoteOn
+global JinglerNodeOff
 
 OF_READ equ 0x00000000
 
@@ -133,21 +179,21 @@ section snipdead text align=1
 
 section unpackn text align=1
 
-UnpackNotes:
-	; ESI = Notes
-	; ECX = Number of tracks
+JinglerUnpackNotes:
+	; ESI/RSI = Notes
+	; ECX/RCX = Number of tracks
 
-	mov			edx, 3 ; Component
+	mov			rdx, 3 ; Component
 .componentloop:
 	lodsd
 	xchg		ebp, eax ; Value factor
 
-	mov			edi, TrackStarts
-	mov			ebx, NoteHeaders
-	push		ecx
+	mov			rdi, TrackStarts
+	mov			rbx, NoteHeaders
+	push		rcx
 .trackloop:
-	mov			[edi], ebx
-	scasd
+	mov			[rdi], rbx
+	scasp
 
 .noteloop:
 	; Load value
@@ -161,23 +207,24 @@ UnpackNotes:
 	lodsb
 .bytevalue:
 	imul		eax, ebp
-	mov			[ebx + edx*4], eax
-	add			ebx, byte 16
+	mov			[rbx + rdx*4], eax
+	add			rbx, byte 16
 	jmp			.noteloop
 
 .next_track:
-	mov			dword [ebx], 0x80000000 ; Track terminator
-	add			ebx, byte 16
+	mov			dword [rbx], 0x80000000 ; Track terminator
+	add			rbx, byte 16
 	loop		.trackloop
-	pop			ecx
+	pop			rcx
 
-	dec			edx
+	dec			rdx
 	jns			.componentloop
 	ret
 
 section loadgm text align=1
 
-LoadGmDls:
+JinglerLoadGmDls:
+%if __BITS__ == 32
 	mov			edi, GmDls
 
 	push		byte OF_READ
@@ -194,13 +241,36 @@ LoadGmDls:
 	call		[__imp__ReadFile@20]
 
 	call		[__imp__CloseHandle@4]
+%else
+	sub			rsp, byte 40 ; Shadow space + alignment
+
+	mov			rdi, GmDls
+
+	mov			rcx, GmDlsName
+	mov			rdx, rdi
+	mov			r8, OF_READ
+	call		[rel __imp_OpenFile]
+	push		rax ; for CloseFile
+
+	mov			rcx, rax
+	mov			rdx, rdi
+	mov			r8, GMDLS_SIZE
+	mov			r9, rdi
+	mov			qword [rsp + 32], 0
+	call		[rel __imp_ReadFile]
+
+	pop			rcx
+	call		[rel __imp_CloseHandle]
+
+	add			rsp, byte 40
+%endif
 	ret
 
 section generate text align=1
 
-GenerateCode:
-	; ESI = Bytecode
-	; EDI = Space for generated code
+JinglerGenerateCode:
+	; ESI/RSI = Bytecode
+	; EDI/RDI = Space for generated code
 
 	mov			edx, OUT_S >> 4
 .mainloop:
@@ -208,208 +278,224 @@ GenerateCode:
 	lodsb
 	cmp			al, 0
 	je			.decode_done
-	push		esi
-	or			dl, [InoutCodes + eax]
-	mov			ebx, _snipsizes
-	mov			esi, _snips
-	xor			ecx, ecx
+	push		rsi
+	rlea		InoutCodes
+	or			dl, [rlabel(InoutCodes) + rax]
+	mov			rbx, _snipsizes
+	mov			rsi, _snips
+	xor			rcx, rcx
 .inout_loop:
-	add			esi, ecx
-	mov			cl, [ebx]
-	inc			ebx
+	add			rsi, rcx
+	mov			cl, [rbx]
+	inc			rbx
 	shr			dl, 1
 	jc			.not
 	rep movsb
 .not:
-	cmp			[ebx], byte -1
+	cmp			[rbx], byte -1
 	jne			.inout_loop
 
 .decodeloop:
-	cmp			[ebx], byte -1
+	cmp			[rbx], byte -1
 	jne			.decode
-	inc			ebx
-	add			esi, ecx
-	mov			cl, [ebx]
-	inc			ebx
-	mov			ebp, esi
+	inc			rbx
+	add			rsi, rcx
+	mov			cl, [rbx]
+	inc			rbx
+	mov			rbp, rsi
 .decode:
-	add			esi, ecx
-	mov			cl, [ebx]
-	inc			ebx
-	add			al, [ebx]
-	inc			ebx
+	add			rsi, rcx
+	mov			cl, [rbx]
+	inc			rbx
+	add			al, [rbx]
+	inc			rbx
 	jnc			.decodeloop
 
 .emit:
 	rep movsb
-	pop			esi
-	call		ebp
+	pop			rsi
+	call		rbp
 	jmp			.mainloop
 .decode_done:
 	ret
 
 section rstatic text align=1
 
-RunStaticCode:
-	; ESI = Random scramble, constant pool
+JinglerRunStaticCode:
+	; ESI/RSI = Random scramble, constant pool
 
-	ldmxcsr		[MXCSR]
-	mov			edi, StateSpace
-	mov			ebx, edi
-	call		[ProcPointers + MAIN_STATIC_PROC_ID*4]
+	ldmxcsr		[rel MXCSR]
+	mov			rdi, StateSpace
+	mov			rbx, rdi
+	rlea		ProcPointers
+	call		[dword rlabel(ProcPointers) + MAIN_STATIC_PROC_ID*PSIZE]
 	ret
 
 section render text align=1
 
-RenderSamples:
-	; EAX = Number of samples to render
-	; ESI = Random scramble, constant pool
+JinglerRenderSamples:
+	; EAX/RAX = Number of samples to render
+	; ESI/RSI = Random scramble, constant pool
 
-	ldmxcsr		[MXCSR]
-	push		eax
-	xor			eax, eax
+	ldmxcsr		[rel MXCSR]
+	push		rax
+	xor			rax, rax
 .sample:
-	push		eax
+	push		rax
 
 %if NUM_PARAMETERS > 0
-	mov			ecx, NUM_PARAMETERS
+	mov			rcx, NUM_PARAMETERS
 .paramloop:
-	mov			edi, [TrackStarts + NUM_TRACKS*4 + ecx*4 - 4]
+	rlea		TrackStarts
+	mov			rdi, [rlabel(TrackStarts) + NUM_TRACKS*PSIZE + rcx*PSIZE - PSIZE]
 .findkey:
-	fild		dword [edi+8]
-	fmul		dword [ParameterScaleBias + ecx*8 - 8]
-	fadd		dword [ParameterScaleBias + ecx*8 - 4]
-	mov			eax, [edi]
-	cmp			eax, [edi+4]
+	fild		dword [rdi+8]
+	rlea		ParameterScaleBias
+	fmul		dword [rlabel(ParameterScaleBias) + rcx*8 - 8]
+	fadd		dword [rlabel(ParameterScaleBias) + rcx*8 - 4]
+	mov			eax, [rdi]
+	cmp			eax, [rdi+4]
 	jne			.interpolate
-	fstp		dword [ParameterStates + ecx*4 - 4]
-	add			edi, byte 16
-	mov			[TrackStarts + NUM_TRACKS*4 + ecx*4 - 4], edi
+	rlea		ParameterStates
+	fstp		dword [rlabel(ParameterStates) + rcx*4 - 4]
+	add			rdi, byte 16
+	rlea		TrackStarts
+	mov			[rlabel(TrackStarts) + NUM_TRACKS*PSIZE + rcx*PSIZE - PSIZE], rdi
 	jmp			.findkey
 .interpolate:
-	fsub		dword [ParameterStates + ecx*4 - 4]
-	fimul		dword [edi+4]
-	fidiv		dword [edi]
-	fadd		dword [ParameterStates + ecx*4 - 4]
-	fstp		dword [esi+4 + ecx*4 - 4]
-	inc			dword [edi+4]
+	rlea		ParameterStates
+	fsub		dword [rlabel(ParameterStates) + rcx*4 - 4]
+	fimul		dword [rdi+4]
+	fidiv		dword [rdi]
+	fadd		dword [rlabel(ParameterStates) + rcx*4 - 4]
+	fstp		dword [rsi+4 + rcx*4 - 4]
+	inc			dword [rdi+4]
 	loop		.paramloop
 %endif
 
-	xor			ebp, ebp
-	mov			edi, StateSpace
-	mov			ebx, edi
-	call		[ProcPointers + MAIN_DYNAMIC_PROC_ID*4]
+	xor			rbp, rbp
+	mov			rdi, StateSpace
+	mov			rbx, rdi
+	rlea		ProcPointers
+	call		[dword rlabel(ProcPointers) + MAIN_DYNAMIC_PROC_ID*PSIZE]
 
-	pop			eax
-	cvtpd2ps	xmm0, [ebx]
-	movq		[MusicBuffer + eax*8], xmm0
+	pop			rax
+	cvtpd2ps	xmm0, [rbx]
+	rlea		JinglerMusicBuffer
+	movq		[rlabel(JinglerMusicBuffer) + rax*8], xmm0
 
-	inc			eax
-	cmp			[esp], eax
+	inc			rax
+	cmp			[rsp], rax
 	jne			.sample
-	pop			eax
+	pop			rax
 	ret
 
 section reset text align=1
 
-ResetState:
+JinglerResetState:
 	; Clear buffer space
-	mov			edi, BufferSpace
-	mov			ecx, [BufferAllocPtr]
-	sub			ecx, edi
-	shr			ecx, 2
-	mov			[BufferAllocPtr], edi
+	mov			rdi, BufferSpace
+	mov			rcx, [rel BufferAllocPtr]
+	sub			rcx, rdi
+	shr			rcx, 4-2
+	mov			[rel BufferAllocPtr], rdi
 	xor			eax, eax
 	rep stosd
 
 	; Clear note space
-	mov			edi, NoteHeaders
-	mov			ecx, MAX_NOTE_COUNT*4
+	mov			rdi, NoteHeaders
+	mov			rcx, MAX_NOTE_COUNT*(16/4)
 	xor			eax, eax
 	rep stosd
 
 	; Clear note chains
-	mov			edi, NoteChains
-	mov			ecx, MAX_TRACKS
+	mov			rdi, NoteChains
+	mov			rcx, MAX_TRACKS
 	xor			eax, eax
 	rep stosd
 
 	; Make space for notes
-	mov			edi, TrackStarts
-	mov			ebx, NoteHeaders
-	mov			ecx, MAX_TRACKS
+	mov			rdi, TrackStarts
+	mov			rbx, NoteHeaders
+	mov			rcx, MAX_TRACKS
 .trackloop:
-	add			ebx, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
-	mov			dword [ebx], 0x80000000 ; Track terminator
-	mov			[edi], ebx
-	scasd
+	add			rbx, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
+	mov			dword [rbx], 0x80000000 ; Track terminator
+	mov			[rdi], rbx
+	scasp
 	loop		.trackloop
 	ret
 
 section noteon text align=1
 
-NoteOn:
-	; EAX = Channel
+JinglerNoteOn:
+	; EAX/RAX = Channel
 	; EBX = Sample offset
 	; ECX = Key
 	; EDX = Velocity
 
 	; Push note onto stack of notes to be triggered
-	mov			edi, [TrackStarts + eax*4]
-	sub			edi, byte 16
-	mov			[TrackStarts + eax*4], edi
+	rlea		TrackStarts
+	mov			rdi, [rlabel(TrackStarts) + rax*PSIZE]
+	sub			rdi, byte 16
+	mov			[rlabel(TrackStarts) + rax*PSIZE], rdi
 
 	jmp			.bubble
 .bubbleloop:
-	movapd		xmm0, [edi + 16]
-	movapd		[edi], xmm0
-	add			edi, byte 16
+	movapd		xmm0, [rdi + 16]
+	movapd		[rdi], xmm0
+	add			rdi, byte 16
 .bubble:
-	cmp			[edi + 16], ebx
+	cmp			[rdi + 16], ebx
 	jbe			.bubbleloop
 
-	mov			[edi], ebx
-	mov			dword [edi + 4], 0x7FFFFFFF
-	mov			[edi + 8], ecx
-	mov			[edi + 12], edx
+	mov			[rdi], ebx
+	mov			dword [rdi + 4], 0x7FFFFFFF
+	mov			[rdi + 8], ecx
+	mov			[rdi + 12], edx
 	ret
 
 section noteoff text align=1
 
-NoteOff:
-	; EAX = Channel
+JinglerNoteOff:
+	; EAX/RAX = Channel
 	; EBX = Sample offset
 	; ECX = Key
 
 	; First look through notes that haven't been triggered yet
-	mov			edi, [TrackStarts + eax*4]
+	rlea		TrackStarts
+	mov			rdi, [rlabel(TrackStarts) + rax*PSIZE]
 	jmp			.prenote
 .prenoteloop:
-	add			edi, byte 16
+	add			rdi, byte 16
 .prenote:
-	cmp			[edi], ebx
+	cmp			[rdi], ebx
 	ja			.live
-	cmp			[edi + 8], ecx
+	cmp			[rdi + 8], ecx
 	jne			.prenoteloop
 
-	sub			ebx, [edi]
+	sub			ebx, [rdi]
 	jmp			.write
 
 .live:
 	; Then look through live notes
-	lea			edi, [NoteChains + eax*4]
+	rlea		NoteChains
+	lea			rdi, [rlabel(NoteChains) + rax*4]
 .noteloop:
-	mov			edi, [edi]
+	mov			edi, [rdi]
 	test		edi, edi
 	jz			.done
-	cmp			[edi + 8], ecx
+%if __BITS__ == 64
+	mov			r9, NoteSpace
+	add			rdi, r9
+%endif
+	cmp			[rdi + 8], ecx
 	jne			.noteloop
-	cmp			dword [edi + 4], 0x10000000
+	cmp			dword [rdi + 4], 0x10000000
 	jl			.noteloop
 
 .write:
-	mov			[edi + 4], ebx
+	mov			[rdi + 4], ebx
 .done:
 	ret
 
@@ -418,190 +504,216 @@ NoteOff:
 
 	; In/out snips
 	basesnip	r_to_t
-	sub			ebx, byte 16
+	sub			rbx, byte 16
 
 	basesnip	t_to_b
-	movapd		[ebx], xmm0
+	movapd		[rbx], xmm0
 
 	basesnip	s_to_b
-	movapd		xmm0, [ebx]
+	movapd		xmm0, [rbx]
 
 	basesnip	t_to_r
-	add			ebx, byte 16
+	add			rbx, byte 16
 
 	; Plain snips
 	snipcode	plain
 
 	snip		state_enter, rr, I_STATE_ENTER
-	push		edi
+	push		rdi
 
 	snip		state_leave, rr, I_STATE_LEAVE
-	pop			edi
+	pop			rdi
 
 	snip		cell_fetch, sr, I_CELL_FETCH
-	pop			eax
-	movapd		xmm0, [eax]
-	push		eax
+	pop			rax
+	movapd		xmm0, [rax]
+	push		rax
 
 	snip		cell_push, sr, I_CELL_PUSH
-	push		edi
-	movapd		xmm0, [edi]
-	add			edi, byte 16
+	push		rdi
+	movapd		xmm0, [rdi]
+	add			rdi, byte 16
 
 	snip		cell_read, sr, I_CELL_READ
-	movapd		xmm0, [edi]
-	add			edi, byte 16
+	movapd		xmm0, [rdi]
+	add			rdi, byte 16
 
 	snip		cell_init, rs, I_CELL_INIT
-	movapd		[edi], xmm0
-	add			edi, byte 16
+	movapd		[rdi], xmm0
+	add			rdi, byte 16
 
 	snip		cell_pop, rs, I_CELL_POP
-	pop			eax
-	movapd		[eax], xmm0
+	pop			rax
+	movapd		[rax], xmm0
 
 	snip		gmdls_sample, rt, I_GMDLS_SAMPLE
-	push		ecx
-	cvtsd2si	eax, [ebx]
+	push		rcx
+	cvtsd2si	eax, [rbx]
+%if __BITS__ == 32
 	mov			ecx, GmDls + GMDLS_DATA
 	add			ecx, [GmDls + GMDLS_OFFSETS + eax*4]
 	add			ecx, [ecx] ; Last dword of wsmp chunk
+%else
+	mov			rcx, GmDls + GMDLS_DATA
+	mov			eax, [rcx - GMDLS_DATA + GMDLS_OFFSETS + rax*4]
+	add			rcx, rax
+	mov			eax, [rcx]
+	add			rcx, rax
+%endif
 	cvtsd2si	eax, xmm0
 	mov			edx, eax
-	cmp			dword [ecx], byte 0 ; Loop length or looped flag
+	cmp			dword [rcx], byte 0 ; Loop length or looped flag
 	je			.direct
-	sub			eax, [ecx - 4] ; Loop base
+	sub			eax, [rcx - 4] ; Loop base
 	jb			.direct
 	xor			edx, edx
-	div			dword [ecx] ; Loop length
-	add			edx, [ecx - 4] ; Loop base
+	div			dword [rcx] ; Loop length
+	add			edx, [rcx - 4] ; Loop base
 .direct:
-	mov			eax, [ecx + 8] ; Length of data chunk
+	mov			eax, [rcx + 8] ; Length of data chunk
 	shr			eax, 1 ; Sample count
 	cmp			edx, eax
 	jae			.lookup
-	lea			ecx, [ecx + 10 + edx*2] ; 2 bytes before sample data
+	lea			rcx, [rcx + 10 + rdx*2] ; 2 bytes before sample data
 .lookup:
-	cvtsi2sd	xmm0, dword [ecx]
-	pop			ecx
+	cvtsi2sd	xmm0, dword [rcx]
+	pop			rcx
 
 	snip		addsub, rt, I_ADDSUB
-	addsubpd	xmm0, [ebx]
+	addsubpd	xmm0, [rbx]
 
 	snip		fputnext, rt, I_FPUTNEXT
-	fld			qword [ebx]
+	fld			qword [rbx]
 
 	snip		random, rt, I_RANDOM
 	cvtsd2si	eax, xmm0
-	mul			dword [esi]
+	mul			dword [rsi]
 	xor			eax, edx
-	xor			eax, [byte ebx+4]
-	mul			dword [esi]
+	xor			eax, [byte rbx+4]
+	mul			dword [rsi]
 	xor			eax, edx
-	xor			eax, [byte ebx+0]
-	mul			dword [esi]
+	xor			eax, [byte rbx+0]
+	mul			dword [rsi]
 	xor			eax, edx
 	cvtsi2sd	xmm0, eax
 
 	snip		buffer_load_with_offset, rt, I_BUFFER_LOAD_WITH_OFFSET
 	cvtsd2si	eax, xmm0
-	add			eax, [ebx]
-	cmp			eax, [ebx + 4]
+	add			eax, [rbx]
+	cmp			eax, [rbx + 4]
 	jb			.no_wrap
-	sub			eax, [ebx + 4]
+	sub			eax, [rbx + 4]
 .no_wrap:
 	shl			eax, 4
-	add			eax, [ebx + 8]
-	movapd		xmm0, [eax]
+	add			rax, [rbx + 8]
+	movapd		xmm0, [rax]
 
 	snip		buffer_load, st, I_BUFFER_LOAD
-	mov			eax, [ebx]
+	mov			eax, [rbx]
 	shl			eax, 4
-	add			eax, [ebx + 8]
-	movapd		xmm0, [eax]
+	add			rax, [rbx + 8]
+	movapd		xmm0, [rax]
 
 	snip		buffer_store_and_step, rs, I_BUFFER_STORE_AND_STEP
-	mov			eax, [ebx]
+	mov			eax, [rbx]
 	shl			eax, 4
-	add			eax, [ebx + 8]
-	movapd		[eax], xmm0
+	add			rax, [rbx + 8]
+	movapd		[rax], xmm0
 
-	dec			dword [ebx]
+	dec			dword [rbx]
 	jns			.no_wrap
-	mov			eax, [ebx + 4]
-	add			[ebx], eax
+	mov			eax, [rbx + 4]
+	add			[rbx], eax
 .no_wrap:
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
-	mov			eax, [BufferAllocPtr]
-	mov			[ebx + 8], eax
+	rlea		BufferAllocPtr
+	mov			rax, [rlabel(BufferAllocPtr)]
+	mov			[rbx + 8], rax
 	cvtsd2si	eax, xmm0
-	mov			[ebx + 4], eax
+	mov			[rbx + 4], eax
 	shl			eax, 4
-	add			[BufferAllocPtr], eax
-	and			dword [ebx], byte 0
+	add			[rlabel(BufferAllocPtr)], rax
+	and			dword [rbx], byte 0
 
 	snip		play_instrument1, ss, I_PLAY_INSTRUMENT1
-	push		edi
+	push		rdi
 
 .noteloop:
 	; Find note headers for track
-	lea			ecx, [TrackStarts + ebp*4] ; Note headers for track
-	mov			edi, [ecx]
+	rlea		TrackStarts
+	lea			rcx, [rlabel(TrackStarts) + rbp*PSIZE] ; Note headers for track
+	mov			rdi, [rcx]
 
 	; Count down to note trigger
-	dec			dword [edi]
-	jns			_snip_play_instrument2.no_more_notes+6
+	dec			dword [rdi]
+	jns			_snip_play_instrument2.no_more_notes + CALL_SIZE
 
 	; Allocate note object and copy header
-	movapd		xmm0, [edi]
-	mov			edi, [NoteAllocPtr]
-	add			dword [ecx], byte 16
-	movapd		[edi], xmm0
+	movapd		xmm0, [rdi]
+	rlea		NoteAllocPtr
+	mov			rdi, [rlabel(NoteAllocPtr)]
+	add			dword [rcx], byte 16
+	movapd		[rdi], xmm0
 
 	; Chain note object into note list
-	lea			ecx, [NoteChains + ebp*4]
-	mov			eax, [ecx]
-	mov			[edi], eax
-	mov			[ecx], edi
+	rlea		NoteChains
+	lea			rcx, [rlabel(NoteChains) + rbp*4]
+	mov			eax, [rcx]
+	mov			[rdi], eax
+	mov			[rcx], edi
+%if __BITS__ == 64
+	mov			r9, NoteSpace
+	sub			[rcx], r9d
+%endif
 
 	; Call instrument init procedure
-	add			edi, byte 16
+	add			rdi, byte 16
 
 	snip		play_instrument2, ss, I_PLAY_INSTRUMENT2
 	; Bump alloc pointer to end of allocated note object
-	mov			[NoteAllocPtr], edi
-	jmp			_snip_play_instrument1.noteloop-6
+	rlea		NoteAllocPtr
+	mov			[rlabel(NoteAllocPtr)], rdi
+	jmp			_snip_play_instrument1.noteloop - CALL_SIZE
 .no_more_notes:
 
 	; Process all active notes for this instrument
-	lea			ecx, [NoteChains + ebp*4]
+	rlea		NoteChains
+	lea			rcx, [rlabel(NoteChains) + rbp*4]
 .activeloop:
-	mov			edi, [ecx]
+	mov			edi, [rcx]
 	test		edi, edi
-	je			_snip_play_instrument3.activedone+6
-	push		edi
+	je			_snip_play_instrument3.activedone + CALL_SIZE
+%if __BITS__ == 64
+	mov			r9, NoteSpace
+	add			rdi, r9
+%endif
+	push		rdi
 
 	; Call instrument process procedure
-	add			edi, byte 16
+	add			rdi, byte 16
 
 	snip		play_instrument3, ss, I_PLAY_INSTRUMENT3
-	pop			ecx
-	dec			dword [ecx + 4]
-	jmp			_snip_play_instrument2.activeloop-6
+	pop			rcx
+	dec			dword [rcx + 4]
+	jmp			_snip_play_instrument2.activeloop - CALL_SIZE
 .activedone:
 
-	inc			ebp
-	pop			edi
+	inc			rbp
+	pop			rdi
 
 	snip		kill, ss, I_KILL
-	mov			eax, [ecx]
-	mov			eax, [eax]
-	mov			[ecx], eax
+	mov			eax, [rcx]
+%if __BITS__ == 64
+	mov			r9, NoteSpace
+	add			rax, r9
+%endif
+	mov			eax, [rax]
+	mov			[rcx], eax
 
 	snip		exp2_body, ss, I_EXP2_BODY
 	; Assumes fop 0xFC (frndint) before.
-	fld			qword [ebx]
+	fld			qword [rbx]
 	fsub		st0, st1
 	f2xm1
 	fld1
@@ -610,7 +722,7 @@ NoteOff:
 	fstp		st1
 
 	snip		fdone, ss, I_FDONE
-	fstp		qword [ebx]
+	fstp		qword [rbx]
 
 	; Byte parameter snips
 	snipcode	notbyte, I_FOP
@@ -618,32 +730,50 @@ NoteOff:
 	stosb
 
 	snip		fop, ss, I_FOP
-	fld			qword [ebx]
+	fld			qword [rbx]
 	db			0xd9 ; Various floating point ops
 
 	; Proc snip
 	snipcode	proc, I_PROC
 	movzx		ecx, dh
 	inc			dh
-	mov			[ProcPointers + ecx*4], edi
+	rlea		ProcPointers
+	mov			[rlabel(ProcPointers) + rcx*PSIZE], rdi
 
 	snip		proc, ss, I_PROC
 	ret
 
 	; Pointer snips
-	snipcode	pointer, I_CONSTANT+I_PROC_CALL+I_NOTE_PROPERTY
+%if __BITS__ == 32
+	snipcode	pointer, I_PROC_CALL+I_CONSTANT+I_NOTE_PROPERTY
 	shl			eax, 2
-	add			[edi-4], eax
+	add			[rdi-4], eax
+%else
+	snipcode	proc_call, I_PROC_CALL
+	shl			eax, 3
+	add			[rdi-4], eax
+%endif
 
 	snip		proc_call, ss, I_PROC_CALL
-	call		[ProcPointers]
+	rlea		ProcPointers
+	call		[dword rlabel(ProcPointers) + 0]
+.end:
+%if __BITS__ == 64
+	snipcode	pointer, I_CONSTANT+I_NOTE_PROPERTY
+	shl			eax, 2
+	add			[rdi-4], eax
+%endif
 
 	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, [dword esi + 4]
+	cvtss2sd	xmm0, [dword rsi + 4]
 
 	snip		note_property, sr, I_NOTE_PROPERTY
-	mov			eax, [ecx]
-	cvtsi2sd	xmm0, [dword eax + 4]
+	mov			eax, [rcx]
+%if __BITS__ == 64
+	mov			r9, NoteSpace
+	add			rax, r9
+%endif
+	cvtsi2sd	xmm0, [dword rax + 4]
 
 	; Offset snips
 	snipcode	offset, I_STACK_LOAD+I_STACK_STORE
@@ -658,9 +788,9 @@ NoteOff:
 
 	; Label snips
 	snipcode	label, I_LABEL+I_IF
-	pop			ecx
-	push		edi
-	push		ecx
+	pop			rcx
+	push		rdi
+	push		rcx
 
 	snip		label, rr, I_LABEL
 
@@ -670,11 +800,11 @@ NoteOff:
 
 	; Loopjump snip
 	snipcode	loopjump, I_LOOPJUMP
-	pop			ecx
-	pop			eax
-	push		ecx
-	mov			[edi-4], eax
-	sub			[edi-4], edi
+	pop			rcx
+	pop			rax
+	push		rcx
+	mov			[rdi-4], eax
+	sub			[rdi-4], edi
 
 	snip		loopjump, rr, I_LOOPJUMP
 	db			0x0f, 0x82 ; jb label
@@ -682,11 +812,11 @@ NoteOff:
 
 	; Endif snips
 	snipcode	endif, I_ENDIF+I_ELSE
-	pop			ecx
-	pop			eax
-	push		ecx
-	mov			[eax-4], edi
-	sub			[eax-4], eax
+	pop			rcx
+	pop			rax
+	push		rcx
+	mov			[rax-4], edi
+	sub			[rax-4], eax
 
 	snip		endif, rr, I_ENDIF
 
@@ -700,10 +830,10 @@ NoteOff:
 	stosb
 
 	snip		round, st, I_ROUND
-	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [ebx], mode
+	db			0x66, 0x0f, 0x3a, 0x09, 0x03 ; roundpd xmm0, [rbx], mode
 
 	snip		compare, rt, I_COMPARE
-	db			0x66, 0x0f, 0xc2, 0x03 ; cmppd xmm0, [ebx], mode
+	db			0x66, 0x0f, 0xc2, 0x03 ; cmppd xmm0, [rbx], mode
 
 	; Implicit snip
 	snipcode	implicit
@@ -712,10 +842,10 @@ NoteOff:
 	add			ecx, byte 2
 	bts			eax, ecx
 %endif
-	mov			[edi-2], al
+	mov			[rdi-2], al
 
 	basesnip	implicit
-	movapd		xmm0, [ebx] ; <op>pd xmm0, [ebx]
+	movapd		xmm0, [rbx] ; <op>pd xmm0, [rbx]
 
 	snipend
 
@@ -826,11 +956,11 @@ MXCSR:
 
 section	notept data align=4
 NoteAllocPtr:
-	dd NoteSpace
+	dp NoteSpace
 
 section	bufferpt data align=4
 BufferAllocPtr:
-	dd BufferSpace
+	dp BufferSpace
 
 %if NUM_PARAMETERS > 0
 section paramst bss align=4
@@ -841,7 +971,7 @@ ParameterStates:
 section tracks bss align=4
 TrackStarts:
 .align16:
-	resd MAX_TRACKS
+	resp MAX_TRACKS
 
 section notech bss align=4
 NoteChains:
@@ -856,7 +986,7 @@ NoteHeaders:
 section procptrs bss align=4
 ProcPointers:
 .align16:
-	resd 256
+	resp 256
 
 section ckcode bss align=1
 GeneratedCode:
@@ -880,7 +1010,7 @@ BufferSpace:
 	reso BUFFER_SPACE
 
 section music bss align=8
-MusicBuffer:
+JinglerMusicBuffer:
 .align24:
 	resq MUSIC_SPACE
 
