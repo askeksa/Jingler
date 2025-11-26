@@ -135,6 +135,14 @@ MultiplicativeOp: BinOpKind = {
 
 UnaryExpression: Expression<'input> = {
 	<op:UnOp<UnaryOp>> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
+	<exp:Box<UnaryExpression>> "." <name:Id> <args:ParenthesizedExpressions?> <after:@R> => Expression::Call {
+		before: exp.pos_before(),
+		channels: vec![],
+		name,
+		args: [*exp].into_iter().chain(args.into_iter().flatten()).collect(),
+		after,
+	},
+	<exp:Box<UnaryExpression>> "." <index:Uint> <after:@R> => Expression::TupleIndex {<>},
 	PrimaryExpression,
 };
 
@@ -150,14 +158,6 @@ PrimaryExpression: Expression<'input> = {
 	<before:@L> <channels:MidiArg*> <name:Id> <args:ParenthesizedExpressions> <after:@R> => Expression::Call {<>},
 	<before:@L> <elements:ParenthesizedExpressions> <after:@R> => Expression::Tuple {<>},
 	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
-	<exp:Box<PrimaryExpression>> "." <name:Id> <args:ParenthesizedExpressions?> <after:@R> => Expression::Call {
-		before: exp.pos_before(),
-		channels: vec![],
-		name,
-		args: [*exp].into_iter().chain(args.into_iter().flatten()).collect(),
-		after,
-	},
-	<exp:Box<PrimaryExpression>> "." <index:Uint> <after:@R> => Expression::TupleIndex {<>},
 	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
 
