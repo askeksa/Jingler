@@ -1,0 +1,9 @@
+**/target
+**/.DS_Store
+**/*.wav
+convert/__pycache__
+runtime/*.obj
+runtime/*.exe
+runtime/*.html
+runtime/reuse.txt
+t
