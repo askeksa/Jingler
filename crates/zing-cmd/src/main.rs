@@ -13,7 +13,7 @@ use clap::clap_app;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
-use rodio::Sink;
+use rodio::{OutputStream, Sink};
 
 #[cfg(target_arch = "x86")]
 #[link(name = "jingler_cmd")]
@@ -86,8 +86,10 @@ fn write_wav(filename: &str, sample_rate: f32, data: &[f32]) -> Result<(), hound
 }
 
 fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
-	let device = rodio::default_output_device().ok_or("Could not open default device.")?;
-	let sink = Sink::new(&device);
+	let (_stream, stream_handle) = OutputStream::try_default()
+		.map_err(|e| format!("Could not open default device: {e}"))?;
+	let sink = Sink::try_new(&stream_handle)
+		.map_err(|e| format!("Could not create audio sink: {e}"))?;
 	let buffer = SamplesBuffer::new(2, sample_rate as u32, data);
 	sink.append(buffer);
 	sink.sleep_until_end();

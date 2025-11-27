@@ -7,7 +7,7 @@ build = "build.rs"
 
 [dependencies]
 notify = "4.0.15"
-rfd = "0.6.3"
+rfd = "0.16.0"
 simple-message-box = "0.0.2"
 vst = "0.2.0"
 

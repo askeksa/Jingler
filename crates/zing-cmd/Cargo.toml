@@ -10,7 +10,7 @@ chrono = "0.4.11"
 clap = "2.33.0"
 hound = "3.4.0"
 notify = "4.0.15"
-rodio = "0.11.0"
+rodio = "0.20.1"
 
 ir = { path = "../ir" }
 zing = { path = "../zing" }
