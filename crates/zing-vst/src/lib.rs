@@ -105,7 +105,7 @@ impl ZingPlugin {
 	fn compile(&mut self) {
 		self.release_program();
 		match fs::read_to_string(&self.zing_filename) {
-			Ok(s) => match compiler::Compiler::new(&self.zing_filename, &s).compile() {
+			Ok(s) => match compiler::Compiler::new(self.zing_filename.to_string(), s).compile() {
 				Ok(program) => {
 					self.parameters.update_zing(&program.parameters);
 					self.program = Some(program);

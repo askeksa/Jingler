@@ -2,28 +2,28 @@
 type Pos = usize;
 
 #[derive(Clone, Debug)]
-pub struct Program<'input> {
-	pub parameters: Vec<Parameter<'input>>,
-	pub procedures: Vec<Procedure<'input>>,
+pub struct Program {
+	pub parameters: Vec<Parameter>,
+	pub procedures: Vec<Procedure>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Parameter<'input> {
-	pub name: Id<'input>,
+pub struct Parameter {
+	pub name: Id,
 	pub min: f64,
 	pub max: f64,
 	pub default: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Procedure<'input> {
+pub struct Procedure {
 	pub context: Context,
 	pub kind: ProcedureKind,
-	pub channels: Vec<Id<'input>>,
-	pub name: Id<'input>,
-	pub inputs: Pattern<'input>,
-	pub outputs: Pattern<'input>,
-	pub body: Vec<Statement<'input>>,
+	pub channels: Vec<Id>,
+	pub name: Id,
+	pub inputs: Pattern,
+	pub outputs: Pattern,
+	pub body: Vec<Statement>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,20 +41,20 @@ pub enum ProcedureKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum Statement<'input> {
-	Assign { node: Pattern<'input>, exp: Expression<'input> },
+pub enum Statement {
+	Assign { node: Pattern, exp: Expression },
 }
 
 #[derive(Clone, Debug)]
-pub struct Pattern<'input> {
+pub struct Pattern {
 	pub before: Pos,
-	pub items: Vec<PatternItem<'input>>,
+	pub items: Vec<PatternItem>,
 	pub after: Pos,
 }
 
 #[derive(Clone, Debug)]
-pub struct PatternItem<'input> {
-	pub name: Id<'input>,
+pub struct PatternItem {
+	pub name: Id,
 	pub item_type: Type,
 }
 
@@ -112,36 +112,36 @@ impl Type {
 }
 
 #[derive(Clone, Debug)]
-pub enum Expression<'input> {
+pub enum Expression {
 	Number { before: Pos, value: f64, after: Pos },
 	Bool { before: Pos, value: bool },
-	Variable { name: Id<'input> },
-	UnOp { op: UnOp, exp: Box<Expression<'input>> },
-	BinOp { left: Box<Expression<'input>>, op: BinOp, right: Box<Expression<'input>> },
+	Variable { name: Id },
+	UnOp { op: UnOp, exp: Box<Expression> },
+	BinOp { left: Box<Expression>, op: BinOp, right: Box<Expression> },
 	Conditional {
-		condition: Box<Expression<'input>>,
-		then: Box<Expression<'input>>,
-		otherwise: Box<Expression<'input>>,
+		condition: Box<Expression>,
+		then: Box<Expression>,
+		otherwise: Box<Expression>,
 	},
 	Call {
 		before: Pos,
-		channels: Vec<MidiChannel<'input>>,
-		name: Id<'input>,
-		args: Vec<Expression<'input>>,
+		channels: Vec<MidiChannel>,
+		name: Id,
+		args: Vec<Expression>,
 		after: Pos
 	},
-	Tuple { before: Pos, elements: Vec<Expression<'input>>, after: Pos },
-	Merge { before: Pos, left: Box<Expression<'input>>, right: Box<Expression<'input>>, after: Pos },
-	TupleIndex { exp: Box<Expression<'input>>, index: u64, after: Pos },
-	BufferIndex { exp: Box<Expression<'input>>, index: Box<Expression<'input>>, after: Pos },
+	Tuple { before: Pos, elements: Vec<Expression>, after: Pos },
+	Merge { before: Pos, left: Box<Expression>, right: Box<Expression>, after: Pos },
+	TupleIndex { exp: Box<Expression>, index: u64, after: Pos },
+	BufferIndex { exp: Box<Expression>, index: Box<Expression>, after: Pos },
 	For {
 		before: Pos,
-		name: Id<'input>,
-		count: Box<Expression<'input>>,
-		combinator: Id<'input>,
-		body: Box<Expression<'input>>,
+		name: Id,
+		count: Box<Expression>,
+		combinator: Id,
+		body: Box<Expression>,
 	},
-	Expand { exp: Box<Expression<'input>>, width: Width },
+	Expand { exp: Box<Expression>, width: Width },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -167,18 +167,18 @@ pub enum BinOpKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum MidiChannel<'input> {
+pub enum MidiChannel {
 	Value { channel: usize },
-	Named { name: Id<'input> },
+	Named { name: Id },
 }
 
 #[derive(Clone, Debug)]
-pub struct Id<'input> {
+pub struct Id {
 	pub before: Pos,
-	pub text: &'input str,
+	pub text: String,
 }
 
-impl<'input> Expression<'input> {
+impl Expression {
 	pub fn pos_before(&self) -> usize {
 		use Expression::*;
 		match *self {
@@ -203,7 +203,7 @@ impl<'input> Expression<'input> {
 		match *self {
 			Number { after, .. } => after,
 			Bool { before, value } => before + if value { 4 } else { 5 },
-			Variable { ref name, .. } => name.before + name.text.len(),
+			Variable { ref name, .. } => name.before + name.text.as_bytes().len(),
 			UnOp { ref exp, .. } => exp.pos_after(),
 			BinOp { ref right, .. } => right.pos_after(),
 			Conditional { ref otherwise, .. } => otherwise.pos_after(),
@@ -217,9 +217,9 @@ impl<'input> Expression<'input> {
 		}
 	}
 
-	pub fn traverse(&self,
-			pre: &mut impl FnMut(&Expression<'input>),
-			post: &mut impl FnMut(&Expression<'input>)) {
+	pub fn traverse<'ast>(&'ast self,
+			pre: &mut impl FnMut(&'ast Expression),
+			post: &mut impl FnMut(&'ast Expression)) {
 		pre(self);
 		use Expression::*;
 		match self {
@@ -270,13 +270,13 @@ impl<'input> Expression<'input> {
 		post(self);
 	}
 
-	pub fn traverse_pre(&self,
-			pre: &mut impl FnMut(&Expression<'input>)) {
+	pub fn traverse_pre<'ast>(&'ast self,
+			pre: &mut impl FnMut(&'ast Expression)) {
 		self.traverse(pre, &mut |_| {});
 	}
 
-	pub fn traverse_post(&self,
-			post: &mut impl FnMut(&Expression<'input>)) {
+	pub fn traverse_post<'ast>(&'ast self,
+			post: &mut impl FnMut(&'ast Expression)) {
 		self.traverse(&mut |_| {}, post);
 	}
 }

@@ -17,13 +17,13 @@ pub struct FullSignature {
 	pub outputs: Vec<Type>,
 }
 
-pub fn infer_types<'ast, 'input, 'comp>(
-		program: &mut Program<'ast>,
-		names: &'ast Names<'ast>,
-		compiler: &'comp mut Compiler<'input>)
+pub fn infer_types<'comp, 'names>(
+		program: &mut Program,
+		names: &'names Names,
+		compiler: &'comp mut Compiler)
 		-> Result<(
 			Vec<FullSignature>,
-			HashMap<*const Expression<'ast>, Width>,
+			HashMap<*const Expression, Width>,
 			Vec<Vec<usize>>,
 			Vec<Vec<*const PrecompiledProcedure>>,
 		), CompileError> {
@@ -34,17 +34,17 @@ pub fn infer_types<'ast, 'input, 'comp>(
 }
 
 
-struct TypeInferrer<'ast, 'input, 'comp> {
-	names: &'ast Names<'ast>,
-	compiler: &'comp mut Compiler<'input>,
+struct TypeInferrer<'comp, 'names> {
+	names: &'names Names,
+	compiler: &'comp mut Compiler,
 	signatures: Vec<FullSignature>,
-	stored_widths: HashMap<*const Expression<'ast>, Width>,
-	parameters: HashMap<&'ast str, TypeResult>,
+	stored_widths: HashMap<*const Expression, Width>,
+	parameters: HashMap<String, TypeResult>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 
 	// Procedure-local state
-	ready: HashMap<&'ast str, TypeResult>,
+	ready: HashMap<String, TypeResult>,
 	current_proc_index: usize,
 	current_proc_name_loc: PosRange,
 }
@@ -64,12 +64,12 @@ impl TypeResult {
 	}
 }
 
-impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
-	pub fn new(names: &'ast Names<'ast>, compiler: &'comp mut Compiler<'input>)
-			-> TypeInferrer<'ast, 'input, 'comp> {
+impl<'comp, 'names> TypeInferrer<'comp, 'names> {
+	pub fn new(names: &'names Names, compiler: &'comp mut Compiler)
+			-> TypeInferrer<'comp, 'names> {
 		let mut parameters = HashMap::new();
-		for &param in names.parameter_names() {
-			parameters.insert(param, TypeResult::Type {
+		for param in names.parameter_names() {
+			parameters.insert(param.clone(), TypeResult::Type {
 				inferred_type: type_spec!(dynamic mono number),
 			});
 		}
@@ -87,7 +87,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 	}
 
-	pub fn infer_signatures(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
+	pub fn infer_signatures(&mut self, program: &mut Program) -> Result<(), CompileError> {
 		for proc in &mut program.procedures {
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
@@ -190,7 +190,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.compiler.check_errors()
 	}
 
-	pub fn infer_bodies(&mut self, program: &mut Program<'ast>) -> Result<(), CompileError> {
+	pub fn infer_bodies(&mut self, program: &mut Program) -> Result<(), CompileError> {
 		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
 			self.current_proc_index = proc_index;
 			self.current_proc_name_loc = PosRange::from(&proc.name);
@@ -202,9 +202,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		Ok(())
 	}
 
-	fn check_outputs(&mut self, proc: &mut Procedure<'ast>) -> Result<(), CompileError> {
+	fn check_outputs(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
 		for PatternItem { name: variable_name, item_type } in &proc.outputs.items {
-			match self.ready.get(variable_name.text) {
+			match self.ready.get(variable_name.text.as_str()) {
 				Some(&TypeResult::Type { inferred_type }) => {
 					if !inferred_type.assignable_to(item_type) {
 						self.compiler.report_error(variable_name,
@@ -223,7 +223,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		self.compiler.check_errors()
 	}
 
-	fn infer_body(&mut self, proc: &mut Procedure<'ast>) -> Result<(), CompileError> {
+	fn infer_body(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
 		// Initialize ready variable to the set of parameters.
 		self.ready = self.parameters.clone();
 
@@ -255,9 +255,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		let mut changed = true;
 		while changed {
 			changed = false;
-			for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
+			for (body_index, Statement::Assign { node, .. }) in proc.body.iter().enumerate() {
 				if on_cycle[body_index] && node.items.iter().all(|item| {
-					*dependency_count.entry(item.name.text).or_default() == 0
+					*dependency_count.entry(item.name.text.as_str()).or_default() == 0
 				}) {
 					for name in &dependencies[body_index] {
 						*dependency_count.entry(name).or_default() -= 1;
@@ -274,7 +274,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			let mut changed = false;
 			for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
 				if !done[body_index] && dependencies[body_index].iter()
-						.all(|name| self.ready.contains_key(name)) {
+						.all(|name| self.ready.contains_key(&name.to_string())) {
 					self.infer_statement(node, exp);
 					done[body_index] = true;
 					done_count += 1;
@@ -312,7 +312,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 
 	fn find_ready(&mut self,
 			proc_kind: ProcedureKind,
-			pattern: &mut Pattern<'ast>) {
+			pattern: &mut Pattern) {
 		for PatternItem { name: variable_name, item_type } in &mut pattern.items {
 			let Type { scope, width, value_type } = item_type;
 			// Mark variable ready if it is fully typed.
@@ -327,7 +327,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 				_ => scope.is_some() && width.is_some() && value_type.is_some(),
 			};
 			if is_ready {
-				self.ready.insert(variable_name.text, TypeResult::Type {
+				self.ready.insert(variable_name.text.clone(), TypeResult::Type {
 					inferred_type: *item_type,
 				});
 			}
@@ -335,15 +335,15 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn find_dependencies(&mut self,
-			exp: &Expression<'ast>,
-			dependencies: &mut HashSet<&'ast str>) {
+			exp: &Expression,
+			dependencies: &mut HashSet<String>) {
 		exp.traverse_pre(&mut |exp| {
 			if let Expression::Variable { name: variable_name } = exp {
-				match self.names.lookup_variable(self.current_proc_index, variable_name.text) {
+				match self.names.lookup_variable(self.current_proc_index, &variable_name.text) {
 					Some(VariableRef { kind, .. }) => {
 						match kind {
 							VariableKind::Input | VariableKind::Node { .. } => {
-								dependencies.insert(variable_name.text);
+								dependencies.insert(variable_name.text.clone());
 							},
 							_ => {},
 						}
@@ -358,8 +358,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_statement(&mut self,
-			node: &mut Pattern<'ast>,
-			exp: &mut Expression<'ast>) {
+			node: &mut Pattern,
+			exp: &mut Expression) {
 		let FullSignature { kind: current_kind, .. } = self.signatures[self.current_proc_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
@@ -406,7 +406,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 					TypeResult::Error
 				},
 			};
-			self.ready.insert(item.name.text, result);
+			self.ready.insert(item.name.text.clone(), result);
 		}
 		if seen_static && seen_dynamic {
 			self.compiler.report_error(node,
@@ -415,7 +415,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_expression(&mut self,
-			exp: &mut Expression<'ast>) -> Vec<TypeResult> {
+			exp: &mut Expression) -> Vec<TypeResult> {
 		let loc = &PosRange::from(exp) as &dyn Location;
 		use Expression::*;
 		let (results, generic_width) = match exp {
@@ -442,7 +442,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn expect_single(&mut self,
-			exp: &mut Expression<'ast>,
+			exp: &mut Expression,
 			title: &str) -> TypeResult {
 		let result = self.infer_expression(exp);
 		if result.len() != 1 {
@@ -453,8 +453,8 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn store_width(&mut self, exp: &Expression<'ast>, width: Width) {
-		self.stored_widths.insert(exp as *const Expression<'ast>, width);
+	fn store_width(&mut self, exp: &Expression, width: Width) {
+		self.stored_widths.insert(exp as *const Expression, width);
 	}
 
 	fn infer_number(&mut self,
@@ -472,13 +472,13 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_variable(&mut self,
-			name: &Id<'ast>,
+			name: &Id,
 			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		(vec![self.ready[name.text]], None)
+		(vec![self.ready[&name.text]], None)
 	}
 
 	fn infer_unop(&mut self,
-			op: &UnOp, exp: &mut Expression<'ast>,
+			op: &UnOp, exp: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let operand = self.expect_single(exp, "operand of unary operator");
 		let results = self.check_signature_expand(op.signature(), &[operand], &mut [exp], loc);
@@ -486,7 +486,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_binop(&mut self,
-			left: &mut Expression<'ast>, op: &BinOp, right: &mut Expression<'ast>,
+			left: &mut Expression, op: &BinOp, right: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let left_operand = self.expect_single(left, "left operand of binary operator");
 		let right_operand = self.expect_single(right, "right operand of binary operator");
@@ -495,7 +495,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_conditional(&mut self,
-			condition: &mut Expression<'ast>, then: &mut Expression<'ast>, otherwise: &mut Expression<'ast>,
+			condition: &mut Expression, then: &mut Expression, otherwise: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let condition_operand = self.expect_single(condition, "condition of conditional operator");
 		let then_operand = self.expect_single(then, "operand of conditional operator");
@@ -522,9 +522,9 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_call(&mut self,
-			channels: &Vec<MidiChannel<'ast>>, name: &Id<'ast>, args: &mut Vec<Expression<'ast>>,
+			channels: &Vec<MidiChannel>, name: &Id, args: &mut Vec<Expression>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		match self.names.lookup_procedure(name.text) {
+		match self.names.lookup_procedure(&name.text) {
 			Some(ProcedureRef { context, kind, definition }) => {
 				let FullSignature {
 					context: current_context, kind: current_kind, ..
@@ -604,7 +604,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 										}
 									},
 									MidiChannel::Named { name } => {
-										if let None = self.names.lookup_midi_input(self.current_proc_index, name.text) {
+										if let None = self.names.lookup_midi_input(self.current_proc_index, &name.text) {
 											self.compiler.report_error(name,
 												format!("Midi channel input not found: '{}'.", name));
 											self.compiler.report_context(&self.current_proc_name_loc,
@@ -631,7 +631,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_tuple(&mut self,
-			elements: &mut Vec<Expression<'ast>>,
+			elements: &mut Vec<Expression>,
 			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let mut results = vec![];
 		for exp in elements {
@@ -641,7 +641,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_merge(&mut self,
-			left: &mut Expression<'ast>, right: &mut Expression<'ast>,
+			left: &mut Expression, right: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let left_operand = self.expect_single(left, "left operand of merge");
 		let right_operand = self.expect_single(right, "right operand of merge");
@@ -651,7 +651,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_tuple_index(&mut self,
-			exp: &mut Expression<'ast>, index: u64,
+			exp: &mut Expression, index: u64,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let tuple = self.infer_expression(exp);
 		let index = index as usize;
@@ -665,7 +665,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_buffer_index(&mut self,
-			exp: &mut Expression<'ast>, index: &mut Expression<'ast>,
+			exp: &mut Expression, index: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let buffer_operand = self.expect_single(exp, "buffer operand of indexing");
 		let index_operand = self.expect_single(index, "index operand of indexing");
@@ -675,25 +675,25 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn infer_for(&mut self,
-			name: &Id<'ast>, count: &mut Expression<'ast>,
-			combinator: &Id<'ast>, body: &mut Expression<'ast>,
+			name: &Id, count: &mut Expression,
+			combinator: &Id, body: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		if let None = self.names.lookup_combinator(combinator.text) {
+		if let None = self.names.lookup_combinator(&combinator.text) {
 			self.compiler.report_error(combinator,
 				format!("Permitted repetition combinators are {}", self.names.combinator_list()));
 		}
 		let count_operand = self.expect_single(count, "repetition count");
-		self.ready.insert(name.text, TypeResult::Type {
+		self.ready.insert(name.text.clone(), TypeResult::Type {
 			inferred_type: type_spec!(static mono number),
 		});
 		let body_operand = self.expect_single(body, "body of repetition");
-		self.ready.remove(name.text);
+		self.ready.remove(&name.text);
 		let for_sig = sig!([static mono number, dynamic generic number] [dynamic generic number]);
 		let results = self.check_signature(&for_sig, &[count_operand, body_operand], loc);
 		(results, body_operand.width())
 	}
 
-	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression<'ast>>,
+	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let mut arg_types = vec![];
 		let mut arg_multiplicity = vec![];
@@ -728,7 +728,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 	}
 
 	fn check_signature_expand(&mut self, sig: &Signature, args: &[TypeResult],
-			inputs: &mut [&mut Expression<'ast>], loc: &dyn Location) -> Vec<TypeResult> {
+			inputs: &mut [&mut Expression], loc: &dyn Location) -> Vec<TypeResult> {
 		let result = self.check_signature(sig, args, loc);
 		let generic_width = self.generic_instantiation(sig, &result);
 		for ((sig_type, arg_type), input) in sig.inputs.iter().zip(args).zip(inputs) {
@@ -876,7 +876,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 		}).collect()
 	}
 
-	fn expand(&mut self, exp: &mut Expression<'ast>, width: Width) {
+	fn expand(&mut self, exp: &mut Expression, width: Width) {
 		let dummy = Expression::Bool {
 			before: exp.pos_before(),
 			value: true,
@@ -886,7 +886,7 @@ impl<'ast, 'input, 'comp> TypeInferrer<'ast, 'input, 'comp> {
 			exp: Box::new(node),
 			width,
 		};
-		let key = exp as *const Expression<'ast>;
+		let key = exp as *const Expression;
 		if let Some(width) = self.stored_widths.get(&key) {
 			if let Expression::Expand { exp: inner, .. } = exp {
 				self.store_width(inner, *width);

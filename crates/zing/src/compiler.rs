@@ -14,9 +14,9 @@ use crate::type_inference::infer_types;
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
 /// Main compiler state, mainly concerned with error reporting.
-pub struct Compiler<'input> {
-	filename: &'input str,
-	raw_input: &'input str,
+pub struct Compiler {
+	filename: String,
+	raw_input: String,
 	processed_input: Rc<str>, // Comments removed
 	messages: Vec<Message>,
 
@@ -142,9 +142,9 @@ impl Location for (usize, usize) {
 	fn pos_after(&self) -> usize { self.1 }
 }
 
-impl<'input> Location for Id<'input> {
+impl Location for Id {
 	fn pos_before(&self) -> usize { self.before }
-	fn pos_after(&self) -> usize { self.before + self.text.len() }
+	fn pos_after(&self) -> usize { self.before + self.text.as_bytes().len() }
 }
 
 impl Location for UnOp {
@@ -157,7 +157,7 @@ impl Location for BinOp {
 	fn pos_after(&self) -> usize { self.before + self.to_string().len() }
 }
 
-impl<'input> Location for Pattern<'input> {
+impl Location for Pattern {
 	fn pos_before(&self) -> usize { self.before }
 	fn pos_after(&self) -> usize { self.after }
 }
@@ -167,7 +167,7 @@ impl<A: Location, B:Location> Location for (A, B) {
 	fn pos_after(&self) -> usize { self.1.pos_after() }
 }
 
-impl<'input> Location for Expression<'input> {
+impl Location for Expression {
 	fn pos_before(&self) -> usize {
 		self.pos_before()
 	}
@@ -177,7 +177,7 @@ impl<'input> Location for Expression<'input> {
 	}
 }
 
-impl<'input> Procedure<'input> {
+impl Procedure {
 	pub fn midi_channels_location(&self) -> impl Location {
 		match self.channels.first() {
 			Some(channel) => (channel.pos_before(), self.name.pos_before()),
@@ -186,11 +186,11 @@ impl<'input> Procedure<'input> {
 	}
 }
 
-impl<'input> Compiler<'input> {
-	pub fn new(filename: &'input str, raw_input: &'input str) -> Compiler<'input> {
+impl Compiler {
+	pub fn new(filename: String, raw_input: String) -> Compiler {
 		// Remove comments
 		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
-		let processed_input = Rc::from(r_process.replace_all(raw_input, "$1").as_ref());
+		let processed_input = Rc::from(r_process.replace_all(raw_input.as_str(), "$1").as_ref());
 
 		Compiler {
 			filename,
@@ -227,7 +227,7 @@ impl<'input> Compiler<'input> {
 		})
 	}
 
-	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program<'ast>, CompileError> {
+	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program, CompileError> {
 		zing::ProgramParser::new().parse(text).map_err(|err| {
 			match err {
 				ParseError::InvalidToken { location } => {
@@ -251,7 +251,7 @@ impl<'input> Compiler<'input> {
 	fn check_contexts(&mut self, program: &mut Program) -> Result<(), CompileError> {
 		let mut found_main = false;
 		for proc in &mut program.procedures {
-			match (proc.context, proc.kind, proc.name.text) {
+			match (proc.context, proc.kind, proc.name.text.as_str()) {
 				(Context::Global, ProcedureKind::Module, "main") => {
 					found_main = true;
 					if !proc.channels.is_empty() {
@@ -297,7 +297,7 @@ impl<'input> Compiler<'input> {
 				None => (0, offset)
 			}
 		};
-		let source_lines = self.r_line_break.split(self.raw_input);
+		let source_lines = self.r_line_break.split(&self.raw_input);
 		let source_line = source_lines.skip(line).next().unwrap_or("").to_string();
 
 		self.messages.push(Message {

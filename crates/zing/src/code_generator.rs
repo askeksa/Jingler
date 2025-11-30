@@ -10,17 +10,17 @@ use crate::compiler::*;
 use crate::names::*;
 use crate::type_inference::FullSignature;
 
-pub fn generate_code<'ast, 'input, 'comp>(
-		program: &'ast Program<'ast>,
-		names: &'ast Names<'ast>,
+pub fn generate_code<'ast, 'comp, 'names>(
+		program: &'ast Program,
+		names: &'names Names,
 		signatures: Vec<FullSignature>,
-		stored_widths: HashMap<*const Expression<'ast>, Width>,
+		stored_widths: HashMap<*const Expression, Width>,
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
-		compiler: &mut Compiler<'input>)
+		compiler: &mut Compiler)
 -> Result<(Vec<ir::Procedure>, usize, usize, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
-	let main_index = match names.lookup_procedure("main").unwrap().definition {
+	let main_index = match names.lookup_procedure(&"main".to_string()).unwrap().definition {
 		ProcedureDefinition::Declaration { proc_index } => proc_index,
 		_ => panic!("No main"),
 	};
@@ -31,7 +31,7 @@ pub fn generate_code<'ast, 'input, 'comp>(
 	Ok((take(&mut cg.procedures), main_static_proc_id, main_dynamic_proc_id, track_order))
 }
 
-fn statement_scope<'ast>(statement: &Statement<'ast>) -> Option<Scope> {
+fn statement_scope(statement: &Statement) -> Option<Scope> {
 	let Statement::Assign { node, .. } = statement;
 	node.items.first().and_then(|item| item.item_type.scope)
 }
@@ -44,18 +44,18 @@ enum StateKind { Cell, Delay }
 enum ModuleCall<'ast> {
 	Init {
 		kind: StateKind,
-		value: &'ast Expression<'ast>,
+		value: &'ast Expression,
 		width: ir::Width,
 	},
 	Call {
 		inputs: Vec<Type>,
 		static_proc_id: u16,
 		generic_width: Option<ir::Width>,
-		args: &'ast Vec<Expression<'ast>>,
+		args: &'ast Vec<Expression>,
 	},
 	For {
-		name: &'ast Id<'ast>,
-		count: &'ast Expression<'ast>,
+		name: &'ast Id,
+		count: &'ast Expression,
 		nested_calls: Vec<ModuleCall<'ast>>,
 	},
 }
@@ -81,11 +81,11 @@ impl From<ValueType> for ir::ValueType {
 	}
 }
 
-struct CodeGenerator<'ast, 'input, 'comp> {
-	names: &'ast Names<'ast>,
-	compiler: &'comp mut Compiler<'input>,
+struct CodeGenerator<'ast, 'comp, 'names> {
+	names: &'names Names,
+	compiler: &'comp mut Compiler,
 	signatures: Vec<FullSignature>,
-	stored_widths: HashMap<*const Expression<'ast>, Width>,
+	stored_widths: HashMap<*const Expression, Width>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 
@@ -115,11 +115,11 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	/// Next stack index
 	next_stack_index: usize,
 	/// Stack index of variable
-	stack_index: HashMap<&'ast str, usize>,
+	stack_index: HashMap<String, usize>,
 	/// Stack index of static variable in implicit cell
 	stack_index_in_cell: Vec<usize>,
 	// Variable names of implicit cells
-	name_in_cell: HashMap<usize, &'ast str>,
+	name_in_cell: HashMap<usize, String>,
 	// Nesting depth of repetitions
 	repetition_depth: usize,
 	// Module calls in execution order
@@ -127,7 +127,7 @@ struct CodeGenerator<'ast, 'input, 'comp> {
 	// Tracks in execution order
 	track_order: Vec<Vec<TrackOrderNode>>,
 	// Queue for dynamic cell update expressions
-	update_stack: Vec<(StateKind, &'ast Expression<'ast>)>,
+	update_stack: Vec<(StateKind, &'ast Expression)>,
 }
 
 #[derive(Clone, Debug)]
@@ -142,15 +142,15 @@ enum MidiChannelArg {
 	Input { index: usize },
 }
 
-impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
+impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	pub fn new(
-			names: &'ast Names<'ast>,
-			compiler: &'comp mut Compiler<'input>,
+			names: &'names Names,
+			compiler: &'comp mut Compiler,
 			signatures: Vec<FullSignature>,
-			stored_widths: HashMap<*const Expression<'ast>, Width>,
+			stored_widths: HashMap<*const Expression, Width>,
 			callees: Vec<Vec<usize>>,
 			precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>)
-			-> CodeGenerator<'ast, 'input, 'comp> {
+			-> CodeGenerator<'ast, 'comp, 'names> {
 		let proc_count = callees.len();
 		CodeGenerator {
 			names,
@@ -185,8 +185,8 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn retrieve_width(&self, exp: &Expression<'ast>) -> Option<ir::Width> {
-		self.stored_widths.get(&(exp as *const Expression<'ast>)).map(|&w| w.into())
+	fn retrieve_width(&self, exp: &Expression) -> Option<ir::Width> {
+		self.stored_widths.get(&(exp as *const Expression)).map(|&w| w.into())
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -268,7 +268,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	pub fn generate_code_for_program(&mut self, program: &'ast Program<'ast>, main_index: usize) -> Result<(), CompileError> {
+	pub fn generate_code_for_program(&mut self, program: &'ast Program, main_index: usize) -> Result<(), CompileError> {
 		// Compute liveness
 		self.propagate_liveness(main_index);
 		let autokill_key = self.lookup_precompiled("$autokill");
@@ -305,7 +305,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn generate_code_for_procedure(&mut self,
-		program: &'ast Program<'ast>,
+		program: &'ast Program,
 		proc_index: usize,
 		scope: Option<Scope>,
 	) -> Result<ir::Procedure, CompileError> {
@@ -353,7 +353,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				let mut real_inputs = inputs.clone();
 				real_inputs.items.push(PatternItem {
 					name: Id {
-						text: "#acc#", before: outputs.before,
+						text: "#acc#".to_string(), before: outputs.before,
 					},
 					item_type: type_spec!(dynamic stereo number),
 				});
@@ -375,7 +375,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.generate_dynamic_body(body)?;
 					// Leave the inputs (including the accumulator) and the output on the stack.
 					let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
-					stack_adjust.push(self.stack_index[outputs.items[0].name.text]);
+					stack_adjust.push(self.stack_index[&outputs.items[0].name.text]);
 					self.adjust_stack(&stack_adjust, self.stack_height);
 					// Run autokill code
 					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][1], None)]);
@@ -386,7 +386,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 
 		Ok(ir::Procedure {
-			name: name.text.into(),
+			name: name.text.clone(),
 			kind: proc_kind,
 			inputs: proc_inputs,
 			outputs: proc_outputs,
@@ -406,9 +406,9 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn assign_ids(&mut self, program: &Program<'ast>, pred: &dyn Fn(ProcedureKind, &str) -> bool) {
+	fn assign_ids(&mut self, program: &Program, pred: &dyn Fn(ProcedureKind, &str) -> bool) {
 		for (proc_index, proc) in program.procedures.iter().enumerate() {
-			if self.live[proc_index] && pred(proc.kind, proc.name.text) {
+			if self.live[proc_index] && pred(proc.kind, proc.name.text.as_str()) {
 				let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
 					proc_id[proc_index] = self.proc_for_id.len() as u16;
 					let proc = ProcedureRef {
@@ -451,7 +451,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn init_proc_id(&mut self, program: &Program<'ast>) {
+	fn init_proc_id(&mut self, program: &Program) {
 		// Assign ID to all procedures in this order:
 		// main, instruments, modules (except main), functions.
 		self.assign_ids(program, &|_, name| name == "main");
@@ -463,14 +463,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 	}
 
 	fn lookup_precompiled(&mut self, name: &str) -> *const PrecompiledProcedure {
-		let proc = self.names.lookup_procedure(name);
+		let proc = self.names.lookup_procedure(&name.to_string());
 		let Some(ProcedureRef { definition: ProcedureDefinition::Precompiled { proc }, .. }) = proc else {
 			panic!("Precompiled procedure not found: {}", name);
 		};
 		*proc as *const PrecompiledProcedure
 	}
 
-	fn generate_static_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
+	fn generate_static_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
 		for statement in body {
 			if statement_scope(statement) == Some(Scope::Static) {
 				self.generate_code_for_statement(statement)?;
@@ -480,7 +480,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 			let offset = self.stack_height - stack_index - 1;
 			self.emit(code![StackLoad(offset as u16), CellInit]);
 			if let Some((name, _)) = self.stack_index.iter().find(|(_, i)| *i == stack_index) {
-				self.name_in_cell.insert(cell_index, name);
+				self.name_in_cell.insert(cell_index, name.clone());
 			}
 		}
 		self.generate_static_module_calls(&self.module_call.clone());
@@ -513,19 +513,19 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 					self.generate(count);
 					self.emit(code![RepeatInit]);
 					let counter_stack_index = self.stack_height - 1;
-					self.stack_index.insert(name.text, counter_stack_index);
+					self.stack_index.insert(name.text.clone(), counter_stack_index);
 					self.generate_static_module_calls(nested_calls);
-					self.stack_index.remove(name.text);
+					self.stack_index.remove(&name.text);
 					self.emit(code![RepeatEnd]);
 				},
 			}
 		}
 	}
 
-	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
+	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
 		for cell_index in 0 .. self.stack_index_in_cell.len() {
 			if let Some(name) = self.name_in_cell.get(&cell_index) {
-				self.stack_index.entry(name).or_insert(self.stack_height);
+				self.stack_index.entry(name.to_string()).or_insert(self.stack_height);
 			}
 			self.emit(code![CellRead]);
 		}
@@ -559,24 +559,24 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn generate_code_for_statement(&mut self, statement: &'ast Statement<'ast>) -> Result<(), CompileError> {
+	fn generate_code_for_statement(&mut self, statement: &'ast Statement) -> Result<(), CompileError> {
 		let Statement::Assign { node, exp } = statement;
 		self.generate(exp);
 		self.add_stack_indices(node, None, false, false);
 		self.compiler.check_errors()
 	}
 
-	fn initialize_stack(&mut self, inputs: &Pattern<'ast>, scope: Option<Scope>, all_scopes: bool) {
+	fn initialize_stack(&mut self, inputs: &Pattern, scope: Option<Scope>, all_scopes: bool) {
 		self.stack_index.clear();
 		self.next_stack_index = 0;
 		self.stack_height = 0;
 		self.add_stack_indices(inputs, scope, true, all_scopes);
 	}
 
-	fn add_stack_indices(&mut self, pattern: &Pattern<'ast>, scope: Option<Scope>, adjust_stack: bool, all_scopes: bool) {
+	fn add_stack_indices(&mut self, pattern: &Pattern, scope: Option<Scope>, adjust_stack: bool, all_scopes: bool) {
 		for item in &pattern.items {
 			if (scope.is_none() || item.item_type.scope == scope) && item.name.text != "_" {
-				self.stack_index.insert(item.name.text, self.next_stack_index);
+				self.stack_index.insert(item.name.text.clone(), self.next_stack_index);
 			}
 			if scope.is_none() || item.item_type.scope == scope || all_scopes {
 				self.next_stack_index += 1;
@@ -604,7 +604,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		result
 	}
 
-	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement<'ast>>) -> Result<(), CompileError> {
+	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
 		self.stack_index_in_cell.clear();
 		self.module_call.clear();
 		debug_assert!(self.update_stack.is_empty());
@@ -632,14 +632,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern<'ast>) {
+	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern) {
 		for item in &outputs.items {
 			self.mark_implicit_cell(&item.name);
 		}
 	}
 
-	fn mark_implicit_cell(&mut self, name: &'ast Id<'ast>) {
-		if let Some(index) = self.stack_index.get(name.text) {
+	fn mark_implicit_cell(&mut self, name: &'ast Id) {
+		if let Some(index) = self.stack_index.get(&name.text) {
 			// Static variable
 			if let None = self.stack_index_in_cell.iter().find(|&i| i == index) {
 				self.stack_index_in_cell.push(*index);
@@ -647,7 +647,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn find_cells(&mut self, exp: &'ast Expression<'ast>) {
+	fn find_cells(&mut self, exp: &'ast Expression) {
 		use Expression::*;
 		match exp {
 			Number { .. } => {},
@@ -668,7 +668,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.find_cells(otherwise);
 			},
 			Call { channels, name, args, .. } => {
-				match self.names.lookup_procedure(name.text) {
+				match self.names.lookup_procedure(&name.text) {
 					Some(ProcedureRef { kind, definition, .. }) => {
 						let current_proc_index = self.current_proc_index;
 						let convert_midi_channel = |channel: &MidiChannel| -> MidiChannelArg {
@@ -677,7 +677,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									channel
 								},
 								MidiChannel::Named { name } => MidiChannelArg::Input {
-									index: self.names.lookup_midi_input(current_proc_index, name.text).unwrap()
+									index: self.names.lookup_midi_input(current_proc_index, &name.text).unwrap()
 								},
 							}
 						};
@@ -690,7 +690,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 									self.unsupported(exp, "Built-in module in repetition body");
 								}
 								let width = self.retrieve_width(exp).unwrap();
-								match name.text {
+								match name.text.as_str() {
 									"cell" => {
 										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], width });
 										self.update_stack.push((StateKind::Cell, &args[0]));
@@ -795,10 +795,10 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn stack_adjust_from_outputs(&mut self, outputs: &'ast Pattern<'ast>) -> Vec<usize> {
+	fn stack_adjust_from_outputs(&mut self, outputs: &'ast Pattern) -> Vec<usize> {
 		let mut stack_adjust = vec![];
 		for item in &outputs.items {
-			let index = self.stack_index[item.name.text];
+			let index = self.stack_index[&item.name.text];
 			stack_adjust.push(index);
 		}
 		stack_adjust
@@ -841,7 +841,7 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 		}
 	}
 
-	fn generate(&mut self, exp: &'ast Expression<'ast>) {
+	fn generate(&mut self, exp: &'ast Expression) {
 		use Expression::*;
 		match exp {
 			Number { value, .. } => self.emit(code![Constant((*value as f32).to_bits())]),
@@ -851,13 +851,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(code![Constant(0)]);
 			},
 			Variable { name } => {
-				match self.stack_index.get(name.text) {
+				match self.stack_index.get(&name.text) {
 					Some(stack_index) => {
 						let offset = self.stack_height - stack_index - 1;
 						self.emit(code![StackLoad(offset as u16)]);
 					}
 					None => {
-						if let Some(index) = self.names.lookup_parameter(name.text) {
+						if let Some(index) = self.names.lookup_parameter(&name.text) {
 							self.emit(code![Parameter(index as u16)]);
 						} else {
 							self.unsupported(exp, "accessing a variable above its definition (except in cell or delay)");
@@ -884,13 +884,13 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(code![StackLoad(2), AndNot, Or, PopNext]);
 			},
 			Call { name, args, .. } => {
-				match self.names.lookup_procedure(name.text) {
+				match self.names.lookup_procedure(&name.text) {
 					Some(ProcedureRef { kind, definition, .. }) => {
 						use ProcedureKind::*;
 						use ProcedureDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
-								match name.text {
+								match name.text.as_str() {
 									"cell" => {
 										self.emit(code![CellPush]);
 										self.update_stack.push((StateKind::Cell, &args[0]));
@@ -990,14 +990,14 @@ impl<'ast, 'input, 'comp> CodeGenerator<'ast, 'input, 'comp> {
 				self.emit(code![StackLoad(1), BufferIndex, Sub, BufferLoadWithOffset]);
 			},
 			For { name, body, combinator, .. } => {
-				let combinator = self.names.lookup_combinator(combinator.text).unwrap();
+				let combinator = self.names.lookup_combinator(&combinator.text).unwrap();
 				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
 				self.expand(self.retrieve_width(exp).unwrap());
 				self.emit(code![RepeatStart]);
 				let counter_stack_index = self.stack_height - 1;
-				self.stack_index.insert(name.text, counter_stack_index);
+				self.stack_index.insert(name.text.clone(), counter_stack_index);
 				self.generate(body);
-				self.stack_index.remove(name.text);
+				self.stack_index.remove(&name.text);
 				self.emit(code![StackLoad(3)]); // accumulator
 				self.emit(combinator.code);
 				self.emit(code![StackStore(2)]); // accumulator

@@ -2,7 +2,7 @@ use std::fmt::{Display, Error, Formatter};
 
 use crate::ast::*;
 
-impl<'input> Display for Program<'input> {
+impl Display for Program {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		for parameter in &self.parameters {
 			write!(f, "{}", parameter)?;
@@ -14,7 +14,7 @@ impl<'input> Display for Program<'input> {
 	}
 }
 
-impl<'input> Display for Parameter<'input> {
+impl Display for Parameter {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "parameter {} {} to {}", self.name, self.min, self.max)?;
 		if let Some(default) = self.default {
@@ -25,7 +25,7 @@ impl<'input> Display for Parameter<'input> {
 	}
 }
 
-impl<'input> Display for Procedure<'input> {
+impl Display for Procedure {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		if self.context != Context::Universal {
 			write!(f, "{} ", self.context)?;
@@ -68,7 +68,7 @@ impl Display for ProcedureKind {
 	}
 }
 
-impl<'input> Display for Statement<'input> {
+impl Display for Statement {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		use Statement::*;
 		match self {
@@ -81,7 +81,7 @@ impl<'input> Display for Statement<'input> {
 	}
 }
 
-impl<'input> Display for PatternItem<'input> {
+impl Display for PatternItem {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "{}", self.name)?;
 		write!(f, "{}", self.item_type)?;
@@ -234,13 +234,13 @@ impl Display for BinOpKind {
 	}
 }
 
-impl<'input> Display for Expression<'input> {
+impl Display for Expression {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		self.fmt_with_precedence(f, Precedence::Expression)
 	}
 }
 
-impl<'input> Expression<'input> {
+impl Expression {
 	fn fmt_with_precedence(&self, f: &mut Formatter, p: Precedence) -> Result<(), Error> {
 		let parenthesized = (self.precedence() as u8) < (p as u8);
 		if parenthesized { f.write_str("(")?; }
@@ -324,7 +324,7 @@ impl<'input> Expression<'input> {
 	}
 }
 
-impl<'input> Display for MidiChannel<'input> {
+impl Display for MidiChannel {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		match self {
 			MidiChannel::Value { channel } => write!(f, "{}", channel),
@@ -333,7 +333,7 @@ impl<'input> Display for MidiChannel<'input> {
 	}
 }
 
-impl<'input> Display for Id<'input> {
+impl Display for Id {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		self.text.fmt(f)
 	}

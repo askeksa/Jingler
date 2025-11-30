@@ -98,7 +98,7 @@ fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
 
 fn play_file(filename: &str, options: &PlayOptions) {
 	match fs::read_to_string(&filename) {
-		Ok(s) => match compiler::Compiler::new(&filename, &s).compile() {
+		Ok(s) => match compiler::Compiler::new(filename.to_string(), s).compile() {
 			Ok(program) => {
 				if let Some(filename) = &options.write_source {
 					match File::create(filename) {

@@ -9,12 +9,12 @@ use crate::compiler::{Compiler, CompileError, Location, PosRange};
 
 /// Mapping of names in the program to their definitions.
 #[derive(Clone, Debug)]
-pub struct Names<'ast> {
-	parameters: HashMap<&'ast str, VariableRef>,
-	procedures: HashMap<&'ast str, ProcedureRef>,
-	channels: Vec<HashMap<&'ast str, (usize, PosRange)>>,
-	variables: Vec<HashMap<&'ast str, VariableRef>>,
-	combinators: HashMap<&'ast str, Combinator>,
+pub struct Names {
+	parameters: HashMap<String, VariableRef>,
+	procedures: HashMap<String, ProcedureRef>,
+	channels: Vec<HashMap<String, (usize, PosRange)>>,
+	variables: Vec<HashMap<String, VariableRef>>,
+	combinators: HashMap<String, Combinator>,
 }
 
 /// A reference to a named entry in a pattern.
@@ -66,9 +66,9 @@ pub struct Combinator {
 	pub code: &'static [Instruction],
 }
 
-impl<'ast> Names<'ast> {
+impl Names {
 	/// Find all named entities in the program and build a map for locating them.
-	pub fn find(program: &Program<'ast>, compiler: &mut Compiler) -> Result<Names<'ast>, CompileError> {
+	pub fn find(program: &Program, compiler: &mut Compiler) -> Result<Names, CompileError> {
 		let mut names = Names {
 			parameters: HashMap::new(),
 			procedures: HashMap::new(),
@@ -79,40 +79,40 @@ impl<'ast> Names<'ast> {
 
 		// Insert built-in functions and modules
 		for &(name, context, ref sig, code) in BUILTIN_FUNCTIONS {
-			names.procedures.insert(name, ProcedureRef {
+			names.procedures.insert(name.to_string(), ProcedureRef {
 				context,
 				kind: ProcedureKind::Function,
 				definition: ProcedureDefinition::BuiltIn { sig, code },
 			});
 		}
 		for &(name, context, ref sig) in BUILTIN_MODULES {
-			names.procedures.insert(name, ProcedureRef {
+			names.procedures.insert(name.to_string(), ProcedureRef {
 				context,
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::BuiltIn { sig, code: &[] },
 			});
 		}
 		for proc in PRECOMPILED_FUNCTIONS {
-			names.procedures.insert(proc.name(), ProcedureRef {
+			names.procedures.insert(proc.name().to_string(), ProcedureRef {
 				context: proc.context(),
 				kind: ProcedureKind::Function,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});
 		}
 		for proc in PRECOMPILED_MODULES {
-			names.procedures.insert(proc.name(), ProcedureRef {
+			names.procedures.insert(proc.name().to_string(), ProcedureRef {
 				context: proc.context(),
 				kind: ProcedureKind::Module,
 				definition: ProcedureDefinition::Precompiled { proc },
 			});
 		}
 		for &(name, neutral, code) in REPETITION_COMBINATORS {
-			names.combinators.insert(name, Combinator { neutral, code });
+			names.combinators.insert(name.to_string(), Combinator { neutral, code });
 		}
 
 		// Insert parameters
 		for (index, param) in program.parameters.iter().enumerate() {
-			names.parameters.insert(param.name.text, VariableRef{
+			names.parameters.insert(param.name.text.clone(), VariableRef{
 				kind: VariableKind::Parameter,
 				tuple_index: index,
 			});
@@ -166,9 +166,9 @@ impl<'ast> Names<'ast> {
 	}
 
 	fn insert_procedure(&mut self,
-			program: &Program<'ast>, compiler: &mut Compiler,
-			name: &Id<'ast>, proc_ref: ProcedureRef) {
-		self.procedures.entry(name.text).and_modify(|existing| {
+			program: &Program, compiler: &mut Compiler,
+			name: &Id, proc_ref: ProcedureRef) {
+		self.procedures.entry(name.text.clone()).and_modify(|existing| {
 			match existing.definition {
 				ProcedureDefinition::BuiltIn { .. } | ProcedureDefinition::Precompiled { .. } => {
 					compiler.report_error(name,
@@ -186,18 +186,18 @@ impl<'ast> Names<'ast> {
 
 	fn insert_channel(&mut self,
 			compiler: &mut Compiler,
-			proc_index: usize, name: &Id<'ast>, index: usize) {
+			proc_index: usize, name: &Id, index: usize) {
 		if name.text == "_" { return; }
-		self.channels[proc_index].entry(name.text).and_modify(|_| {
+		self.channels[proc_index].entry(name.text.clone()).and_modify(|_| {
 			compiler.report_error(name, format!("Duplicate midi channel input '{}'.", name));
 		}).or_insert((index, PosRange::from(name)));
 	}
 
 	fn insert_variable(&mut self,
-			program: &Program<'ast>, compiler: &mut Compiler,
-			proc_index: usize, name: &Id<'ast>, var_ref: VariableRef) {
+			program: &Program, compiler: &mut Compiler,
+			proc_index: usize, name: &Id, var_ref: VariableRef) {
 		if name.text == "_" { return; }
-		self.variables[proc_index].entry(name.text).and_modify(|existing| {
+		self.variables[proc_index].entry(name.text.clone()).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let proc = &program.procedures[proc_index];
 			let loc: &dyn Location = match existing.kind {
@@ -213,26 +213,26 @@ impl<'ast> Names<'ast> {
 	}
 
 	/// Look up a module, function or instrument by name.
-	pub fn lookup_procedure(&self, name: &str) -> Option<&ProcedureRef> {
+	pub fn lookup_procedure(&self, name: &String) -> Option<&ProcedureRef> {
 		self.procedures.get(name)
 	}
 
 	/// Look up a MIDI channel input by name inside a specific procedure.
-	pub fn lookup_midi_input(&self, proc_index: usize, name: &str) -> Option<usize> {
+	pub fn lookup_midi_input(&self, proc_index: usize, name: &String) -> Option<usize> {
 		self.channels[proc_index].get(name).map(|(index, _)| *index)
 	}
 
 	/// Look up a variable by name inside a specific procedure.
-	pub fn lookup_variable(&self, proc_index: usize, name: &str) -> Option<&VariableRef> {
+	pub fn lookup_variable(&self, proc_index: usize, name: &String) -> Option<&VariableRef> {
 		self.variables[proc_index].get(name).or_else(|| self.parameters.get(name))
 	}
 
-	pub fn lookup_combinator(&self, combinator: &str) -> Option<&Combinator> {
+	pub fn lookup_combinator(&self, combinator: &String) -> Option<&Combinator> {
 		self.combinators.get(combinator)
 	}
 
 	pub fn combinator_list(&self) -> String {
-		let mut combinators: Vec<&'ast str> = self.combinators.keys().cloned().collect();
+		let mut combinators: Vec<String> = self.combinators.keys().cloned().collect();
 		combinators.sort();
 		let mut list = format!("'{}'", combinators[0]);
 		for i in 1 .. combinators.len() - 1 {
@@ -242,11 +242,11 @@ impl<'ast> Names<'ast> {
 		list
 	}
 
-	pub fn lookup_parameter(&self, name: &str) -> Option<usize> {
+	pub fn lookup_parameter(&self, name: &String) -> Option<usize> {
 		self.parameters.get(name).map(|p| p.tuple_index)
 	}
 
-	pub fn parameter_names(&self) -> impl Iterator<Item=&&'ast str> {
+	pub fn parameter_names(&self) -> impl Iterator<Item=&String> {
 		self.parameters.keys()
 	}
 }

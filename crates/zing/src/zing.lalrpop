@@ -8,11 +8,11 @@ use crate::ast::*;
 
 grammar;
 
-pub Program: Program<'input> = {
+pub Program: Program = {
 	<parameters:Parameter*> <procedures:Procedure*> => Program {<>},
 };
 
-Parameter: Parameter<'input> = {
+Parameter: Parameter = {
 	"parameter" <name:Id> <min:Num> "to" <max:Num> <default:ParameterDefault> => Parameter {<>},
 };
 
@@ -21,7 +21,7 @@ ParameterDefault: Option<f64> = {
 	"=" <value:Num> => Some(value),
 };
 
-Procedure: Procedure<'input> = {
+Procedure: Procedure = {
 	<context:Context> <kind:ProcedureKind> <channels:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
 		=> Procedure {<>},
 };
@@ -38,24 +38,24 @@ ProcedureKind: ProcedureKind = {
 	"instrument" => ProcedureKind::Instrument,
 }
 
-Pattern: Pattern<'input> = {
+Pattern: Pattern = {
 	<before:@L> <items:PatternItems> <after:@R> => Pattern {<>},
 };
 
-PatternNoParen: Pattern<'input> = {
+PatternNoParen: Pattern = {
 	<before:@L> <items:PatternItemsNoParen> <after:@R> => Pattern {<>},
 };
 
-PatternItems: Vec<PatternItem<'input>> = {
+PatternItems: Vec<PatternItem> = {
 	<Vec<PatternItem>>,
 	"(" <Comma<PatternItem>> ")",
 };
 
-PatternItemsNoParen: Vec<PatternItem<'input>> = {
+PatternItemsNoParen: Vec<PatternItem> = {
 	<Comma<PatternItem>>,
 };
 
-PatternItem: PatternItem<'input> = {
+PatternItem: PatternItem = {
 	<name:Id> => PatternItem {
 		name,
 		item_type: Type::default(),
@@ -84,11 +84,11 @@ ValueType: ValueType = {
 	"buffer" => ValueType::Buffer,
 }
 
-Statement: Statement<'input> = {
+Statement: Statement = {
 	<node:PatternNoParen> "=" <exp:Expression> => Statement::Assign {<>},
 };
 
-Expression: Expression<'input> = {
+Expression: Expression = {
 	OrExpression,
 	<condition:Box<OrExpression>> "?" <then:Box<Expression>> ":" <otherwise:Box<Expression>>
 		=> Expression::Conditional {<>},
@@ -133,7 +133,7 @@ MultiplicativeOp: BinOpKind = {
 	"/" => BinOpKind::Div,
 };
 
-UnaryExpression: Expression<'input> = {
+UnaryExpression: Expression = {
 	<op:UnOp<UnaryOp>> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
 	<exp:Box<UnaryExpression>> "." <name:Id> <args:ParenthesizedExpressions?> <after:@R> => Expression::Call {
 		before: exp.pos_before(),
@@ -151,7 +151,7 @@ UnaryOp: UnOpKind = {
 	"!" => UnOpKind::Not,
 };
 
-PrimaryExpression: Expression<'input> = {
+PrimaryExpression: Expression = {
 	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
 	<before:@L> <value:Bool> => Expression::Bool {<>},
 	<name:Id> => Expression::Variable {<>},
@@ -161,11 +161,11 @@ PrimaryExpression: Expression<'input> = {
 	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
 
-ParenthesizedExpressions: Vec<Expression<'input>> = "(" <elements:Comma<Expression>> ")" => elements;
+ParenthesizedExpressions: Vec<Expression> = "(" <elements:Comma<Expression>> ")" => elements;
 
-MidiParam: Id<'input> = <name:Id> "::" => name;
+MidiParam: Id = <name:Id> "::" => name;
 
-MidiArg: MidiChannel<'input> = {
+MidiArg: MidiChannel = {
 	<value:Uint> "::" => MidiChannel::Value { channel: value as usize },
 	<name:Id> "::" => MidiChannel::Named { name },
 };
@@ -189,8 +189,8 @@ Bool: bool = {
 	"true" => true,
 };
 
-Id: Id<'input> = {
-	<before:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id {<>},
+Id: Id = {
+	<before:@L> <text:r"[_a-zA-Z][_a-zA-Z0-9]*"> => Id { before, text: text.to_string() },
 };
 
 Uint: u64 = <pos:@L> <s:r"0|[1-9][0-9]*"> =>? {
@@ -241,7 +241,7 @@ BinOp<Op>: BinOp = {
 	<before:@L> <kind:Op> => BinOp {<>}
 }
 
-BinOpLevel<Op, NextLevel>: Expression<'input> = {
+BinOpLevel<Op, NextLevel>: Expression = {
 	<left:Box<BinOpLevel<Op, NextLevel>>> <op:BinOp<Op>> <right:Box<NextLevel>>
 		=> Expression::BinOp {<>},
 	NextLevel
