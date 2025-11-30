@@ -141,7 +141,7 @@ impl Names {
 				};
 				names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
 			}
-			for (body_index, Statement::Assign { ref node, exp }) in proc.body.iter().enumerate() {
+			for (body_index, Statement::Assign { node, exp }) in proc.body.iter().enumerate() {
 				for (tuple_index, item) in node.items.iter().enumerate() {
 					let var_ref = VariableRef {
 						kind: VariableKind::Node { body_index },

@@ -17,7 +17,7 @@ use rodio::{OutputStream, Sink};
 
 #[cfg(target_arch = "x86")]
 #[link(name = "jingler_cmd")]
-extern "C" {
+unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn RunStaticCode(constants: *const u32);

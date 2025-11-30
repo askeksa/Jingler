@@ -7,11 +7,11 @@ use crate::program::Width;
 #[macro_export]
 macro_rules! code {
 	{ $($b:expr),* } => {
-		{
+		&{
 			#[allow(unused)] use ir::Instruction::*;
 			#[allow(unused)] use ir::NoteProperty::*;
 			#[allow(unused)] use ir::Width::*;
-			&[$($b),*]
+			[$($b),*]
 		}
 	}
 }
