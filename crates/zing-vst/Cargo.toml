@@ -1,8 +1,8 @@
 [package]
 name = "zing-vst"
-version = "0.2.0"
-authors = ["Aske Simon Christensen <askesc@gmail.com>"]
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
 build = "build.rs"
 
 [dependencies]

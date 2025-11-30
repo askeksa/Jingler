@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/ir",
+    "crates/zing",
+    "crates/zing-cmd",
+    "crates/zing-vst",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+authors = ["Aske Simon Christensen <askesc@gmail.com>"]
+edition = "2021"
