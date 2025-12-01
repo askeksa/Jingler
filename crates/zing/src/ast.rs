@@ -3,8 +3,16 @@ type Pos = usize;
 
 #[derive(Clone, Debug)]
 pub struct Program {
+	pub includes: Vec<Include>,
 	pub parameters: Vec<Parameter>,
 	pub procedures: Vec<Procedure>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Include {
+	pub before: Pos,
+	pub path: String,
+	pub after: Pos,
 }
 
 #[derive(Clone, Debug)]

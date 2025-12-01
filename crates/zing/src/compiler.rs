@@ -2,6 +2,10 @@
 use std::mem::replace;
 use std::rc::Rc;
 
+use std::collections::{HashSet, VecDeque};
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use regex::Regex;
 
 use lalrpop_util::ParseError;
@@ -13,11 +17,34 @@ use crate::type_inference::infer_types;
 
 lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
+/// A single source file.
+pub struct Source {
+	pub filename: String,
+	pub raw_input: String,
+	pub processed_input: Rc<str>, // Comments removed
+	pub start_offset: usize,
+}
+
+impl Source {
+	pub fn new(filename: String, raw_input: String, start_offset: usize) -> Source {
+		// Remove comments
+		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
+		let processed_input = r_process.replace_all(&raw_input, "$1").to_string();
+		let processed_input: Rc<str> = Rc::from(processed_input);
+
+		Source {
+			filename,
+			raw_input,
+			processed_input,
+			start_offset,
+		}
+	}
+}
+
 /// Main compiler state, mainly concerned with error reporting.
 pub struct Compiler {
-	filename: String,
-	raw_input: String,
-	processed_input: Rc<str>, // Comments removed
+	sources: Vec<Source>,
+	loaded_files: HashSet<PathBuf>,
 	messages: Vec<Message>,
 
 	r_line_break: Regex,
@@ -31,6 +58,7 @@ pub struct Message {
 	column: usize,
 	length: usize,
 	text: String,
+	filename: String,
 	source_line: String,
 	marker_max_length: usize,
 }
@@ -79,7 +107,6 @@ impl MessageCategory {
 ///
 /// Iterate over it to get diagnostic messages.
 pub struct CompileError {
-	filename: String,
 	messages: Vec<Message>,
 	index: usize,
 
@@ -102,7 +129,7 @@ impl Iterator for CompileError {
 				"^".repeat(msg.marker_max_length) + "..."
 			};
 			format!("{}:{}:{}: {}: {}\n\n{}\n{}{}\n",
-				self.filename, msg.line + 1, msg.column + 1,
+				msg.filename, msg.line + 1, msg.column + 1,
 				msg.category.as_text(), msg.text,
 				line,
 				indent, marker)
@@ -177,6 +204,11 @@ impl Location for Expression {
 	}
 }
 
+impl Location for Include {
+	fn pos_before(&self) -> usize { self.before }
+	fn pos_after(&self) -> usize { self.after }
+}
+
 impl Procedure {
 	pub fn midi_channels_location(&self) -> impl Location {
 		match self.channels.first() {
@@ -188,22 +220,25 @@ impl Procedure {
 
 impl Compiler {
 	pub fn new(filename: String, raw_input: String) -> Compiler {
-		// Remove comments
-		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
-		let processed_input = Rc::from(r_process.replace_all(raw_input.as_str(), "$1").as_ref());
+		let main_source = Source::new(filename.clone(), raw_input, 0);
+
+		let mut loaded_files = HashSet::new();
+		if let Ok(path) = fs::canonicalize(Path::new(&filename)) {
+			loaded_files.insert(path);
+		}
 
 		Compiler {
-			filename,
-			raw_input,
-			processed_input,
+			sources: vec![main_source],
+			loaded_files,
 			messages: vec![],
 			r_line_break: Regex::new(r"\n|\r\n").unwrap(),
 		}
 	}
 
 	pub fn compile(&mut self) -> Result<ir::Program, CompileError> {
-		let processed_input = Rc::clone(&self.processed_input);
-		let mut program = self.parse(&processed_input)?;
+		let processed_input = Rc::clone(&self.sources[0].processed_input);
+		let mut program = self.parse(&processed_input, 0)?;
+		self.process_includes(&mut program)?;
 		self.check_contexts(&mut program)?;
 		let names = Names::find(&program, self)?;
 		let (signatures, stored_widths, callees, precompiled_callees) = infer_types(&mut program, &names, self)?;
@@ -227,8 +262,62 @@ impl Compiler {
 		})
 	}
 
-	fn parse<'ast>(&mut self, text: &'ast str) -> Result<Program, CompileError> {
-		zing::ProgramParser::new().parse(text).map_err(|err| {
+	fn process_includes(&mut self, program: &mut Program) -> Result<(), CompileError> {
+		let mut include_queue: VecDeque<Include> = program.includes.drain(..).collect();
+		while let Some(include) = include_queue.pop_front() {
+			// Resolve included file path relative to the source file containing the include
+			let source_index = self.source_index(include.before);
+			let filename = self.sources[source_index].filename.clone();
+			let base_path = Path::new(&filename).parent().ok_or_else(|| {
+				self.report_error(&include, "Could not find parent directory.");
+				self.make_error()
+			})?;
+			let resolved_path = base_path.join(&include.path);
+
+			// Skip if already included
+			if let Ok(canonical_path) = fs::canonicalize(&resolved_path) {
+				if !self.loaded_files.insert(canonical_path) {
+					continue;
+				}
+			}
+
+			// Read included file
+			let raw_input = fs::read_to_string(&resolved_path).map_err(|e| {
+				self.report_error(&include, format!("Could not read file '{}': {}", resolved_path.display(), e));
+				self.make_error()
+			})?;
+
+			// Add included file to sources
+			let start_offset = self.sources.last().map(|s| s.start_offset + s.processed_input.len()).unwrap_or(0);
+			let source = Source::new(
+				resolved_path.to_string_lossy().to_string(),
+				raw_input,
+				start_offset,
+			);
+			let processed_input = Rc::clone(&source.processed_input);
+			self.sources.push(source);
+
+			// Parse included file and merge it into the main program
+			let mut included_program = self.parse(&processed_input, start_offset)?;
+			program.parameters.splice(0..0, included_program.parameters);
+			program.procedures.splice(0..0, included_program.procedures);
+			include_queue.extend(included_program.includes.drain(..));
+
+			program.includes.push(include);
+		}
+		Ok(())
+	}
+
+	fn source_index(&self, pos: usize) -> usize {
+		self.sources.partition_point(|s| s.start_offset <= pos).saturating_sub(1)
+	}
+
+	fn parse<'ast>(&mut self, text: &'ast str, start_offset: usize) -> Result<Program, CompileError> {
+		// Prepend spaces to offset token locations. In the absence of support in LALRPOP
+		// for setting the initial location, this seems like the cleanest solution.
+		let offset_text = " ".repeat(start_offset) + text;
+
+		zing::ProgramParser::new().parse(&offset_text).map_err(|err| {
 			match err {
 				ParseError::InvalidToken { location } => {
 					self.report_syntax_error(&(location, location + 1), "Invalid token.");
@@ -287,9 +376,13 @@ impl Compiler {
 	}
 
 	fn report(&mut self, loc: &dyn Location, category: MessageCategory, text: String) {
-		let offset = loc.pos_before();
-		let length = loc.pos_after() - offset;
-		let (until_offset, from_offset) = self.processed_input.split_at(offset);
+		let pos = loc.pos_before();
+		let length = loc.pos_after() - pos;
+		let source_index = self.source_index(pos);
+		let source = &self.sources[source_index];
+		let offset = pos - source.start_offset;
+
+		let (until_offset, from_offset) = source.processed_input.split_at(offset);
 		let marker_max_length = self.r_line_break.find(from_offset).map(|m| m.start()).unwrap_or(0);
 		let (line, column) = {
 			match self.r_line_break.find_iter(until_offset).enumerate().last() {
@@ -297,7 +390,7 @@ impl Compiler {
 				None => (0, offset)
 			}
 		};
-		let source_lines = self.r_line_break.split(&self.raw_input);
+		let source_lines = self.r_line_break.split(&source.raw_input);
 		let source_line = source_lines.skip(line).next().unwrap_or("").to_string();
 
 		self.messages.push(Message {
@@ -306,6 +399,7 @@ impl Compiler {
 			column,
 			length,
 			text,
+			filename: source.filename.clone(),
 			source_line,
 			marker_max_length,
 		});
@@ -333,7 +427,6 @@ impl Compiler {
 
 	fn make_error(&mut self) -> CompileError {
 		CompileError {
-			filename: self.filename.to_string(),
 			messages: replace(&mut self.messages, vec![]),
 			index: 0,
 			r_not_tab: Regex::new(r"[^\t]").unwrap(),

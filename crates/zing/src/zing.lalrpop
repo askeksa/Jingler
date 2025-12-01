@@ -9,7 +9,15 @@ use crate::ast::*;
 grammar;
 
 pub Program: Program = {
-	<parameters:Parameter*> <procedures:Procedure*> => Program {<>},
+	<includes:Include*> <parameters:Parameter*> <procedures:Procedure*> => Program {<>},
+};
+
+Include: Include = {
+	"include" <before:@L> <path:String> <after:@R> => Include {<>},
+};
+
+String: String = {
+	<s:r"\x22[^\x22]*\x22"> => s[1 .. s.len() - 1].to_string(),
 };
 
 Parameter: Parameter = {
