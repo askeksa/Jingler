@@ -2,6 +2,7 @@
 name = "zing"
 version.workspace = true
 authors.workspace = true
+license.workspace = true
 edition.workspace = true
 build = "build.rs" # LALRPOP preprocessing
 

@@ -10,4 +10,5 @@ resolver = "2"
 [workspace.package]
 version = "0.2.0"
 authors = ["Aske Simon Christensen <askesc@gmail.com>"]
+license = "MPL-2.0"
 edition = "2024"
