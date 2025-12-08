@@ -10,7 +10,7 @@ use crate::program::{ProcedureKind, Program};
 use crate::instructions::{Instruction, NoteProperty};
 
 
-const RANDOM_SCRAMBLE: u32 = 0xCD9E8D57;
+const RANDOM_SCRAMBLE: u32 = 0x42118159;
 
 #[allow(unused)]
 #[derive(Clone, Copy, Debug, Eq, FromRepr, PartialEq)]
@@ -206,7 +206,8 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 
 fn encode_bytecode(inst: Instruction, sample_rate: f32,
                    encode: &mut impl FnMut(EncodedBytecode, u16),
-                   encode_constant: &mut impl FnMut(u32)) {
+                   encode_constant: &mut impl FnMut(u32),
+				   parameter_offset: usize) {
 	use EncodedBytecode::*;
 	use EncodedFop::*;
 	use EncodedNoteProperty::*;
@@ -232,7 +233,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
-		Instruction::Parameter(index) => encode(Constant, index),
+		Instruction::Parameter(index) => encode(Constant, parameter_offset as u16 + index),
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
 
@@ -364,7 +365,10 @@ fn collect_capacities(program: &Program, sample_rate: f32) -> (Vec<u16>, BTreeSe
 		constant_set.insert(value);
 	};
 	for &inst in program.procedures.iter().map(|p| &p.code).flatten() {
-		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant);
+		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant, 0);
+	}
+	if opcode_capacity[EncodedBytecode::Random as usize] != 0 {
+		constant_set.insert(RANDOM_SCRAMBLE);
 	}
 	opcode_capacity[EncodedBytecode::Proc as usize] = 1;
 	opcode_capacity[EncodedBytecode::Constant as usize] = (program.parameters.len() + constant_set.len() + 1) as u16;
@@ -372,15 +376,20 @@ fn collect_capacities(program: &Program, sample_rate: f32) -> (Vec<u16>, BTreeSe
 	(opcode_capacity, constant_set)
 }
 
-fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<u32>, BTreeMap<u32, u16>) {
-	let mut constants: Vec<u32> = vec![0; program.parameters.len()];
-	constants.extend(constant_set.into_iter());
+fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<u32>, BTreeMap<u32, u16>, usize) {
+	let mut constants: Vec<u32> = vec![];
+	if constant_set.contains(&RANDOM_SCRAMBLE) {
+		constants.push(RANDOM_SCRAMBLE);
+	}
+	let parameter_offset = constants.len();
+	constants.extend(vec![0; program.parameters.len()]);
+	constants.extend(constant_set.into_iter().filter(|&&v| v != RANDOM_SCRAMBLE));
 	let mut constant_map = BTreeMap::new();
 	for (i, &v) in constants.iter().enumerate() {
 		constant_map.insert(v, i as u16);
 	}
 
-	(constants, constant_map)
+	(constants, constant_map, parameter_offset)
 }
 
 fn check_opcode_space(opcode_capacity: &Vec<u16>) -> Result<()> {
@@ -396,7 +405,7 @@ pub fn encode_bytecodes_source(
 		sample_rate: f32, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
 	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
-	let (constants, constant_map) = build_constant_list(program, &constant_set);
+	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
 	check_opcode_space(&opcode_capacity)?;
 
 	for i in 0 .. EncodedBytecode::Implicit as usize {
@@ -410,6 +419,7 @@ pub fn encode_bytecodes_source(
 
 	writeln!(out, "\n%define NUM_TRACKS {}", program.track_order.len())?;
 	writeln!(out, "\n%define NUM_PARAMETERS {}", program.parameters.len())?;
+	writeln!(out, "\n%define PARAMETER_OFFSET {}", parameter_offset)?;
 
 	writeln!(out, "\n%include \"{}\"", jingler_asm_path)?;
 
@@ -442,7 +452,7 @@ pub fn encode_bytecodes_source(
 				let s = format!("c({arg})");
 				codes.borrow_mut().push(s);
 			};
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant);
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, parameter_offset);
 			for code in codes.borrow().iter() {
 				if first {
 					write!(out, "\tdb\t{code}")?;
@@ -455,14 +465,6 @@ pub fn encode_bytecodes_source(
 		writeln!(out, "\n\tdb\tb(proc)")?;
 	}
 	writeln!(out, "\tdb\t0")?;
-
-	let random_scramble = if opcode_capacity[EncodedBytecode::Random as usize] != 0 {
-		RANDOM_SCRAMBLE
-	} else {
-		0
-	};
-	writeln!(out, "\nRandomScramble:")?;
-	writeln!(out, "\tdd\t0x{:08X}", random_scramble)?;
 
 	write!(out, "\nConstantPool:")?;
 	for (i, &value) in constants.iter().enumerate() {
@@ -492,7 +494,7 @@ pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(V
 	}
 
 	let (mut opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
-	let (mut constants, constant_map) = build_constant_list(program, &constant_set);
+	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
 	adjust_to_fixed_capacities(&mut opcode_capacity)?;
 	check_opcode_space(&opcode_capacity)?;
 
@@ -518,13 +520,12 @@ pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(V
 	for procedure in &program.procedures {
 		encode_opcode(EncodedBytecode::Proc, 0);
 		for &inst in &procedure.code {
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant);
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, parameter_offset);
 		}
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);
 
-	constants.insert(0, RANDOM_SCRAMBLE);
-	Ok((encoded.into_inner(), constants, 1))
+	Ok((encoded.into_inner(), constants, parameter_offset))
 }
 
 fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {

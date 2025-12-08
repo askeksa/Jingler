@@ -322,7 +322,7 @@ JinglerGenerateCode:
 section rstatic text align=1
 
 JinglerRunStaticCode:
-	; ESI/RSI = Random scramble, constant pool
+	; ESI/RSI = Constant pool
 
 	ldmxcsr		[rel MXCSR]
 	mov			rdi, StateSpace
@@ -335,7 +335,7 @@ section render text align=1
 
 JinglerRenderSamples:
 	; EAX/RAX = Number of samples to render
-	; ESI/RSI = Random scramble, constant pool
+	; ESI/RSI = Constant pool
 
 	ldmxcsr		[rel MXCSR]
 	push		rax
@@ -368,7 +368,7 @@ JinglerRenderSamples:
 	fimul		dword [rdi+4]
 	fidiv		dword [rdi]
 	fadd		dword [rlabel(ParameterStates) + rcx*4 - 4]
-	fstp		dword [rsi+4 + rcx*4 - 4]
+	fstp		dword [rsi + PARAMETER_OFFSET*4 + rcx*4 - 4]
 	inc			dword [rdi+4]
 	loop		.paramloop
 %endif
@@ -769,7 +769,7 @@ JinglerNoteOff:
 %endif
 
 	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, [dword rsi + 4]
+	cvtss2sd	xmm0, [dword rsi + 0]
 
 	snip		note_property, sr, I_NOTE_PROPERTY
 	mov			eax, [rcx]
