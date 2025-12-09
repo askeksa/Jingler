@@ -56,6 +56,7 @@ pub enum Instruction {
 	Exp2,
 	Mlog2,
 	Sin,
+	SinCos,
 	Sqrt,
 	Tan,
 
@@ -133,6 +134,7 @@ impl Instruction {
 
 			Atan2 | Mlog2 => (2, 1),
 			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
+			SinCos => (1, 2),
 
 			Left | Right | ExpandStereo | ExpandGeneric => (1, 1),
 			SplitRL => (1, 2),

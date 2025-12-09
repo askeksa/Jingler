@@ -21,6 +21,7 @@
 %define I_KILL 1
 %define I_EXP2_BODY 1
 %define I_FDONE 1
+%define I_FDONE2 1
 %define I_FOP 15
 %define I_PROC 1
 %define I_PROC_CALL 75

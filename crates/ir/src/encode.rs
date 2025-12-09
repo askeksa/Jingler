@@ -36,6 +36,7 @@ enum EncodedBytecode {
 	Kill,
 	Exp2Body,
 	Fdone,
+	Fdone2,
 	Fop,
 	Proc,
 	ProcCall,
@@ -58,10 +59,12 @@ enum EncodedFop {
 	Fyl2x = 0xF1,
 	Fptan = 0xF2,
 	Fpatan = 0xF3,
+	Fsincos = 0xFB,
 	Frndint = 0xFC,
 	Fsin = 0xFE,
 	Fcos = 0xFF,
 }
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EncodedNoteProperty {
 	Length = 0,
@@ -139,6 +142,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		Kill => ("kill", None),
 		Exp2Body => ("exp2_body", None),
 		Fdone => ("fdone", None),
+		Fdone2 => ("fdone2", None),
 		Fop => ("fop", Some(arg)),
 		Proc => ("proc", None),
 		ProcCall => ("proc_call", Some(arg)),
@@ -311,6 +315,11 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Sin => {
 			encode_fop(Fsin, encode);
 			encode(Fdone, 0);
+		},
+		Instruction::SinCos => {
+			encode_fop(Fsincos, encode);
+			encode(Fdone, 0);
+			encode(Fdone2, 0);
 		},
 		Instruction::Tan => {
 			encode_fop(Fptan, encode);

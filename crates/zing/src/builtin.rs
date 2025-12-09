@@ -102,6 +102,7 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 	("round",      U, sig!([generic] [generic]),          code![Round]),
 	("samplerate", U, sig!([] [mono]),                    code![SampleRate]),
 	("sin",        U, sig!([mono] [mono]),                code![Sin]),
+	("sincos",     U, sig!([mono] [mono, mono]),          code![SinCos]),
 	("sqrt",       U, sig!([generic] [generic]),          code![Sqrt]),
 	("tan",        U, sig!([mono] [mono]),                code![Tan]),
 	("trunc",      U, sig!([generic] [generic]),          code![Trunc]),

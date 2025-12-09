@@ -728,6 +728,9 @@ JinglerNoteOff:
 	snip		fdone, ss, I_FDONE
 	fstp		qword [rbx]
 
+	snip		fdone2, tr, I_FDONE2
+	fstp		qword [rbx]
+
 	; Byte parameter snips
 	snipcode	notbyte, I_FOP
 	not			al
