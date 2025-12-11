@@ -603,10 +603,10 @@ JinglerNoteOff:
 
 	snip		buffer_load_with_offset, rt, I_BUFFER_LOAD_WITH_OFFSET
 	cvtsd2si	eax, xmm0
+	neg			eax
 	add			eax, [rbx]
-	cmp			eax, [rbx + 4]
 	jb			.no_wrap
-	sub			eax, [rbx + 4]
+	add			eax, [rbx + 4]
 .no_wrap:
 	shl			eax, 4
 	add			rax, [rbx + 8]
@@ -624,10 +624,11 @@ JinglerNoteOff:
 	add			rax, [rbx + 8]
 	movapd		[rax], xmm0
 
-	dec			dword [rbx]
-	jns			.no_wrap
-	mov			eax, [rbx + 4]
-	add			[rbx], eax
+	inc			dword [rbx]
+	mov			eax, [rbx]
+	cmp			eax, [rbx + 4]
+	jb			.no_wrap
+	and			dword [rbx], byte 0
 .no_wrap:
 
 	snip		buffer_alloc, ts, I_BUFFER_ALLOC
