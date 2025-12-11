@@ -15,7 +15,7 @@ use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
 
-#[cfg(target_arch = "x86")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
@@ -23,7 +23,7 @@ unsafe extern "C" {
 	fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
 }
 
-#[cfg(target_arch = "x86")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	unsafe {
 		CompileBytecode(bytecodes.as_ptr());
@@ -34,12 +34,12 @@ fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	}
 }
 
-#[cfg(not(target_arch = "x86"))]
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 fn run(_bytecodes: &[u8], _constants: &[u32], _length: usize) -> &'static [f32] {
 	&EMPTY_SOUND
 }
 
-#[cfg(not(target_arch = "x86"))]
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 const EMPTY_SOUND: [f32; 0] = [0f32; 0];
 
 struct PlayOptions {
