@@ -16,7 +16,6 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
 
 #[cfg(target_arch = "x86")]
-#[link(name = "jingler_cmd")]
 unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();

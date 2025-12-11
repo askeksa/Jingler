@@ -1349,9 +1349,12 @@ dependencies = [
 
 [[package]]
 name = "nasm-rs"
-version = "0.1.3"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "050b2ce3f43a1b40dbf91b1e747924cb38ee6d24d6807704137f40c89798c688"
+checksum = "34f676553b60ccbb76f41f9ae8f2428dac3f259ff8f1c2468a174778d06a1af9"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "ndk"

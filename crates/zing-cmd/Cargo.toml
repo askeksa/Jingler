@@ -17,4 +17,4 @@ ir = { path = "../ir" }
 zing = { path = "../zing" }
 
 [build-dependencies]
-nasm-rs = "= 0.1.3"
+nasm-rs = "= 0.3.1"

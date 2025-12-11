@@ -1,15 +1,20 @@
 extern crate nasm_rs;
 
 fn main() {
-	#[cfg(not(target_env = "msvc"))]
-	nasm_rs::compile_library("libjingler_cmd.a", &["../../runtime/cmd.asm"]);
+	if !std::env::var("CARGO_CFG_TARGET_ARCH").unwrap().starts_with("x86") {
+		return;
+	}
 
-	#[cfg(target_env = "msvc")]
-	nasm_rs::compile_library("jingler_cmd.lib", &["../../runtime/cmd.asm"]);
+	let objects = nasm_rs::Build::new()
+		.file("../../runtime/cmd.asm")
+		.compile_objects()
+		.unwrap();
 
 	println!("cargo:rerun-if-changed=../../runtime/cmd.asm");
 	println!("cargo:rerun-if-changed=../../runtime/jingler.asm");
 	println!("cargo:rerun-if-changed=../../runtime/used_instructions.inc");
 
-	println!("cargo:rustc-link-lib=static=jingler_cmd");
+	for object in objects {
+		println!("cargo:rustc-link-arg={}", object.display());
+	}
 }
