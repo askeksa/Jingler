@@ -292,11 +292,11 @@ JinglerGenerateCode:
 	jc			.not
 	rep movsb
 .not:
-	cmp			[rbx], byte -1
+	cmp			byte [rbx], -1
 	jne			.inout_loop
 
 .decodeloop:
-	cmp			[rbx], byte -1
+	cmp			byte [rbx], -1
 	jne			.decode
 	inc			rbx
 	add			rsi, rcx
