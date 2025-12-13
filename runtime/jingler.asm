@@ -506,9 +506,9 @@ JinglerNoteOff:
 
 ;; Snips
 
-	; In/out snips
+	; In/out snips to adjust stack state between instructions, preserving flags
 	basesnip	r_to_t
-	sub			rbx, byte 16
+	lea			rbx, [rbx - 16]
 
 	basesnip	t_to_b
 	movapd		[rbx], xmm0
@@ -517,7 +517,7 @@ JinglerNoteOff:
 	movapd		xmm0, [rbx]
 
 	basesnip	t_to_r
-	add			rbx, byte 16
+	lea			rbx, [rbx + 16]
 
 	; Plain snips
 	snipcode	plain
