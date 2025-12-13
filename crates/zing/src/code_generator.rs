@@ -45,12 +45,12 @@ enum ModuleCall<'ast> {
 	Init {
 		kind: StateKind,
 		value: &'ast Expression,
-		width: ir::Width,
+		width: Width,
 	},
 	Call {
 		inputs: Vec<Type>,
 		static_proc_id: u16,
-		generic_width: Option<ir::Width>,
+		generic_width: Option<Width>,
 		args: &'ast Vec<Expression>,
 	},
 	For {
@@ -60,9 +60,15 @@ enum ModuleCall<'ast> {
 	},
 }
 
-impl From<Width> for ir::Width {
-	fn from(width: Width) -> Self {
-		match width {
+trait ToIR {
+	type IR;
+	fn to_ir(self) -> Self::IR;
+}
+
+impl ToIR for Width {
+	type IR = ir::Width;
+	fn to_ir(self) -> ir::Width {
+		match self {
 			Width::Mono => ir::Width::Mono,
 			Width::Stereo => ir::Width::Stereo,
 			Width::Generic => ir::Width::Generic,
@@ -70,13 +76,31 @@ impl From<Width> for ir::Width {
 	}
 }
 
-impl From<ValueType> for ir::ValueType {
-	fn from(value_type: ValueType) -> Self {
-		match value_type {
+impl ToIR for Option<Width> {
+	type IR = Option<ir::Width>;
+	fn to_ir(self) -> Option<ir::Width> {
+		self.map(|w| w.to_ir())
+	}
+}
+
+impl ToIR for ValueType {
+	type IR = ir::ValueType;
+	fn to_ir(self) -> ir::ValueType {
+		match self {
 			ValueType::Number => ir::ValueType::Number,
 			ValueType::Bool => ir::ValueType::Number,
 			ValueType::Buffer => ir::ValueType::Buffer,
 			ValueType::Typeless => panic!("Typeless parameter in signature"),
+		}
+	}
+}
+
+impl ToIR for Type {
+	type IR = ir::Type;
+	fn to_ir(self) -> ir::Type {
+		ir::Type {
+			width: self.width.unwrap().to_ir(),
+			value_type: self.value_type.unwrap().to_ir(),
 		}
 	}
 }
@@ -185,8 +209,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
-	fn retrieve_width(&self, exp: &Expression) -> Option<ir::Width> {
-		self.stored_widths.get(&(exp as *const Expression)).map(|&w| w.into())
+	fn retrieve_width(&self, exp: &Expression) -> Option<Width> {
+		self.stored_widths.get(&(exp as *const Expression)).copied()
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -497,7 +521,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							self.emit(code![CellInit]);
 						},
 						StateKind::Delay => {
-							self.emit(code![BufferAlloc(width), CellInit]);
+							self.emit(code![BufferAlloc(width.to_ir()), CellInit]);
 						},
 					}
 				},
@@ -507,7 +531,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							self.generate(arg);
 						}
 					}
-					self.emit(code![Call(static_proc_id, generic_width)]);
+					self.emit(code![Call(static_proc_id, generic_width.to_ir())]);
 				},
 				ModuleCall::For { name, count, nested_calls } => {
 					self.generate(count);
@@ -592,16 +616,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	}
 
 	fn make_type_list(&self, types: impl IntoIterator<Item = Type>, scope: Option<Scope>) -> Vec<ir::Type> {
-		let mut result = vec![];
-		for item_type in types {
-			if scope.is_none() || item_type.scope == scope {
-				result.push(ir::Type {
-					width: item_type.width.unwrap().into(),
-					value_type:  item_type.value_type.unwrap().into(),
-				});
-			}
-		}
-		result
+		types.into_iter()
+			.filter(|item_type| scope.is_none() || item_type.scope == scope)
+			.map(|item_type| item_type.to_ir())
+			.collect()
 	}
 
 	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
@@ -917,7 +935,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								}
 								let key = *proc as *const PrecompiledProcedure;
 								let proc_id = self.precompiled_proc_ids[&key][1];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Module, Declaration { proc_index }) => {
 								let FullSignature { inputs, .. } = &self.signatures[*proc_index];
@@ -928,7 +946,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									}
 								}
 								let proc_id = self.dynamic_proc_id[*proc_index];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Function, BuiltIn { code, .. }) => {
 								for arg in args {
@@ -942,14 +960,14 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								}
 								let key = *proc as *const PrecompiledProcedure;
 								let proc_id = self.precompiled_proc_ids[&key][0];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Function, Declaration { proc_index }) => {
 								for arg in args {
 									self.generate(arg);
 								}
 								let proc_id = self.function_proc_id[*proc_index];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp))]);
+								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Instrument, Declaration { proc_index }) => {
 								let static_proc_id = self.static_proc_id[*proc_index];
@@ -1005,16 +1023,16 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			},
 			Expand { exp, width } => {
 				self.generate(exp);
-				self.expand((*width).into());
+				self.expand(*width);
 			},
 		}
 	}
 
-	fn expand(&mut self, width: ir::Width) {
+	fn expand(&mut self, width: Width) {
 		match width {
-			ir::Width::Mono => {},
-			ir::Width::Stereo => self.emit(code![ExpandStereo]),
-			ir::Width::Generic => self.emit(code![ExpandGeneric]),
+			Width::Mono => {},
+			Width::Stereo => self.emit(code![ExpandStereo]),
+			Width::Generic => self.emit(code![ExpandGeneric]),
 		}
 	}
 }
