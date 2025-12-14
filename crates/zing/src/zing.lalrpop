@@ -102,6 +102,13 @@ Expression: Expression = {
 		=> Expression::Conditional {<>},
 	<before:@L> "for" <name:Id> "to" <count:Box<Expression>> <combinator:Id> <body:Box<Expression>>
 		=> Expression::For {<>},
+	<before:@L> "for" <length:Box<Expression>> <scope:Scope?> <width:Width?> "buffer" <body:Box<Expression>>
+		=> Expression::BufferInit {
+			before,
+			length,
+			buffer_type: Type { scope, width, value_type: Some(ValueType::Buffer) },
+			body,
+		},
 };
 
 OrExpression = BinOpLevel<OrOp, XorExpression>;

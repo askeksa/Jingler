@@ -612,6 +612,16 @@ JinglerNoteOff:
 	add			rax, [rbx + 8]
 	movapd		xmm0, [rax]
 
+	snip		buffer_load_indexed, rt, I_BUFFER_LOAD_INDEXED
+	cvtsd2si	eax, xmm0
+	xorpd		xmm0, xmm0
+	cmp			eax, [rbx + 4]
+	jae			.outside
+	shl			eax, 4
+	add			rax, [rbx + 8]
+	movapd		xmm0, [rax]
+.outside:
+
 	snip		buffer_load, st, I_BUFFER_LOAD
 	mov			eax, [rbx]
 	shl			eax, 4

@@ -131,6 +131,8 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	current_proc_index: usize,
 	/// The current procedure kind
 	current_kind: ProcedureKind,
+	/// The current procedure scope
+	current_scope: Option<Scope>,
 
 	procedures: Vec<ir::Procedure>,
 	code: Vec<Instruction>,
@@ -193,6 +195,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			proc_for_id: vec![],
 			current_proc_index: 0,
 			current_kind: ProcedureKind::Module,
+			current_scope: None,
 
 			procedures: vec![],
 			code: vec![],
@@ -336,6 +339,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
 		self.current_proc_index = proc_index;
 		self.current_kind = *kind;
+		self.current_scope = scope;
 		let proc_kind;
 		let proc_inputs;
 		let proc_outputs;
@@ -807,6 +811,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				};
 				self.module_call.push(module_call);
 			},
+			BufferInit { buffer_type, .. } => {
+				self.module_call.push(ModuleCall::Init {
+					kind: StateKind::Cell,
+					value: exp,
+					width: buffer_type.width.unwrap(),
+				});
+			},
 			Expand { exp, .. } => {
 				self.find_cells(exp);
 			}
@@ -1005,7 +1016,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			BufferIndex { exp, index, .. } => {
 				self.generate(exp);
 				self.generate(index);
-				self.emit(code![StackLoad(1), BufferIndex, Sub, BufferLoadWithOffset]);
+				self.emit(code![BufferLoadIndexed]);
 			},
 			For { name, body, combinator, .. } => {
 				let combinator = self.names.lookup_combinator(&combinator.text).unwrap();
@@ -1020,6 +1031,50 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.emit(combinator.code);
 				self.emit(code![StackStore(2)]); // accumulator
 				self.emit(code![RepeatEnd]);
+			},
+			BufferInit { length, body, .. } => {
+				match self.current_scope {
+					Some(Scope::Static) => {
+						let Expression::Call { ref name, ref args, .. } = **body else {
+							panic!("Buffer initialization must be a call");
+						};
+						let proc_index = match self.names.lookup_procedure(&name.text) {
+							Some(ProcedureRef { definition: ProcedureDefinition::Declaration { proc_index }, .. }) => proc_index,
+							_ => panic!("Buffer initialization must be a call"),
+						};
+
+						let static_proc_id = self.static_proc_id[*proc_index];
+						let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
+
+						let body_width = self.retrieve_width(body);
+						let buffer_width = self.retrieve_width(exp);
+
+						self.generate(length);
+						for arg in args {
+							self.generate(arg);
+						}
+						self.emit(code![
+							StateEnter,
+							Call(static_proc_id, body_width.to_ir()),
+							StateLeave,
+							BufferInitStart,
+							StateEnter,
+							Call(dynamic_proc_id, body_width.to_ir()),
+							StateLeave
+						]);
+						if let Some(buffer_width) = buffer_width {
+							self.expand(buffer_width);
+						}
+						self.emit(code![
+							BufferInitEnd
+						]);
+					},
+					Some(Scope::Dynamic) => {
+						// Already evaluated and stored in a cell
+						self.emit(code![CellRead]);
+					},
+					None => panic!("Buffer initialization in a function"),
+				}
 			},
 			Expand { exp, width } => {
 				self.generate(exp);

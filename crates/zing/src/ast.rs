@@ -149,6 +149,12 @@ pub enum Expression {
 		combinator: Id,
 		body: Box<Expression>,
 	},
+	BufferInit {
+		before: Pos,
+		length: Box<Expression>,
+		buffer_type: Type,
+		body: Box<Expression>,
+	},
 	Expand { exp: Box<Expression>, width: Width },
 }
 
@@ -202,6 +208,7 @@ impl Expression {
 			TupleIndex { ref exp, .. } => exp.pos_before(),
 			BufferIndex { ref exp, .. } => exp.pos_before(),
 			For { before, .. } => before,
+			BufferInit { before, .. } => before,
 			Expand { ref exp, .. } => exp.pos_before(),
 		}
 	}
@@ -221,6 +228,7 @@ impl Expression {
 			TupleIndex { after, .. } => after,
 			BufferIndex { after, .. } => after,
 			For { ref body, .. } => body.pos_after(),
+			BufferInit { ref body, .. } => body.pos_after(),
 			Expand { ref exp, .. } => exp.pos_after(),
 		}
 	}
@@ -269,6 +277,10 @@ impl Expression {
 			},
 			For { count, body, .. } => {
 				count.traverse(pre, post);
+				body.traverse(pre, post);
+			},
+			BufferInit { length, body, .. } => {
+				length.traverse(pre, post);
 				body.traverse(pre, post);
 			},
 			Expand { exp, .. } => {

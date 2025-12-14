@@ -385,7 +385,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 						}
 					}
 					if inferred_type.assignable_to(&node_type) {
-						if let Some(width) = self.should_expand(&node_type, &exp_type, Some(Width::Generic)) {
+						if let Some(width) = self.should_expand(&node_type, &exp_type, Some(Width::Generic), exp) {
 							if single {
 								self.expand(exp, width);
 							} else {
@@ -433,6 +433,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			BufferIndex { exp, index, .. } => self.infer_buffer_index(exp, index, loc),
 			For { name, count, combinator, body, .. }
 				=> self.infer_for(name, count, combinator, body, loc),
+			BufferInit { length, buffer_type, body, .. }
+				=> self.infer_buffer_init(length, buffer_type, body, loc),
 			Expand { .. } => panic!(),
 		};
 		if let Some(generic_width) = generic_width {
@@ -693,6 +695,71 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		(results, body_operand.width())
 	}
 
+	fn infer_buffer_init(&mut self,
+			length: &mut Expression,
+			buffer_type: &mut Type,
+			body: &mut Expression,
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
+		match buffer_type.scope {
+			Some(Scope::Dynamic) => self.compiler.report_error(loc, "Dynamic buffer initialization is not supported."),
+			_ => buffer_type.scope = Some(Scope::Static),
+		}
+
+		let target = match body {
+			Expression::Call { name, .. } => {
+				match self.names.lookup_procedure(&name.text) {
+					Some(ProcedureRef {
+						definition: ProcedureDefinition::Declaration { proc_index }, ..
+					}) => Some(&self.signatures[*proc_index]),
+					_ => None,
+				}
+			},
+			_ => None,
+		};
+		match target.map(|sig| (sig.context, sig.kind, &sig.inputs)) {
+			Some((Context::Global, ProcedureKind::Module, _)) => {
+				self.compiler.report_error(body, "Buffer initialization module can't be global.");
+			},
+			Some((_, ProcedureKind::Module, inputs)) => {
+				if inputs.iter().any(|input| input.scope != Some(Scope::Static)) {
+					self.compiler.report_error(body, "Buffer initialization module can only have static inputs.");
+				}
+			},
+			_ => {
+				self.compiler.report_error(body, "Buffer initialization must be a module call.");
+			},
+		}
+
+		let length_operand = self.expect_single(length, "buffer length");
+		let body_operand = self.expect_single(body, "buffer initialization");
+		let buffer_sig = sig!([static mono number, dynamic generic number] [static generic buffer]);
+		let mut results = self.check_signature(&buffer_sig, &[length_operand, body_operand], loc);
+		match (buffer_type.width, body_operand.width()) {
+			(None, Some(width)) => {
+				buffer_type.width = Some(width);
+				(results, None)
+			},
+			(Some(buffer_width), Some(body_width)) if buffer_width == body_width => {
+				(results, None)
+			},
+			(Some(buffer_width), Some(Width::Mono)) => {
+				if let [TypeResult::Type { inferred_type }] = results.as_mut_slice() {
+					inferred_type.width = Some(buffer_width);
+				}
+				(results, Some(buffer_width))
+			},
+			(Some(buffer_width), Some(body_width)) => {
+				self.compiler.report_error(loc,
+					format!("Can't initialize a {} buffer with a {} number.", buffer_width, body_width));
+				(vec![TypeResult::Error], None)
+			},
+			_ => {
+				// Error already reported
+				(vec![TypeResult::Error], None)
+			},
+		}
+	}
+
 	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		let mut arg_types = vec![];
@@ -708,7 +775,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			let mut type_index = 0;
 			for (arg, multiplicity) in args.iter_mut().zip(arg_multiplicity) {
 				for i in type_index .. type_index + multiplicity {
-					if let Some(width) = self.should_expand(&sig.inputs[i], &arg_types[i], generic_width) {
+					if let Some(width) = self.should_expand(&sig.inputs[i], &arg_types[i], generic_width, arg) {
 						if multiplicity == 1 {
 							self.expand(arg, width);
 						} else {
@@ -732,7 +799,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let result = self.check_signature(sig, args, loc);
 		let generic_width = self.generic_instantiation(sig, &result);
 		for ((sig_type, arg_type), input) in sig.inputs.iter().zip(args).zip(inputs) {
-			if let Some(width) = self.should_expand(sig_type, arg_type, generic_width) {
+			if let Some(width) = self.should_expand(sig_type, arg_type, generic_width, *input) {
 				self.expand(input, width);
 			}
 		}
@@ -761,21 +828,28 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		generic.then_some(Width::Mono)
 	}
 
-	fn should_expand(&self, sig_type: &Type, arg_type: &TypeResult, generic_width: Option<Width>) -> Option<Width> {
+	fn should_expand(&mut self, sig_type: &Type, arg_type: &TypeResult, generic_width: Option<Width>,
+			loc: &dyn Location) -> Option<Width> {
 		if let (Type {
 			width: Some(sig_width), ..
 		},
 		TypeResult::Type {
 			inferred_type: Type {
-				width: Some(arg_width), ..
+				width: Some(arg_width),
+				value_type: Some(arg_type),
+				..
 			}
 		}) = (sig_type, arg_type) {
-			match (sig_width, arg_width, generic_width) {
+			let expand_width = match (sig_width, arg_width, generic_width) {
 				(Width::Stereo, Width::Mono, _) => Some(Width::Stereo),
 				(Width::Generic, Width::Mono, Some(Width::Stereo)) => Some(Width::Stereo),
 				(Width::Generic, Width::Mono, Some(Width::Generic)) => Some(Width::Generic),
 				_ => None,
+			};
+			if let Some(width) = expand_width && let ValueType::Buffer = arg_type {
+				self.compiler.report_error(loc, format!("Can't expand a mono buffer to {}.", width));
 			}
+			expand_width
 		} else {
 			None
 		}
@@ -806,11 +880,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					match (sig_type.width.unwrap(), arg_type.width.unwrap()) {
 						(Width::Generic, Width::Stereo) => seen_stereo = true,
 						(Width::Generic, Width::Generic) => seen_generic = true,
-						(Width::Mono, Width::Mono) => {},
-						(s, Width::Mono) => if arg_type.value_type == Some(ValueType::Buffer) {
-							self.compiler.report_error(loc,
-								format!("Can't pass a mono buffer value into a {} buffer input.", s));
-						},
+						(_, Width::Mono) => {},
 						(s, a) => if s != a {
 							self.compiler.report_error(loc,
 								format!("Can't pass a {} value into a {} input.", a, s));

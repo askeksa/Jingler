@@ -87,9 +87,12 @@ pub enum Instruction {
 	BufferAlloc(Width),
 	BufferLoad,
 	BufferLoadWithOffset,
+	BufferLoadIndexed,
 	BufferStoreAndStep,
 	BufferIndex,
 	BufferLength,
+	BufferInitStart,
+	BufferInitEnd,
 
 	// Procedures/instruments/notes
 	Call(u16, Option<Width>),
@@ -158,8 +161,11 @@ impl Instruction {
 			BufferAlloc(..) => (1, 1),
 			BufferLoad => (1, 1),
 			BufferLoadWithOffset => (2, 1),
+			BufferLoadIndexed => (2, 1),
 			BufferStoreAndStep => (2, 1),
 			BufferIndex | BufferLength => (1, 1),
+			BufferInitStart => (1, 1),
+			BufferInitEnd => (2, 1),
 
 			Call(..) => panic!("stack_change on 'call'"),
 			PlayInstrument(..) => (0, 0),

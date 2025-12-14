@@ -27,6 +27,7 @@ enum EncodedBytecode {
 	Fputnext,
 	Random,
 	BufferLoadWithOffset,
+	BufferLoadIndexed,
 	BufferLoad,
 	BufferStoreAndStep,
 	BufferAlloc,
@@ -133,6 +134,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		Fputnext => ("fputnext", None),
 		Random => ("random", None),
 		BufferLoadWithOffset => ("buffer_load_with_offset", None),
+		BufferLoadIndexed => ("buffer_load_indexed", None),
 		BufferLoad => ("buffer_load", None),
 		BufferStoreAndStep => ("buffer_store_and_step", None),
 		BufferAlloc => ("buffer_alloc", None),
@@ -230,6 +232,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::AddSub => encode(AddSub, 0),
 		Instruction::Random => encode(Random, 0),
 		Instruction::BufferLoadWithOffset => encode(BufferLoadWithOffset, 0),
+		Instruction::BufferLoadIndexed => encode(BufferLoadIndexed, 0),
 		Instruction::BufferLoad => encode(BufferLoad, 0),
 		Instruction::BufferStoreAndStep => encode(BufferStoreAndStep, 0),
 		Instruction::BufferAlloc(..) => encode(BufferAlloc, 0),
@@ -267,6 +270,15 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 			encode(LoopJump, 0);
 			encode_implicit(Pop, encode);
 			encode_implicit(Pop, encode);
+		},
+
+		Instruction::BufferInitStart => {
+			encode(BufferAlloc, 0);
+			encode(Label, 0);
+		},
+		Instruction::BufferInitEnd => {
+			encode(BufferStoreAndStep, 0);
+			encode(LoopJump, 0);
 		},
 
 		Instruction::IfGreaterEq => {

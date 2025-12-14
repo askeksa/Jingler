@@ -296,6 +296,12 @@ impl Expression {
 				write!(f, " {} ", combinator)?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},
+			BufferInit { length, buffer_type, body, .. } => {
+				write!(f, "for ")?;
+				length.fmt_with_precedence(f, Precedence::Expression)?;
+				write!(f, " {} ", buffer_type)?;
+				body.fmt_with_precedence(f, Precedence::Expression)?;
+			},
 			Expand { exp, .. } => {
 				write!(f, "[{}]", exp)?;
 			},
@@ -319,6 +325,7 @@ impl Expression {
 			TupleIndex { .. } => Precedence::Primary,
 			BufferIndex { .. } => Precedence::Primary,
 			For { .. } => Precedence::Expression,
+			BufferInit { .. } => Precedence::Expression,
 			Expand { .. } => Precedence::Primary,
 		}
 	}
