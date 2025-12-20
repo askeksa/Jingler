@@ -1,5 +1,5 @@
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::iter::repeat;
 use std::mem::replace;
 
@@ -39,12 +39,11 @@ struct TypeInferrer<'comp, 'names> {
 	compiler: &'comp mut Compiler,
 	signatures: Vec<FullSignature>,
 	stored_widths: HashMap<*const Expression, Width>,
-	parameters: HashMap<String, TypeResult>,
 	callees: Vec<Vec<usize>>,
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 
 	// Procedure-local state
-	ready: HashMap<String, TypeResult>,
+	node_types: Vec<Vec<TypeResult>>,
 	current_proc_index: usize,
 	current_proc_name_loc: PosRange,
 }
@@ -67,23 +66,38 @@ impl TypeResult {
 impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	pub fn new(names: &'names Names, compiler: &'comp mut Compiler)
 			-> TypeInferrer<'comp, 'names> {
-		let mut parameters = HashMap::new();
-		for param in names.parameter_names() {
-			parameters.insert(param.clone(), TypeResult::Type {
-				inferred_type: type_spec!(dynamic mono number),
-			});
-		}
 		TypeInferrer {
 			names,
 			compiler,
 			signatures: vec![],
 			stored_widths: HashMap::new(),
-			parameters,
 			callees: vec![],
 			precompiled_callees: vec![],
-			ready: HashMap::new(),
+			node_types: vec![],
 			current_proc_index: 0,
 			current_proc_name_loc: PosRange::default(),
+		}
+	}
+
+	pub fn lookup_variable(&mut self, name: &Id) -> Option<TypeResult> {
+		match self.names.lookup_variable(self.current_proc_index, &name.text) {
+			Some(VariableRef::Parameter { .. }) => Some(TypeResult::Type {
+				inferred_type: type_spec!(dynamic mono number),
+			}),
+			Some(VariableRef::Input { index }) => Some(TypeResult::Type {
+				inferred_type: self.signatures[self.current_proc_index].inputs[*index],
+			}),
+			Some(VariableRef::Node { body_index, tuple_index }) => {
+				let result = &mut self.node_types[*body_index][*tuple_index];
+				if let TypeResult::Type { inferred_type } = result {
+					inferred_type.inherit(&type_spec!(mono number));
+				}
+				Some(*result)
+			},
+			Some(VariableRef::For { .. }) => Some(TypeResult::Type {
+				inferred_type: type_spec!(static mono number),
+			}),
+			None => None,
 		}
 	}
 
@@ -204,15 +218,15 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 
 	fn check_outputs(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
 		for PatternItem { name: variable_name, item_type } in &proc.outputs.items {
-			match self.ready.get(variable_name.text.as_str()) {
-				Some(&TypeResult::Type { inferred_type }) => {
+			match self.lookup_variable(variable_name) {
+				Some(TypeResult::Type { inferred_type }) => {
 					if !inferred_type.assignable_to(item_type) {
 						self.compiler.report_error(variable_name,
 							format!("Expression of type{} can't be assigned to output '{}'{}.",
 							inferred_type, variable_name, item_type));
 					}
 				},
-				Some(&TypeResult::Error) => {},
+				Some(TypeResult::Error) => {},
 				None => {
 					self.compiler.report_error(variable_name,
 						format!("No assignment to output '{}'.", variable_name));
@@ -224,142 +238,63 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn infer_body(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
-		// Initialize ready variable to the set of parameters.
-		self.ready = self.parameters.clone();
+		loop {
+			// Initialize node types from declared types
+			self.node_types = proc.body.iter_mut()
+				.map(|Statement::Assign { node, .. }| {
+					node.items.iter_mut().map(|PatternItem { name, item_type }| {
+						if let Some(output) = proc.outputs.items.iter().find(|item| item.name.text == name.text) {
+							item_type.inherit(&output.item_type);
+						}
+						TypeResult::Type { inferred_type: *item_type }
+					}).collect()
+				}).collect();
 
-		// Record dependencies of all statements and mark inputs and fully typed
-		// variables as ready.
-		// A statement can be inferred when all its dependencies are ready.
-		let mut dependencies = vec![HashSet::new(); proc.body.len()];
-		self.find_ready(proc.kind, &mut proc.inputs);
-		for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
-			self.find_dependencies(exp, &mut dependencies[body_index]);
-			// Inherit types from outputs.
-			for PatternItem { name, item_type } in &mut node.items {
-				if let Some(output) = proc.outputs.items.iter().find(|item| item.name.text == name.text) {
-					item_type.inherit(&output.item_type);
-				}
-			}
-			self.find_ready(proc.kind, node);
-		}
-		self.compiler.check_errors()?;
-
-		// Find variables on or between cycles.
-		let mut on_cycle = vec![true; proc.body.len()];
-		let mut dependency_count: HashMap<&str, i32> = HashMap::new();
-		for dep in &dependencies {
-			for name in dep {
-				*dependency_count.entry(name).or_default() += 1;
-			}
-		}
-		let mut changed = true;
-		while changed {
-			changed = false;
-			for (body_index, Statement::Assign { node, .. }) in proc.body.iter().enumerate() {
-				if on_cycle[body_index] && node.items.iter().all(|item| {
-					*dependency_count.entry(item.name.text.as_str()).or_default() == 0
-				}) {
-					for name in &dependencies[body_index] {
-						*dependency_count.entry(name).or_default() -= 1;
-					}
-					on_cycle[body_index] = false;
-					changed = true;
-				}
-			}
-		}
-
-		let mut done = vec![false; proc.body.len()];
-		let mut done_count = 0;
-		while done_count < proc.body.len() {
-			let mut changed = false;
+			// Infer statements in program order
+			let mut repeat = false;
 			for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
-				if !done[body_index] && dependencies[body_index].iter()
-						.all(|name| self.ready.contains_key(&name.to_string())) {
-					self.infer_statement(node, exp);
-					done[body_index] = true;
-					done_count += 1;
-					changed = true;
-				}
-			}
-			if !changed {
-				// There are cycles. Require width and infer rest of type.
-				for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
-					if !done[body_index] && on_cycle[body_index] {
-						for PatternItem { name: variable_name, item_type } in &mut node.items {
-							let Type { scope, width, value_type } = item_type;
-							if proc.kind != ProcedureKind::Function {
-								if scope.is_none() {
-									*scope = Some(Scope::Dynamic);
-								}
-							}
-							if width.is_none() {
-								self.compiler.report_error(&*variable_name,
-									"Variables on a cycle must specify explict width (mono, stereo or generic).");
-								*width = Some(Width::Stereo);
-							}
-							if value_type.is_none() {
-								*value_type = Some(ValueType::Number);
-							}
-						}
-						self.find_ready(proc.kind, node);
+				let inferred_results = self.infer_statement(node, exp);
+
+				for ((PatternItem { item_type: source_type, .. }, node_type), inferred_type) in
+						node.items.iter_mut().zip(&self.node_types[body_index]).zip(&inferred_results) {
+					match (source_type.width, node_type.width(), inferred_type.width()) {
+						(None, Some(Width::Mono), Some(inferred_width)) if inferred_width != Width::Mono => {
+							// Width was assumed to be mono for a forward reference, but then
+							// inferred to be stereo or generic. Store the inferred width into
+							// the node and repeat type inference for the body.
+							source_type.width = Some(inferred_width);
+							repeat = true;
+						},
+						_ => {},
 					}
+				}
+
+				self.node_types[body_index] = inferred_results;
+			}
+
+			// Check for errors
+			self.compiler.check_errors()?;
+
+			if !repeat {
+				break;
+			}
+		}
+
+		// Update the nodes with the inferred types
+		for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
+			for (item, node_type) in node.items.iter_mut().zip(&self.node_types[body_index]) {
+				if let TypeResult::Type { inferred_type } = node_type {
+					item.item_type = *inferred_type;
 				}
 			}
 		}
 
-		self.compiler.check_errors()
-	}
-
-	fn find_ready(&mut self,
-			proc_kind: ProcedureKind,
-			pattern: &mut Pattern) {
-		for PatternItem { name: variable_name, item_type } in &mut pattern.items {
-			let Type { scope, width, value_type } = item_type;
-			// Mark variable ready if it is fully typed.
-			let is_ready = match proc_kind {
-				ProcedureKind::Function => {
-					if scope.is_some() {
-						self.compiler.report_error(&*variable_name,
-							"Variables in functions can't be marked static or dynamic.");
-					}
-					width.is_some() && value_type.is_some()
-				},
-				_ => scope.is_some() && width.is_some() && value_type.is_some(),
-			};
-			if is_ready {
-				self.ready.insert(variable_name.text.clone(), TypeResult::Type {
-					inferred_type: *item_type,
-				});
-			}
-		}
-	}
-
-	fn find_dependencies(&mut self,
-			exp: &Expression,
-			dependencies: &mut HashSet<String>) {
-		exp.traverse_pre(&mut |exp| {
-			if let Expression::Variable { name: variable_name } = exp {
-				match self.names.lookup_variable(self.current_proc_index, &variable_name.text) {
-					Some(VariableRef { kind, .. }) => {
-						match kind {
-							VariableKind::Input | VariableKind::Node { .. } => {
-								dependencies.insert(variable_name.text.clone());
-							},
-							_ => {},
-						}
-					},
-					None => {
-						self.compiler.report_error(variable_name,
-							format!("Variable not found: '{}'.", variable_name));
-					},
-				}
-			}
-		});
+		Ok(())
 	}
 
 	fn infer_statement(&mut self,
 			node: &mut Pattern,
-			exp: &mut Expression) {
+			exp: &mut Expression) -> Vec<TypeResult> {
 		let FullSignature { kind: current_kind, .. } = self.signatures[self.current_proc_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
@@ -368,21 +303,26 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					node.items.len(), exp_types.len()));
 		}
 		let single = node.items.len() == 1;
-		let node_iter = node.items.iter_mut();
 		let exp_iter = exp_types.iter().chain(repeat(&TypeResult::Error));
 		let mut seen_static = false;
 		let mut seen_dynamic = false;
-		for (item, exp_type) in node_iter.zip(exp_iter) {
+		let inferred_results = node.items.iter().zip(exp_iter).map(|(item, exp_type)| {
 			let mut node_type = item.item_type;
-			let result = match exp_type {
+			match exp_type {
 				TypeResult::Type { inferred_type } => {
 					node_type.inherit(inferred_type);
-					if current_kind != ProcedureKind::Function {
-						node_type.scope = node_type.scope.or(Some(Scope::Static));
-						match node_type.scope.unwrap() {
-							Scope::Static => seen_static = true,
-							Scope::Dynamic => seen_dynamic = true,
-						}
+					match (current_kind, node_type.scope) {
+						(ProcedureKind::Function, Some(_)) => {
+							self.compiler.report_error(&item.name,
+								"Variables in functions can't be marked static or dynamic.");
+						},
+						(ProcedureKind::Function, None) => {},
+						(_, None) => {
+							node_type.scope = Some(Scope::Static);
+							seen_static = true;
+						},
+						(_, Some(Scope::Static)) => seen_static = true,
+						(_, Some(Scope::Dynamic)) => seen_dynamic = true,
 					}
 					if inferred_type.assignable_to(&node_type) {
 						if let Some(width) = self.should_expand(&node_type, &exp_type, Some(Width::Generic), exp) {
@@ -393,7 +333,6 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 									"Values inside a tuple can't be auto-expanded from mono.");
 							}
 						}
-						item.item_type = node_type;
 						TypeResult::Type { inferred_type: node_type }
 					} else {
 						self.compiler.report_error(&item.name,
@@ -405,13 +344,15 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				TypeResult::Error => {
 					TypeResult::Error
 				},
-			};
-			self.ready.insert(item.name.text.clone(), result);
-		}
+			}
+		}).collect();
+
 		if seen_static && seen_dynamic {
 			self.compiler.report_error(node,
 				"Can't have both static and dynamic in the same pattern.");
 		}
+
+		inferred_results
 	}
 
 	fn infer_expression(&mut self,
@@ -435,7 +376,20 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				=> self.infer_for(name, count, combinator, body, loc),
 			BufferInit { length, buffer_type, body, .. }
 				=> self.infer_buffer_init(length, buffer_type, body, loc),
-			Expand { .. } => panic!(),
+			Expand { exp: inner, .. } => {
+				// We only get here during subsequent inference passes triggered when
+				// a forward-referenced variable without a declared width is inferred
+				// as stereo or generic. In this case, we remove the Expand and let
+				// the Expand insertion logic re-insert it if needed.
+				let results = self.infer_expression(inner);
+				let dummy = Expression::Bool {
+					before: inner.pos_before(),
+					value: true,
+				};
+				let inner = replace(inner.as_mut(), dummy);
+				*exp = inner;
+				(results, None)
+			},
 		};
 		if let Some(generic_width) = generic_width {
 			self.store_width(exp, generic_width)
@@ -476,7 +430,14 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	fn infer_variable(&mut self,
 			name: &Id,
 			_loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		(vec![self.ready[&name.text]], None)
+		let result = match self.lookup_variable(name) {
+			Some(result) => result,
+			None => {
+				self.compiler.report_error(name, format!("Variable not found: '{}'.", name));
+				TypeResult::Error
+			},
+		};
+		(vec![result], None)
 	}
 
 	fn infer_unop(&mut self,
@@ -677,7 +638,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn infer_for(&mut self,
-			name: &Id, count: &mut Expression,
+			_name: &Id, count: &mut Expression,
 			combinator: &Id, body: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		if let None = self.names.lookup_combinator(&combinator.text) {
@@ -685,11 +646,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				format!("Permitted repetition combinators are {}", self.names.combinator_list()));
 		}
 		let count_operand = self.expect_single(count, "repetition count");
-		self.ready.insert(name.text.clone(), TypeResult::Type {
-			inferred_type: type_spec!(static mono number),
-		});
 		let body_operand = self.expect_single(body, "body of repetition");
-		self.ready.remove(&name.text);
 		let for_sig = sig!([static mono number, dynamic generic number] [dynamic generic number]);
 		let results = self.check_signature(&for_sig, &[count_operand, body_operand], loc);
 		(results, body_operand.width())
@@ -960,7 +917,6 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		if let Some(width) = self.stored_widths.get(&key) {
 			if let Expression::Expand { exp: inner, .. } = exp {
 				self.store_width(inner, *width);
-				self.stored_widths.remove(&key);
 			}
 		}
 	}

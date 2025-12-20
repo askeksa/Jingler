@@ -18,18 +18,11 @@ pub struct Names {
 }
 
 /// A reference to a named entry in a pattern.
-#[derive(Clone, Debug)]
-pub struct VariableRef {
-	pub kind: VariableKind,
-	pub tuple_index: usize,
-}
-
-/// Location of the pattern this variable occurs in: input or node.
 #[derive(Clone, Copy, Debug)]
-pub enum VariableKind {
-	Parameter,
-	Input,
-	Node { body_index: usize },
+pub enum VariableRef {
+	Parameter {index: usize },
+	Input { index: usize },
+	Node { body_index: usize, tuple_index: usize },
 	For { variable_pos: PosRange },
 }
 
@@ -112,10 +105,7 @@ impl Names {
 
 		// Insert parameters
 		for (index, param) in program.parameters.iter().enumerate() {
-			names.parameters.insert(param.name.text.clone(), VariableRef{
-				kind: VariableKind::Parameter,
-				tuple_index: index,
-			});
+			names.parameters.insert(param.name.text.clone(), VariableRef::Parameter { index });
 		}
 
 		// Run through all procedures in the program
@@ -134,29 +124,20 @@ impl Names {
 
 			// Run through all patterns in the procedure; first the inputs,
 			// then the left-hand sides of all assignments.
-			for (tuple_index, item) in proc.inputs.items.iter().enumerate() {
-				let var_ref = VariableRef {
-					kind: VariableKind::Input,
-					tuple_index,
-				};
-				names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
+			for (index, item) in proc.inputs.items.iter().enumerate() {
+				names.insert_variable(program, compiler, proc_index, &item.name,
+					VariableRef::Input { index });
 			}
 			for (body_index, Statement::Assign { node, exp }) in proc.body.iter().enumerate() {
 				for (tuple_index, item) in node.items.iter().enumerate() {
-					let var_ref = VariableRef {
-						kind: VariableKind::Node { body_index },
-						tuple_index,
-					};
-					names.insert_variable(program, compiler, proc_index, &item.name, var_ref);
+					names.insert_variable(program, compiler, proc_index, &item.name,
+						VariableRef::Node { body_index, tuple_index });
 				}
 				// Add any repetition variables in the right-hand side.
 				exp.traverse_pre(&mut |exp| {
 					if let Expression::For { name, .. } = exp {
-						let var_ref = VariableRef {
-							kind: VariableKind::For { variable_pos: PosRange::from(name) },
-							tuple_index: 0,
-						};
-						names.insert_variable(program, compiler, proc_index, &name, var_ref);
+						names.insert_variable(program, compiler, proc_index, &name,
+							VariableRef::For { variable_pos: PosRange::from(name) });
 					}
 				});
 			}
@@ -200,13 +181,13 @@ impl Names {
 		self.variables[proc_index].entry(name.text.clone()).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let proc = &program.procedures[proc_index];
-			let loc: &dyn Location = match existing.kind {
-				VariableKind::Parameter => &program.parameters[existing.tuple_index].name,
-				VariableKind::Input => &proc.inputs.items[existing.tuple_index].name,
-				VariableKind::Node { body_index } => match proc.body[body_index] {
-					Statement::Assign { ref node, .. } => &node.items[existing.tuple_index].name,
+			let loc: &dyn Location = match existing {
+				VariableRef::Parameter { index } => &program.parameters[*index].name,
+				VariableRef::Input { index } => &proc.inputs.items[*index].name,
+				VariableRef::Node { body_index, tuple_index } => match proc.body[*body_index] {
+					Statement::Assign { ref node, .. } => &node.items[*tuple_index].name,
 				},
-				VariableKind::For { ref variable_pos } => variable_pos,
+				VariableRef::For { variable_pos } => variable_pos,
 			};
 			compiler.report_context(loc, "Previously defined here.");
 		}).or_insert(var_ref);
@@ -243,10 +224,9 @@ impl Names {
 	}
 
 	pub fn lookup_parameter(&self, name: &String) -> Option<usize> {
-		self.parameters.get(name).map(|p| p.tuple_index)
-	}
-
-	pub fn parameter_names(&self) -> impl Iterator<Item=&String> {
-		self.parameters.keys()
+		match self.parameters.get(name) {
+			Some(&VariableRef::Parameter { index }) => Some(index),
+			_ => None,
+		}
 	}
 }
