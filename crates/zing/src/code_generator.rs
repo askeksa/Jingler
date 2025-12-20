@@ -884,12 +884,24 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					Some(stack_index) => {
 						let offset = self.stack_height - stack_index - 1;
 						self.emit(code![StackLoad(offset as u16)]);
-					}
+					},
 					None => {
-						if let Some(index) = self.names.lookup_parameter(&name.text) {
-							self.emit(code![Parameter(index as u16)]);
-						} else {
-							self.unsupported(exp, "accessing a variable above its definition (except in cell or delay)");
+						match self.names.lookup_variable(self.current_proc_index, &name.text) {
+							Some(VariableRef::Parameter { index }) => {
+								self.emit(code![Parameter(*index as u16)]);
+							},
+							Some(VariableRef::Node { .. }) => {
+								self.compiler.report_error(name, "Reference to a later variable is only allowed in a cell or delay.");
+								// Dummy push to keep stack height consistent
+								self.emit(code![Constant(0)]);
+							},
+							Some(VariableRef::For { variable_pos }) => {
+								self.compiler.report_error(name, "An iteration variable can only be used inside its repetition.");
+								self.compiler.report_context(variable_pos, format!("Iteration variable '{}' defined here.", name));
+								// Dummy push to keep stack height consistent
+								self.emit(code![Constant(0)]);
+							},
+							_ => unreachable!("Variable not found"),
 						}
 					},
 				};

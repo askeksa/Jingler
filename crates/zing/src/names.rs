@@ -222,11 +222,4 @@ impl Names {
 		list += &format!(" and '{}'", combinators.last().unwrap());
 		list
 	}
-
-	pub fn lookup_parameter(&self, name: &String) -> Option<usize> {
-		match self.parameters.get(name) {
-			Some(&VariableRef::Parameter { index }) => Some(index),
-			_ => None,
-		}
-	}
 }
