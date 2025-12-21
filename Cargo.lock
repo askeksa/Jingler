@@ -3120,7 +3120,6 @@ dependencies = [
  "ir",
  "lalrpop",
  "lalrpop-util",
- "regex",
 ]
 
 [[package]]

@@ -7,8 +7,6 @@ edition.workspace = true
 build = "build.rs" # LALRPOP preprocessing
 
 [dependencies]
-regex = "1.12.2"
-
 ir = { path = "../ir" }
 
 [dependencies.lalrpop-util]

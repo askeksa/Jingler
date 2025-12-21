@@ -6,8 +6,6 @@ use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
-
 use lalrpop_util::ParseError;
 
 use crate::ast::*;
@@ -28,9 +26,16 @@ pub struct Source {
 impl Source {
 	pub fn new(filename: String, raw_input: String, start_offset: usize) -> Source {
 		// Remove comments
-		let r_process = Regex::new(r"(?m:^([^#]*?)[ \t]*(?:#.*)?\r?$)").unwrap();
-		let processed_input = r_process.replace_all(&raw_input, "$1").to_string();
-		let processed_input: Rc<str> = Rc::from(processed_input);
+		let mut processed = String::with_capacity(raw_input.len());
+		for line in raw_input.lines() {
+			let line = match line.find('#') {
+				Some(i) => &line[..i],
+				None => line,
+			};
+			processed.push_str(line);
+			processed.push('\n');
+		}
+		let processed_input = Rc::from(processed);
 
 		Source {
 			filename,
@@ -46,8 +51,6 @@ pub struct Compiler {
 	sources: Vec<Source>,
 	loaded_files: HashSet<PathBuf>,
 	messages: Vec<Message>,
-
-	r_line_break: Regex,
 }
 
 /// A diagnostic message.
@@ -109,8 +112,6 @@ impl MessageCategory {
 pub struct CompileError {
 	messages: Vec<Message>,
 	index: usize,
-
-	r_not_tab: Regex,
 }
 
 impl Iterator for CompileError {
@@ -122,7 +123,7 @@ impl Iterator for CompileError {
 		self.messages.get(index).map(|msg| {
 			let line = &msg.source_line;
 			let line_until_marker = &line[..msg.column];
-			let indent = self.r_not_tab.replace_all(line_until_marker, " ");
+			let indent = line_until_marker.replace(|c| c != '\t', " ");
 			let marker = if msg.length <= msg.marker_max_length {
 				"^".repeat(msg.length)
 			} else {
@@ -231,7 +232,6 @@ impl Compiler {
 			sources: vec![main_source],
 			loaded_files,
 			messages: vec![],
-			r_line_break: Regex::new(r"\n|\r\n").unwrap(),
 		}
 	}
 
@@ -383,15 +383,14 @@ impl Compiler {
 		let offset = pos - source.start_offset;
 
 		let (until_offset, from_offset) = source.processed_input.split_at(offset);
-		let marker_max_length = self.r_line_break.find(from_offset).map(|m| m.start()).unwrap_or(0);
+		let marker_max_length = from_offset.find('\n').unwrap_or(from_offset.len());
 		let (line, column) = {
-			match self.r_line_break.find_iter(until_offset).enumerate().last() {
-				Some((count, last)) => (count + 1, offset - last.end()),
+			match until_offset.lines().enumerate().last() {
+				Some((count, last)) => (count, last.len()),
 				None => (0, offset)
 			}
 		};
-		let source_lines = self.r_line_break.split(&source.raw_input);
-		let source_line = source_lines.skip(line).next().unwrap_or("").to_string();
+		let source_line = source.raw_input.lines().skip(line).next().unwrap_or("").to_string();
 
 		self.messages.push(Message {
 			category,
@@ -429,7 +428,6 @@ impl Compiler {
 		CompileError {
 			messages: replace(&mut self.messages, vec![]),
 			index: 0,
-			r_not_tab: Regex::new(r"[^\t]").unwrap(),
 		}
 	}
 
