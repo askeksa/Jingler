@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::replace;
 
-use crate::program::{ProcedureKind, Program};
+use crate::program::{ProcedureKind, Program, Width};
 use crate::instructions::{Instruction, NoteProperty};
 
 
@@ -350,8 +350,8 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::SplitRL => encode_implicit(SplitRL, encode),
 		Instruction::Left => {},
 		Instruction::Right => encode_implicit(ExpandR, encode),
-		Instruction::ExpandStereo => encode_implicit(ExpandL, encode),
-		Instruction::ExpandGeneric => encode_implicit(ExpandL, encode),
+		Instruction::Expand(Width::Mono) => {},
+		Instruction::Expand(_) => encode_implicit(ExpandL, encode),
 		Instruction::Pop => encode_implicit(Pop, encode),
 		Instruction::PopNext => encode_implicit(PopNext, encode),
 		Instruction::BufferIndex => encode_implicit(BufferIndexAndLength, encode),

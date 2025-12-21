@@ -63,8 +63,7 @@ pub enum Instruction {
 	// Channels
 	Left,
 	Right,
-	ExpandStereo,
-	ExpandGeneric,
+	Expand(Width),
 	SplitRL,
 	MergeLR,
 
@@ -139,7 +138,7 @@ impl Instruction {
 			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
 			SinCos => (1, 2),
 
-			Left | Right | ExpandStereo | ExpandGeneric => (1, 1),
+			Left | Right | Expand(..) => (1, 1),
 			SplitRL => (1, 2),
 			MergeLR => (2, 1),
 
@@ -195,6 +194,9 @@ impl Display for Instruction {
 					None => write!(f, "Call({})", proc)?,
 					Some(width) => write!(f, "Call({}, {})", proc, width)?,
 				}
+			},
+			Instruction::Expand(width) => {
+				write!(f, "Expand({})", width)?;
 			},
 			Instruction::BufferAlloc(width) => {
 				write!(f, "BufferAlloc({})", width)?;

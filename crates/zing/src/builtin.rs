@@ -131,7 +131,7 @@ pub static PRECOMPILED_MODULES: &[PrecompiledProcedure] = &[
 	], code![
 		Constant(0x46000000), // Counter threshold
 		StackLoad(1), // Copy of output
-		Constant(0x46000000), ExpandStereo, Mul, Round, // 0 when small
+		Constant(0x46000000), Expand(ir::Width::Stereo), Mul, Round, // 0 when small
 		SplitRL, Or, // 0 when both channels small
 		Constant(0), Eq, // True when small
 		CellPush, And, // Preserve counter when small

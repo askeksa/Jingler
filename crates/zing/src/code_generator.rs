@@ -1001,7 +1001,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(code![Constant(0), ExpandStereo]);
+								self.emit(code![Constant(0), Expand(ir::Width::Stereo)]);
 								self.emit(code![PlayInstrument(static_proc_id, dynamic_proc_id)]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);
@@ -1099,8 +1099,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	fn expand(&mut self, width: Width) {
 		match width {
 			Width::Mono => {},
-			Width::Stereo => self.emit(code![ExpandStereo]),
-			Width::Generic => self.emit(code![ExpandGeneric]),
+			Width::Stereo => self.emit(code![Expand(ir::Width::Stereo)]),
+			Width::Generic => self.emit(code![Expand(ir::Width::Generic)]),
 		}
 	}
 }
