@@ -1069,6 +1069,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							StateEnter,
 							Call(static_proc_id, body_width.to_ir()),
 							StateLeave,
+							BufferAlloc(buffer_width.unwrap_or(Width::Mono).to_ir()),
 							BufferInitStart,
 							StateEnter,
 							Call(dynamic_proc_id, body_width.to_ir()),

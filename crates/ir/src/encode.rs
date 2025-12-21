@@ -273,7 +273,6 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		},
 
 		Instruction::BufferInitStart => {
-			encode(BufferAlloc, 0);
 			encode(Label, 0);
 		},
 		Instruction::BufferInitEnd => {
