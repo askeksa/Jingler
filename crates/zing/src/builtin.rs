@@ -125,7 +125,24 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
 ];
 
 pub static PRECOMPILED_MODULES: &[PrecompiledProcedure] = &[
-	("$autokill", N, sig!([stereo, stereo] [stereo]), &[code![
+	("$autokill_mono", N, sig!([mono, mono] [mono]), &[code![
+		Constant(0),
+		CellInit
+	], code![
+		Constant(0x46000000), // Counter threshold
+		StackLoad(1), // Copy of output
+		Constant(0x46000000), Mul, Round, // 0 when small
+		Constant(0), Eq, // True when small
+		CellPush, And, // Preserve counter when small
+		Constant(0x3F800000), Add, // Increment counter
+		IfGreaterEq, // Has counter reached threshold?
+		Kill, // Kill when counter reaches threshold
+		EndIf,
+		CellPop, // Update counter
+		Pop, // Pop threshold
+		Add // Add the output to the accumulator
+	]]),
+	("$autokill_stereo", N, sig!([stereo, stereo] [stereo]), &[code![
 		Constant(0),
 		CellInit
 	], code![

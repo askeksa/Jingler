@@ -198,6 +198,14 @@ impl Names {
 		self.procedures.get(name)
 	}
 
+	// Lookup a precompiled module or function by name.
+	pub fn lookup_precompiled(&self, name: &str) -> Option<&'static PrecompiledProcedure> {
+		match self.lookup_procedure(&name.to_string()) {
+			Some(ProcedureRef { definition: ProcedureDefinition::Precompiled { proc }, .. }) => Some(proc),
+			_ => None,
+		}
+	}
+
 	/// Look up a MIDI channel input by name inside a specific procedure.
 	pub fn lookup_midi_input(&self, proc_index: usize, name: &String) -> Option<usize> {
 		self.channels[proc_index].get(name).map(|(index, _)| *index)
@@ -221,5 +229,16 @@ impl Names {
 		}
 		list += &format!(" and '{}'", combinators.last().unwrap());
 		list
+	}
+
+	// The name of the autokill precompiled module for a given instrument.
+	pub fn autokill_key(&self, proc: &Procedure) -> *const PrecompiledProcedure {
+		assert!(proc.kind == ProcedureKind::Instrument);
+		let autokill_name = match proc.outputs.items.first().unwrap().item_type.width {
+			Some(Width::Mono) => "$autokill_mono",
+			Some(Width::Stereo) => "$autokill_stereo",
+			_ => unreachable!("Missing instrument output width"),
+		};
+		self.lookup_precompiled(&autokill_name).unwrap() as *const PrecompiledProcedure
 	}
 }

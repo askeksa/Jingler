@@ -298,8 +298,6 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	pub fn generate_code_for_program(&mut self, program: &'ast Program, main_index: usize) -> Result<(), CompileError> {
 		// Compute liveness
 		self.propagate_liveness(main_index);
-		let autokill_key = self.lookup_precompiled("$autokill");
-		self.live_precompiled.insert(autokill_key);
 
 		self.init_proc_id(program);
 		for id in 0..self.proc_for_id.len() {
@@ -336,7 +334,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		proc_index: usize,
 		scope: Option<Scope>,
 	) -> Result<ir::Procedure, CompileError> {
-		let Procedure { kind, name, inputs, outputs, body, .. } = &program.procedures[proc_index];
+		let proc = &program.procedures[proc_index];
+		let Procedure { kind, name, inputs, outputs, body, .. } = proc;
 		self.current_proc_index = proc_index;
 		self.current_kind = *kind;
 		self.current_scope = scope;
@@ -385,7 +384,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					},
 					item_type: type_spec!(dynamic stereo number),
 				});
-				let autokill_key = self.lookup_precompiled("$autokill");
+				let autokill_key = self.names.autokill_key(proc);
 				if scope == Some(Scope::Static) {
 					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
@@ -488,14 +487,6 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.assign_ids(program, &|kind, name| kind == ProcedureKind::Module && name != "main");
 		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, ProcedureKind::Function, &[None]);
 		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Function);
-	}
-
-	fn lookup_precompiled(&mut self, name: &str) -> *const PrecompiledProcedure {
-		let proc = self.names.lookup_procedure(&name.to_string());
-		let Some(ProcedureRef { definition: ProcedureDefinition::Precompiled { proc }, .. }) = proc else {
-			panic!("Precompiled procedure not found: {}", name);
-		};
-		*proc as *const PrecompiledProcedure
 	}
 
 	fn generate_static_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
@@ -997,11 +988,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
 
 								let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index];
+								let width = outputs.first().unwrap().width.unwrap();
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
 									self.generate(arg);
 								}
-								self.emit(code![Constant(0), Expand(ir::Width::Stereo)]);
+								self.emit(code![Constant(0)]);
+								self.expand(width);
 								self.emit(code![PlayInstrument(static_proc_id, dynamic_proc_id)]);
 								let stack_adjust: Vec<usize> = (in_count - out_count .. in_count).collect();
 								self.adjust_stack(&stack_adjust[..], in_count);

@@ -134,7 +134,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					// Instrument inputs default to dynamic stereo number, only
 					// inputs can be static, all static inputs must appear before all
 					// dynamic inputs, there must be exactly one output, and the type
-					// of that output must be stereo number.
+					// of that output must be mono or stereo number.
 					ProcedureKind::Instrument => {
 						if is_output {
 							match item_type.scope {
@@ -144,9 +144,13 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 								},
 								Some(Scope::Dynamic) | None => {
 									item_type.inherit(&type_spec!(dynamic stereo number));
-									if *item_type != type_spec!(dynamic stereo number) {
-										self.compiler.report_error(&*variable_name,
-											"Instrument output type must be stereo number.");
+									match (item_type.width, item_type.value_type) {
+										(Some(Width::Mono), Some(ValueType::Number)) => {},
+										(Some(Width::Stereo), Some(ValueType::Number)) => {},
+										_ => {
+											self.compiler.report_error(&*variable_name,
+												"Instrument output type must be mono or stereo number.");
+										}
 									}
 									output_count += 1;
 								},
@@ -209,7 +213,11 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			self.current_proc_index = proc_index;
 			self.current_proc_name_loc = PosRange::from(&proc.name);
 			self.callees.push(vec![]);
-			self.precompiled_callees.push(vec![]);
+			let mut precompiled_calles = vec![];
+			if proc.kind == ProcedureKind::Instrument {
+				precompiled_calles.push(self.names.autokill_key(proc));
+			}
+			self.precompiled_callees.push(precompiled_calles);
 			self.infer_body(proc)?;
 			self.check_outputs(proc)?;
 		}
