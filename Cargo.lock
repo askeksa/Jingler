@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "strum_macros",
@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "zing"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ir",
  "lalrpop",
@@ -3133,7 +3133,7 @@ dependencies = [
 
 [[package]]
 name = "zing-cmd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "clap",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "zing-vst"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ir",
  "nasm-rs",

@@ -186,7 +186,7 @@ fn play_file_resident(filename: &str, options: &PlayOptions) -> Result<(), Box<d
 
 fn main() {
 	let matches = clap_app!(zing =>
-		(version: "0.2.0")
+		(version: "0.3.0")
 		(@arg ZING: +required "Zing file to play.")
 		(@arg SAMPLE_RATE: -s --samplerate +takes_value "Sample rate to play at.")
 		(@arg DURATION: -d --duration +takes_value "Duration of audio, in seconds.")
