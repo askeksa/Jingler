@@ -102,6 +102,9 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	pub fn infer_signatures(&mut self, program: &mut Program) -> Result<(), CompileError> {
+		let number_type = &Type { value_type: Some(ValueType::Number), .. Type::default() };
+		let dynamic_number_type = &Type { scope: Some(Scope::Dynamic), .. *number_type };
+
 		for proc in &mut program.procedures {
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
@@ -110,26 +113,30 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			let output_iter = repeat(true).zip(&mut proc.outputs.items);
 			for (is_output, item) in input_iter.chain(output_iter) {
 				let PatternItem { name: variable_name, item_type } = item;
+				if item_type.width.is_none() {
+					self.compiler.report_error(variable_name,
+						"Inputs and outputs must specify explicit width.");
+				}
 				match proc.kind {
 					// Module inputs/outputs default to dynamic stereo number, and only
 					// inputs can be static.
 					ProcedureKind::Module => {
 						if is_output {
 							if let Some(Scope::Static) = item_type.scope {
-								self.compiler.report_error(&*variable_name,
+								self.compiler.report_error(variable_name,
 									"Module outputs can't be static.");
 							}
 						}
-						item_type.inherit(&type_spec!(dynamic stereo number));
+						item_type.inherit(dynamic_number_type);
 					},
 					// Function inputs/outputs default to stereo number and have no
 					// static/dynamic distinction.
 					ProcedureKind::Function => {
 						if item_type.scope.is_some() {
-							self.compiler.report_error(&*variable_name,
+							self.compiler.report_error(variable_name,
 								"Function inputs or outputs can't be marked static or dynamic.");
 						}
-						item_type.inherit(&type_spec!(stereo number));
+						item_type.inherit(number_type);
 					},
 					// Instrument inputs default to dynamic stereo number, only
 					// inputs can be static, all static inputs must appear before all
@@ -139,16 +146,19 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 						if is_output {
 							match item_type.scope {
 								Some(Scope::Static) => {
-									self.compiler.report_error(&*variable_name,
+									self.compiler.report_error(variable_name,
 										"Instrument outputs can't be static.");
 								},
 								Some(Scope::Dynamic) | None => {
-									item_type.inherit(&type_spec!(dynamic stereo number));
+									item_type.inherit(dynamic_number_type);
 									match (item_type.width, item_type.value_type) {
+										(None, _) => {
+											// Error already reported about missing width.
+										},
 										(Some(Width::Mono), Some(ValueType::Number)) => {},
 										(Some(Width::Stereo), Some(ValueType::Number)) => {},
 										_ => {
-											self.compiler.report_error(&*variable_name,
+											self.compiler.report_error(variable_name,
 												"Instrument output type must be mono or stereo number.");
 										}
 									}
@@ -156,11 +166,11 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 								},
 							}
 						} else {
-							item_type.inherit(&type_spec!(dynamic stereo number));
+							item_type.inherit(dynamic_number_type);
 							match item_type.scope.unwrap() {
 								Scope::Static => {
 									if !instrument_types.is_empty() {
-										self.compiler.report_error(&*variable_name,
+										self.compiler.report_error(variable_name,
 											"Static instrument inputs can't come after dynamic inputs.");
 									}
 								},
@@ -174,7 +184,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				if item_type.width == Some(Width::Generic) {
 					if is_output {
 						if !seen_generic_input {
-							self.compiler.report_error(&*variable_name,
+							self.compiler.report_error(variable_name,
 								"Outputs can't be generic when none of the inputs are generic.");
 						}
 					} else {
@@ -184,6 +194,12 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			}
 			if proc.kind == ProcedureKind::Instrument && output_count != 1 {
 				self.compiler.report_error(&proc.name, "Instruments must have exactly one output.");
+			}
+			if proc.name.text == "main" {
+				let output_types: Vec<Type> = proc.outputs.items.iter().map(|item| item.item_type).collect();
+				if output_types != vec![type_spec!(dynamic stereo number)] {
+					self.compiler.report_error(&proc.outputs, "'main' must have a single output of type stereo number.");
+				}
 			}
 
 			// Extract signature
