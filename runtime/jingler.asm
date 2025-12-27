@@ -175,6 +175,17 @@ section snipdead text align=1
 %endmacro
 
 
+;; Runtime macros
+
+%macro runproc 1
+	; ESI/RSI = Constant pool
+	mov			rdi, StateSpace
+	mov			rbx, rdi
+	rlea		ProcPointers
+	call		[dword rlabel(ProcPointers) + %1*PSIZE]
+%endmacro
+
+
 section unpackn text align=1
 
 JinglerUnpackNotes:
@@ -323,10 +334,7 @@ JinglerRunStaticCode:
 	; ESI/RSI = Constant pool
 
 	ldmxcsr		[rel MXCSR]
-	mov			rdi, StateSpace
-	mov			rbx, rdi
-	rlea		ProcPointers
-	call		[dword rlabel(ProcPointers) + MAIN_STATIC_PROC_ID*PSIZE]
+	runproc		MAIN_STATIC_PROC_ID
 	ret
 
 section render text align=1
@@ -372,10 +380,7 @@ JinglerRenderSamples:
 %endif
 
 	xor			rbp, rbp
-	mov			rdi, StateSpace
-	mov			rbx, rdi
-	rlea		ProcPointers
-	call		[dword rlabel(ProcPointers) + MAIN_DYNAMIC_PROC_ID*PSIZE]
+	runproc		MAIN_DYNAMIC_PROC_ID
 
 	pop			rax
 	cvtpd2ps	xmm0, [rbx]
