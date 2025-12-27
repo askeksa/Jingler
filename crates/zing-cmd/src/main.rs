@@ -19,6 +19,7 @@ use rodio::{OutputStream, Sink};
 unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
+	fn ResetState();
 	fn RunStaticCode(constants: *const u32);
 	fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
 }
@@ -27,6 +28,7 @@ unsafe extern "C" {
 fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
 	unsafe {
 		CompileBytecode(bytecodes.as_ptr());
+		ResetState();
 		RunStaticCode(constants.as_ptr());
 		let music = RenderSamples(constants.as_ptr(), length);
 		ReleaseBytecode();

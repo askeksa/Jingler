@@ -25,6 +25,7 @@ const NUM_PARAMETERS: usize = 15;
 unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
+	fn ResetState();
 	fn RunStaticCode(constants: *const u32);
     fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
     fn NoteOn(channel: u32, delta_frames: i32, key: u32, velocity: u32);
@@ -132,6 +133,7 @@ impl ZingPlugin {
 					CompileBytecode(bytecodes.as_ptr());
 					self.bytecode_compiled = true;
 
+					ResetState();
 					RunStaticCode(constants.as_ptr());
 					self.constants = constants;
 					self.parameter_offset = parameter_offset;

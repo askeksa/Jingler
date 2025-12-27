@@ -14,6 +14,7 @@ extern __imp_VirtualFree
 
 global L(CompileBytecode)
 global L(ReleaseBytecode)
+global L(ResetState)
 global L(RunStaticCode)
 global L(RenderSamples)
 global L(NoteOn)
@@ -96,12 +97,28 @@ L(ReleaseBytecode):
 %endif
 	ret
 
-L(RunStaticCode):
-	; Parameters: Constants
+L(ResetState):
 %if __BITS__ == 32
 	pusha
 
 	call	JinglerResetState
+
+	popa
+%else
+	push	rsi
+	push	rdi
+
+	call	JinglerResetState
+
+	pop		rdi
+	pop		rsi
+%endif
+	ret
+
+L(RunStaticCode):
+	; Parameters: Constants
+%if __BITS__ == 32
+	pusha
 
 	mov		esi, [esp + (8+1)*4]
 	call	JinglerRunStaticCode
@@ -112,11 +129,8 @@ L(RunStaticCode):
 	push	rsi
 	push	rdi
 	push	rbp
-	push	rcx
 
-	call	JinglerResetState
-
-	pop		rsi
+	mov		rsi, rcx
 	call	JinglerRunStaticCode
 
 	pop		rbp

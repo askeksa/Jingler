@@ -16,7 +16,6 @@
 	%define dp dd
 	%define resp resd
 	%define stosp stosd
-	%define scasp scasd
 
 	; Use label directly in addressing
 	%macro rlea 1
@@ -32,7 +31,6 @@
 	%define dp dq
 	%define resp resq
 	%define stosp stosq
-	%define scasp scasq
 
 	; Load label into register before using it in addressing
 	%macro rlea 1
@@ -192,8 +190,8 @@ JinglerUnpackNotes:
 	mov			rbx, NoteHeaders
 	push		rcx
 .trackloop:
-	mov			[rdi], rbx
-	scasp
+	mov			rax, rbx
+	stosp
 
 .noteloop:
 	; Load value
@@ -420,13 +418,12 @@ JinglerResetState:
 
 	; Set up note header lists for tracks
 	mov			rdi, TrackStarts
-	mov			rbx, NoteHeaders
+	mov			rax, NoteHeaders
 	mov			rcx, MAX_TRACKS
 .trackloop:
-	add			rbx, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
-	mov			dword [rbx], 0x80000000 ; Track terminator
-	mov			[rdi], rbx
-	scasp
+	add			rax, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
+	mov			dword [rax], 0x80000000 ; Track terminator
+	stosp
 	loop		.trackloop
 	ret
 
