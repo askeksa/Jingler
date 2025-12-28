@@ -20,29 +20,30 @@ unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn ResetState();
-	fn RunStaticCode(constants: *const u32);
-	fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
+	fn RunProcedure(constants: *const u32, proc_id: usize) -> *const [f64; 2];
 }
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn run(bytecodes: &[u8], constants: &[u32], length: usize) -> &'static [f32] {
+fn run(program: &ir::Program, bytecodes: &[u8], constants: &[u32], length: usize) -> Vec<f32> {
+	let mut output = vec![0f32; length * 2];
 	unsafe {
 		CompileBytecode(bytecodes.as_ptr());
 		ResetState();
-		RunStaticCode(constants.as_ptr());
-		let music = RenderSamples(constants.as_ptr(), length);
+		RunProcedure(constants.as_ptr(), program.main_static_proc_id);
+		for i in 0..length {
+			let [left, right] = *RunProcedure(constants.as_ptr(), program.main_dynamic_proc_id);
+			output[i * 2 + 0] = left as f32;
+			output[i * 2 + 1] = right as f32;
+		}
 		ReleaseBytecode();
-		std::slice::from_raw_parts(music, length * 2)
 	}
+	output
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn run(_bytecodes: &[u8], _constants: &[u32], _length: usize) -> &'static [f32] {
-	&EMPTY_SOUND
+fn run(_program: &ir::Program, _bytecodes: &[u8], _constants: &[u32], _length: usize) -> Vec<f32> {
+	vec![]
 }
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-const EMPTY_SOUND: [f32; 0] = [0f32; 0];
 
 struct PlayOptions {
 	sample_rate: f32,
@@ -136,16 +137,16 @@ fn play_file(filename: &str, options: &PlayOptions) {
 				match encode_bytecodes_binary(&program, options.sample_rate) {
 					Ok((bytecodes, constants, _parameter_offset)) => if options.run {
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
-						let output = run(&bytecodes[..], &constants[..], n_samples);
+						let output = run(&program, &bytecodes, &constants, n_samples);
 
 						if let Some(ref wav_filename) = options.write_wav {
-							if let Err(e) = write_wav(wav_filename, options.sample_rate, output) {
+							if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
 								println!("Error writing wav file '{}': {}", wav_filename, e);
 							}
 						}
 
 						if options.play {
-							if let Err(e) = play_sound(options.sample_rate, output) {
+							if let Err(e) = play_sound(options.sample_rate, &output) {
 								println!("Error playing sound: {}", e);
 							}
 						}

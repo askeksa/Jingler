@@ -384,8 +384,8 @@ JinglerRenderSamples:
 
 	pop			rax
 	cvtpd2ps	xmm0, [rbx]
-	rlea		JinglerMusicBuffer
-	movq		[rlabel(JinglerMusicBuffer) + rax*8], xmm0
+	rlea		MusicBuffer
+	movq		[rlabel(MusicBuffer) + rax*8], xmm0
 
 	inc			rax
 	cmp			[rsp], rax
@@ -1030,7 +1030,7 @@ BufferSpace:
 	reso BUFFER_SPACE
 
 section music bss align=8
-JinglerMusicBuffer:
+MusicBuffer:
 .align24:
 	resq MUSIC_SPACE
 

@@ -6,7 +6,6 @@ use zing::compiler;
 use std::collections::{VecDeque};
 use std::fs;
 use std::ops::DerefMut;
-use std::slice;
 use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
@@ -26,8 +25,7 @@ unsafe extern "C" {
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn ResetState();
-	fn RunStaticCode(constants: *const u32);
-    fn RenderSamples(constants: *const u32, length: usize) -> *mut f32;
+	fn RunProcedure(constants: *const u32, proc_id: usize) -> *const [f64; 2];
     fn NoteOn(channel: u32, delta_frames: i32, key: u32, velocity: u32);
     fn NoteOff(channel: u32, delta_frames: i32, key: u32);
 }
@@ -134,7 +132,7 @@ impl ZingPlugin {
 					self.bytecode_compiled = true;
 
 					ResetState();
-					RunStaticCode(constants.as_ptr());
+					RunProcedure(constants.as_ptr(), program.main_static_proc_id);
 					self.constants = constants;
 					self.parameter_offset = parameter_offset;
 
@@ -271,13 +269,14 @@ impl Plugin for ZingPlugin {
 					next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
 				}
 				let length = (next_time - self.time) as usize;
-				let rendered = unsafe {
-					let samples = RenderSamples(self.constants.as_ptr(), length);
-					slice::from_raw_parts(samples, length * 2)
-				};
-				for i in 0..length {
-					out[0][base + i] = rendered[i * 2 + 0];
-					out[1][base + i] = rendered[i * 2 + 1];
+				if let Some(program) = &self.program {
+					for i in 0..length {
+						let [left, right] = unsafe {
+							*RunProcedure(self.constants.as_ptr(), program.main_dynamic_proc_id)
+						};
+						out[0][base + i] = left as f32;
+						out[1][base + i] = right as f32;
+					}
 				}
 				base += length;
 				self.time = next_time;

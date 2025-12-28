@@ -15,8 +15,7 @@ extern __imp_VirtualFree
 global L(CompileBytecode)
 global L(ReleaseBytecode)
 global L(ResetState)
-global L(RunStaticCode)
-global L(RenderSamples)
+global L(RunProcedure)
 global L(NoteOn)
 global L(NoteOff)
 
@@ -115,13 +114,18 @@ L(ResetState):
 %endif
 	ret
 
-L(RunStaticCode):
-	; Parameters: Constants
+L(RunProcedure):
+	; Parameters: Constants, Procedure ID
 %if __BITS__ == 32
 	pusha
 
+	ldmxcsr	[MXCSR]
+
+	xor		ebp, ebp
 	mov		esi, [esp + (8+1)*4]
-	call	JinglerRunStaticCode
+	mov		edx, [esp + (8+2)*4]
+	runproc	edx
+	mov		[esp + 7*4], ebx ; eax
 
 	popa
 %else
@@ -130,42 +134,17 @@ L(RunStaticCode):
 	push	rdi
 	push	rbp
 
+	ldmxcsr	[rel MXCSR]
+
+	xor		rbp, rbp
 	mov		rsi, rcx
-	call	JinglerRunStaticCode
+	runproc	rdx
+	mov		rax, rbx
 
 	pop		rbp
 	pop		rdi
 	pop		rsi
 	pop		rbx
-%endif
-	ret
-
-L(RenderSamples):
-	; Parameters: Constants, Length
-%if __BITS__ == 32
-	pusha
-
-	mov		esi, [esp + (8+1)*4]
-	mov		eax, [esp + (8+2)*4]
-	call	JinglerRenderSamples
-
-	popa
-	mov		eax, JinglerMusicBuffer
-%else
-	push	rbx
-	push	rsi
-	push	rdi
-	push	rbp
-
-	mov		rsi, rcx
-	mov		rax, rdx
-	call	JinglerRenderSamples
-
-	pop		rbp
-	pop		rdi
-	pop		rsi
-	pop		rbx
-	mov		rax, JinglerMusicBuffer
 %endif
 	ret
 
