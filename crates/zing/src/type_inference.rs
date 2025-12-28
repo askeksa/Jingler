@@ -43,6 +43,7 @@ struct TypeInferrer<'comp, 'names> {
 	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
 
 	// Procedure-local state
+	inputs: Vec<Type>,
 	node_types: Vec<Vec<TypeResult>>,
 	current_proc_index: usize,
 	current_proc_name_loc: PosRange,
@@ -73,6 +74,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			stored_widths: HashMap::new(),
 			callees: vec![],
 			precompiled_callees: vec![],
+			inputs: vec![],
 			node_types: vec![],
 			current_proc_index: 0,
 			current_proc_name_loc: PosRange::default(),
@@ -85,7 +87,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				inferred_type: type_spec!(dynamic mono number),
 			}),
 			Some(VariableRef::Input { index }) => Some(TypeResult::Type {
-				inferred_type: self.signatures[self.current_proc_index].inputs[*index],
+				inferred_type: self.inputs[*index],
 			}),
 			Some(VariableRef::Node { body_index, tuple_index }) => {
 				let result = &mut self.node_types[*body_index][*tuple_index];
@@ -262,6 +264,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn infer_body(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
+		self.inputs = proc.inputs.items.iter().map(|PatternItem { item_type, .. }| *item_type).collect();
+
 		loop {
 			// Initialize node types from declared types
 			self.node_types = proc.body.iter_mut()
