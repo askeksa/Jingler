@@ -633,7 +633,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let left_operand = self.expect_single(left, "left operand of merge");
 		let right_operand = self.expect_single(right, "right operand of merge");
 		let merge_sig = sig!([mono typeless, mono typeless] [stereo typeless]);
-		let results = self.check_signature(&merge_sig, &[left_operand, right_operand], loc);
+		let results = self.check_signature(&merge_sig, &[left_operand, right_operand], &[left, right], loc);
 		(results, None)
 	}
 
@@ -657,7 +657,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let buffer_operand = self.expect_single(exp, "buffer operand of indexing");
 		let index_operand = self.expect_single(index, "index operand of indexing");
 		let index_sig = sig!([generic buffer, mono number] [generic number]);
-		let results = self.check_signature(&index_sig, &[buffer_operand, index_operand], loc);
+		let results = self.check_signature(&index_sig, &[buffer_operand, index_operand], &[exp, index], loc);
 		(results, None)
 	}
 
@@ -672,7 +672,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let count_operand = self.expect_single(count, "repetition count");
 		let body_operand = self.expect_single(body, "body of repetition");
 		let for_sig = sig!([static mono number, dynamic generic number] [dynamic generic number]);
-		let results = self.check_signature(&for_sig, &[count_operand, body_operand], loc);
+		let results = self.check_signature(&for_sig, &[count_operand, body_operand], &[count, body], loc);
 		(results, body_operand.width())
 	}
 
@@ -714,7 +714,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let length_operand = self.expect_single(length, "buffer length");
 		let body_operand = self.expect_single(body, "buffer initialization");
 		let buffer_sig = sig!([static mono number, dynamic generic number] [static generic buffer]);
-		let mut results = self.check_signature(&buffer_sig, &[length_operand, body_operand], loc);
+		let mut results = self.check_signature(&buffer_sig, &[length_operand, body_operand], &[length, body], loc);
 		match (buffer_type.width, body_operand.width()) {
 			(None, Some(width)) => {
 				buffer_type.width = Some(width);
@@ -751,7 +751,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			arg_types.append(&mut arg_result);
 		}
 		if sig.inputs.len() == arg_types.len() {
-			let result = self.check_signature(sig, &arg_types, loc);
+			let mut args_ref = args.iter_mut().collect::<Vec<_>>();
+			let result = self.check_signature(sig, &arg_types, &mut args_ref, loc);
 			let generic_width = self.generic_instantiation(sig, &result);
 			let mut type_index = 0;
 			for (arg, multiplicity) in args.iter_mut().zip(arg_multiplicity) {
@@ -777,7 +778,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 
 	fn check_signature_expand(&mut self, sig: &Signature, args: &[TypeResult],
 			inputs: &mut [&mut Expression], loc: &dyn Location) -> Vec<TypeResult> {
-		let result = self.check_signature(sig, args, loc);
+		let result = self.check_signature(sig, args, inputs, loc);
 		let generic_width = self.generic_instantiation(sig, &result);
 		for ((sig_type, arg_type), input) in sig.inputs.iter().zip(args).zip(inputs) {
 			if let Some(width) = self.should_expand(sig_type, arg_type, generic_width, *input) {
@@ -837,7 +838,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn check_signature(&mut self, sig: &Signature, args: &[TypeResult],
-			loc: &dyn Location) -> Vec<TypeResult> {
+			inputs: &[&mut Expression], loc: &dyn Location) -> Vec<TypeResult> {
 		let mut seen_static = false;
 		let mut seen_dynamic = false;
 		let mut seen_stereo = false;
@@ -846,14 +847,14 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let mut seen_bool = false;
 		let mut seen_buffer = false;
 		let mut seen_error = false;
-		for (sig_type, arg_type_result) in sig.inputs.iter().zip(args) {
+		for ((sig_type, arg_type_result), input) in sig.inputs.iter().zip(args).zip(inputs) {
 			match arg_type_result {
 				TypeResult::Type { inferred_type: arg_type } => {
 					match (sig_type.scope, arg_type.scope) {
 						(None, Some(Scope::Static)) => seen_static = true,
 						(None, Some(Scope::Dynamic)) => seen_dynamic = true,
 						(Some(Scope::Static), Some(Scope::Dynamic)) => {
-							self.compiler.report_error(loc,
+							self.compiler.report_error(*input,
 								"Can't pass a dynamic value into a static input.");
 						},
 						_ => {},
@@ -863,7 +864,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 						(Width::Generic, Width::Generic) => seen_generic = true,
 						(_, Width::Mono) => {},
 						(s, a) => if s != a {
-							self.compiler.report_error(loc,
+							self.compiler.report_error(*input,
 								format!("Can't pass a {} value into a {} input.", a, s));
 						},
 					}
@@ -875,7 +876,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 							ValueType::Typeless => panic!(),
 						}
 					} else if sig_type.value_type != arg_type.value_type {
-						self.compiler.report_error(loc,
+						self.compiler.report_error(*input,
 							format!("Can't pass a {} value into a {} input.",
 								arg_type.value_type.unwrap(), sig_type.value_type.unwrap()));
 					}
