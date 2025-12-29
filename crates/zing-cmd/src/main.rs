@@ -17,6 +17,7 @@ use rodio::{OutputStream, Sink};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 unsafe extern "C" {
+	fn LoadGmDls();
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn ResetState();
@@ -27,6 +28,7 @@ unsafe extern "C" {
 fn run(program: &ir::Program, bytecodes: &[u8], constants: &[u32], length: usize) -> Vec<f32> {
 	let mut output = vec![0f32; length * 2];
 	unsafe {
+		LoadGmDls();
 		CompileBytecode(bytecodes.as_ptr());
 		ResetState();
 		RunProcedure(constants.as_ptr(), program.main_static_proc_id);

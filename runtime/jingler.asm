@@ -48,7 +48,6 @@
 
 
 global JinglerUnpackNotes
-global JinglerLoadGmDls
 global JinglerGenerateCode
 global JinglerRunStaticCode
 global JinglerRenderSamples
@@ -58,7 +57,8 @@ global JinglerNodeOff
 
 OF_READ equ 0x00000000
 
-GMDLS_SIZE equ 0x350000 ; Real size 0x348014
+GMDLS_SIZE equ 0x348014
+GMDLS_ROUNDED_SIZE equ (GMDLS_SIZE + 0xFFFF) & ~0xFFFF
 GMDLS_OFFSETS equ 0x43E3A
 GMDLS_DATA equ 0x4462C
 GMDLS_COUNT equ 495
@@ -228,51 +228,6 @@ JinglerUnpackNotes:
 
 	dec			rdx
 	jns			.componentloop
-	ret
-
-section loadgm text align=1
-
-JinglerLoadGmDls:
-%if __BITS__ == 32
-	mov			edi, GmDls
-
-	push		byte OF_READ
-	push		edi
-	push		GmDlsName
-	call		[__imp__OpenFile@12]
-	push		eax ; for CloseFile
-
-	push		byte 0
-	push		edi
-	push		GMDLS_SIZE
-	push		edi
-	push		eax
-	call		[__imp__ReadFile@20]
-
-	call		[__imp__CloseHandle@4]
-%else
-	sub			rsp, byte 40 ; Shadow space + alignment
-
-	mov			rdi, GmDls
-
-	mov			rcx, GmDlsName
-	mov			rdx, rdi
-	mov			r8, OF_READ
-	call		[rel __imp_OpenFile]
-	push		rax ; for CloseFile
-
-	mov			rcx, rax
-	mov			rdx, rdi
-	mov			r8, GMDLS_SIZE
-	mov			r9, rdi
-	mov			qword [rsp + 32], 0
-	call		[rel __imp_ReadFile]
-
-	pop			rcx
-	call		[rel __imp_CloseHandle]
-
-	add			rsp, byte 40
-%endif
 	ret
 
 section generate text align=1
@@ -1037,7 +992,7 @@ MusicBuffer:
 section gmdls bss align=4
 GmDls:
 .align16:
-	resb GMDLS_SIZE
+	resb GMDLS_ROUNDED_SIZE
 
 section gmdlsnam rdata align=1
 GmDlsName:

@@ -22,6 +22,7 @@ use vst::util::AtomicFloat;
 const NUM_PARAMETERS: usize = 15;
 
 unsafe extern "C" {
+	fn LoadGmDls();
 	fn CompileBytecode(bytecodes: *const u8);
 	fn ReleaseBytecode();
 	fn ResetState();
@@ -158,15 +159,19 @@ impl ZingPlugin {
 
 impl Plugin for ZingPlugin {
 	fn new(_host: HostCallback) -> ZingPlugin {
+		let mut plugin = ZingPlugin::default();
+		unsafe {
+			LoadGmDls();
+		}
 		loop {
 			let filename = loop {
 				if let Some(path) = FileDialog::new().pick_file() {
 					break path;
 				}
 			};
-			let mut plugin = ZingPlugin::default();
-			plugin.zing_filename = filename.to_string_lossy().into_owned();
-			if let Ok(()) = plugin.watcher.watch(&plugin.zing_filename, RecursiveMode::NonRecursive) {
+			let filename = filename.to_string_lossy().into_owned();
+			if let Ok(()) = plugin.watcher.watch(&filename, RecursiveMode::NonRecursive) {
+				plugin.zing_filename = filename;
 				plugin.compile();
 				return plugin;
 			}

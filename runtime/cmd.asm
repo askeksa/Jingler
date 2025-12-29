@@ -12,6 +12,7 @@ extern __imp_VirtualFree
 %define L(label) label
 %endif
 
+global L(LoadGmDls)
 global L(CompileBytecode)
 global L(ReleaseBytecode)
 global L(ResetState)
@@ -26,18 +27,57 @@ global L(NoteOff)
 %define MEM_RELEASE 0x00008000
 %define PAGE_EXECUTE_READWRITE 0x40
 
-section codemem bss align=8
+section space bss align=8
 CodeMemory:
 	resq 1
+FileInfo:
+	resb 256
 
 section cmd text align=1
+
+L(LoadGmDls):
+%if __BITS__ == 32
+	push		byte OF_READ
+	push		FileInfo
+	push		GmDlsName
+	call		[__imp__OpenFile@12]
+	push		eax ; for CloseFile
+
+	push		byte 0
+	push		FileInfo
+	push		GMDLS_SIZE
+	push		GmDls
+	push		eax
+	call		[__imp__ReadFile@20]
+
+	call		[__imp__CloseHandle@4]
+%else
+	sub			rsp, byte 56 ; Shadow space + alignment
+
+	lea			rcx, [rel GmDlsName]
+	lea			rdx, [rel FileInfo]
+	mov			r8, OF_READ
+	call		[rel __imp_OpenFile]
+	mov			[rsp + 48], rax ; for CloseFile
+
+	mov			rcx, rax
+	lea			rdx, [rel GmDls]
+	mov			r8, GMDLS_SIZE
+	lea			r9, [rel FileInfo]
+	mov			qword [rsp + 32], 0
+	call		[rel __imp_ReadFile]
+
+	mov			rcx, [rsp + 48]
+	call		[rel __imp_CloseHandle]
+
+	add			rsp, byte 56
+%endif
+	ret
 
 L(CompileBytecode):
 	; Parameters: Bytecode
 %if __BITS__ == 32
 	pusha
-
-	call	JinglerLoadGmDls
 
 	push	PAGE_EXECUTE_READWRITE
 	push	MEM_COMMIT | MEM_RESERVE
@@ -57,8 +97,6 @@ L(CompileBytecode):
 	push	rdi
 	push	rbp
 	push	rcx
-
-	call	JinglerLoadGmDls
 
 	mov		rcx, 0
 	mov		rdx, CODE_SPACE
