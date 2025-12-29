@@ -4,7 +4,6 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
-build = "build.rs"
 
 [dependencies]
 notify = "4.0.15"
@@ -13,10 +12,8 @@ simple-message-box = "0.0.2"
 vst = "0.3.0"
 
 ir = { path = "../ir" }
+runtime = { path = "../runtime" }
 zing = { path = "../zing" }
-
-[build-dependencies]
-nasm-rs = "= 0.3.1"
 
 [lib]
 crate-type = ["cdylib"]

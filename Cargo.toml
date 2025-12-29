@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/ir",
+    "crates/runtime",
     "crates/zing",
     "crates/zing-cmd",
     "crates/zing-vst",

@@ -4,7 +4,6 @@ version.workspace = true
 authors.workspace = true
 license.workspace = true
 edition.workspace = true
-build = "build.rs"
 
 [dependencies]
 chrono = "0.4.11"
@@ -14,7 +13,5 @@ notify = "4.0.15"
 rodio = "0.20.1"
 
 ir = { path = "../ir" }
+runtime = { path = "../runtime" }
 zing = { path = "../zing" }
-
-[build-dependencies]
-nasm-rs = "= 0.3.1"

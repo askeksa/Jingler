@@ -1,14 +1,12 @@
-
-use ir::encode::encode_bytecodes_binary;
-
-use zing::compiler;
-
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::fs;
 use std::ops::DerefMut;
 use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
+
+use runtime::{JinglerRuntime, NativeRuntime};
+use zing::compiler;
 
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher, watcher};
 use rfd::FileDialog;
@@ -21,16 +19,6 @@ use vst::util::AtomicFloat;
 
 const NUM_PARAMETERS: usize = 15;
 
-unsafe extern "C" {
-	fn LoadGmDls();
-	fn CompileBytecode(bytecodes: *const u8);
-	fn ReleaseBytecode();
-	fn ResetState();
-	fn RunProcedure(constants: *const u32, proc_id: usize) -> *const [f64; 2];
-    fn NoteOn(channel: u32, delta_frames: i32, key: u32, velocity: u32);
-    fn NoteOff(channel: u32, delta_frames: i32, key: u32);
-}
-
 struct ZingPlugin {
 	sample_rate: f32,
 	time: i32,
@@ -39,11 +27,9 @@ struct ZingPlugin {
 	zing_filename: String,
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
+
+	runtime: NativeRuntime,
 	program: Option<ir::Program>,
-	constants: Vec<u32>,
-	parameter_offset: usize,
-	track_order: Vec<usize>,
-	bytecode_compiled: bool,
 
 	parameters: Arc<ZingParameters>,
 }
@@ -89,11 +75,9 @@ impl Default for ZingPlugin {
 			zing_filename: "".to_string(),
 			watcher,
 			watcher_receiver: rx,
-			bytecode_compiled: false,
+
+			runtime: NativeRuntime::new(),
 			program: None,
-			constants: vec![],
-			parameter_offset: 0,
-			track_order: vec![],
 
 			parameters: Arc::new(ZingParameters::default()),
 		}
@@ -107,62 +91,39 @@ impl ZingPlugin {
 			Ok(s) => match compiler::Compiler::new(self.zing_filename.to_string(), s).compile() {
 				Ok(program) => {
 					self.parameters.update_zing(&program.parameters);
-					self.program = Some(program);
-					self.init_program();
+					self.init_program(program);
 				},
 				Err(errors) => {
-					self.program = None;
 					let message = errors.into_iter().collect::<String>();
 					simple_message_box::create_message_box(&message, "Error");
 				},
 			},
 			Err(e) => {
-				self.program = None;
 				let message = format!("Error reading '{}': {}", self.zing_filename, e);
 				simple_message_box::create_message_box(&message, "Error");
 			},
 		}
 	}
 
-	fn init_program(&mut self) {
-		debug_assert!(!self.bytecode_compiled);
-		if let Some(ref program) = self.program {
-			match encode_bytecodes_binary(&program, self.sample_rate) {
-				Ok((bytecodes, constants, parameter_offset)) => unsafe {
-					CompileBytecode(bytecodes.as_ptr());
-					self.bytecode_compiled = true;
-
-					ResetState();
-					RunProcedure(constants.as_ptr(), program.main_static_proc_id);
-					self.constants = constants;
-					self.parameter_offset = parameter_offset;
-
-					self.track_order = program.track_order.clone();
-				},
-				Err(message) => {
-					let message = format!("Encoding error: {}", message);
-					simple_message_box::create_message_box(&message, "Error");
-				},
+	fn init_program(&mut self, program: ir::Program) {
+		match self.runtime.load_program(program.clone(), self.sample_rate) {
+			Ok(_) => self.program = Some(program),
+			Err(e) => {
+				let message = format!("Runtime error: {}", e);
+				simple_message_box::create_message_box(&message, "Error");
 			}
 		}
 	}
 
 	fn release_program(&mut self) {
-		if self.bytecode_compiled {
-			unsafe {
-				ReleaseBytecode();
-				self.bytecode_compiled = false;
-			}
-		}
+		self.runtime.unload_program();
+		self.program = None;
 	}
 }
 
 impl Plugin for ZingPlugin {
 	fn new(_host: HostCallback) -> ZingPlugin {
 		let mut plugin = ZingPlugin::default();
-		unsafe {
-			LoadGmDls();
-		}
 		loop {
 			let filename = loop {
 				if let Some(path) = FileDialog::new().pick_file() {
@@ -203,8 +164,9 @@ impl Plugin for ZingPlugin {
 
 	fn set_sample_rate(&mut self, sample_rate: f32) {
 		self.sample_rate = sample_rate;
-		self.release_program();
-		self.init_program();
+		if let Some(program) = self.program.clone() {
+			self.init_program(program);
+		}
 	}
 
 	fn process_events(&mut self, events: &Events) {
@@ -222,72 +184,49 @@ impl Plugin for ZingPlugin {
 		if let Ok(DebouncedEvent::Write(_)) = self.watcher_receiver.try_recv() {
 			self.compile();
 		}
-		if self.bytecode_compiled {
-			if let Some(program) = &self.program {
-				for (i, p) in program.parameters.iter().enumerate() {
-					let value = if i < NUM_PARAMETERS {
-						self.parameters.values[i].get()
-					} else {
-						0.0
-					};
-					self.constants[self.parameter_offset + i] = (p.min + value * (p.max - p.min)).to_bits();
-				}
-			}
 
-			let mut base = 0usize;
-			while self.time < end_time {
-				let mut dirty = true;
-				let mut next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
-				while next_time <= self.time {
-					let data = self.events.pop_front().unwrap().data;
-					let channel = (data[0] & 0x0F) as usize;
-					let key = data[1] as u32;
-					let velocity = data[2] as u32;
-					match data[0] & 0xF0 {
-						0x90 => unsafe {
-							// Note On
-							for (track, track_channel) in self.track_order.iter().enumerate() {
-								if *track_channel == channel {
-									NoteOn(track as u32, 0, key, velocity);
-									dirty = true;
-								}
-							}
-						},
-						0x80 => unsafe {
-							// Note Off
-							for (track, track_channel) in self.track_order.iter().enumerate() {
-								if *track_channel == channel {
-									NoteOff(track as u32, 0, key);
-								}
-							}
-						},
-						0xB0 if data[1] == 120 => {
-							// All sound off
-							if dirty {
-								self.release_program();
-								self.init_program();
-								dirty = false;
-							}
-						},
-						_ => {},
-					}
-					next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
+		for i in 0..NUM_PARAMETERS {
+			self.runtime.set_parameter(i, self.parameters.values[i].get());
+		}
+
+		let mut base = 0usize;
+		while self.time < end_time {
+			let mut dirty = true;
+			let mut next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
+			while next_time <= self.time {
+				let data = self.events.pop_front().unwrap().data;
+				let channel = (data[0] & 0x0F) as u8;
+				let key = data[1] as u8;
+				let velocity = data[2] as u8;
+				match data[0] & 0xF0 {
+					0x90 => {
+						// Note On
+						self.runtime.note_on(channel, key, velocity);
+						dirty = true;
+					},
+					0x80 => {
+						// Note Off
+						self.runtime.note_off(channel, key);
+					},
+					0xB0 if data[1] == 120 => {
+						// All sound off
+						if dirty {
+							self.runtime.reset();
+							dirty = false;
+						}
+					},
+					_ => {},
 				}
-				let length = (next_time - self.time) as usize;
-				if let Some(program) = &self.program {
-					for i in 0..length {
-						let [left, right] = unsafe {
-							*RunProcedure(self.constants.as_ptr(), program.main_dynamic_proc_id)
-						};
-						out[0][base + i] = left as f32;
-						out[1][base + i] = right as f32;
-					}
-				}
-				base += length;
-				self.time = next_time;
+				next_time = self.events.front().map(|m| m.delta_frames).unwrap_or(end_time);
 			}
-		} else {
-			self.time = end_time;
+			let length = (next_time - self.time) as usize;
+			for i in 0..length {
+				let [left, right] = self.runtime.next_sample();
+				out[0][base + i] = left as f32;
+				out[1][base + i] = right as f32;
+			}
+			base += length;
+			self.time = next_time;
 		}
 	}
 }

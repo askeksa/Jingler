@@ -1,5 +1,6 @@
 
-use ir::encode::{encode_bytecodes_binary, encode_bytecodes_source};
+use ir::encode::encode_bytecodes_source;
+use runtime::{JinglerRuntime, NativeRuntime};
 use zing::compiler;
 
 use std::error::Error;
@@ -14,38 +15,6 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-unsafe extern "C" {
-	fn LoadGmDls();
-	fn CompileBytecode(bytecodes: *const u8);
-	fn ReleaseBytecode();
-	fn ResetState();
-	fn RunProcedure(constants: *const u32, proc_id: usize) -> *const [f64; 2];
-}
-
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-fn run(program: &ir::Program, bytecodes: &[u8], constants: &[u32], length: usize) -> Vec<f32> {
-	let mut output = vec![0f32; length * 2];
-	unsafe {
-		LoadGmDls();
-		CompileBytecode(bytecodes.as_ptr());
-		ResetState();
-		RunProcedure(constants.as_ptr(), program.main_static_proc_id);
-		for i in 0..length {
-			let [left, right] = *RunProcedure(constants.as_ptr(), program.main_dynamic_proc_id);
-			output[i * 2 + 0] = left as f32;
-			output[i * 2 + 1] = right as f32;
-		}
-		ReleaseBytecode();
-	}
-	output
-}
-
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-fn run(_program: &ir::Program, _bytecodes: &[u8], _constants: &[u32], _length: usize) -> Vec<f32> {
-	vec![]
-}
 
 struct PlayOptions {
 	sample_rate: f32,
@@ -136,10 +105,17 @@ fn play_file(filename: &str, options: &PlayOptions) {
 						println!();
 					}
 				}
-				match encode_bytecodes_binary(&program, options.sample_rate) {
-					Ok((bytecodes, constants, _parameter_offset)) => if options.run {
+				if options.run {
+					let mut runtime = NativeRuntime::new();
+					if let Err(e) = runtime.load_program(program, options.sample_rate) {
+						println!("Runtime error: {}", e);
+					} else {
 						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
-						let output = run(&program, &bytecodes, &constants, n_samples);
+						let output = (0..n_samples)
+							.map(|_| runtime.next_sample())
+							.flatten()
+							.map(|s| s as f32)
+							.collect::<Vec<f32>>();
 
 						if let Some(ref wav_filename) = options.write_wav {
 							if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
@@ -152,9 +128,8 @@ fn play_file(filename: &str, options: &PlayOptions) {
 								println!("Error playing sound: {}", e);
 							}
 						}
-					},
-					Err(message) => {
-						println!("Encoding error: {}", message);
+
+						runtime.unload_program();
 					}
 				}
 			},

@@ -1908,6 +1908,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "ir",
+ "nasm-rs",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3139,9 +3149,9 @@ dependencies = [
  "clap",
  "hound",
  "ir",
- "nasm-rs",
  "notify",
  "rodio",
+ "runtime",
  "zing",
 ]
 
@@ -3150,9 +3160,9 @@ name = "zing-vst"
 version = "0.3.0"
 dependencies = [
  "ir",
- "nasm-rs",
  "notify",
  "rfd",
+ "runtime",
  "simple-message-box",
  "vst",
  "zing",
