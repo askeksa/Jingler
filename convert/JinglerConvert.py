@@ -3,13 +3,10 @@
 import sys
 import zipfile
 import XML
-import struct
-import datetime
 
-TOTAL_SEMITONES = 120
 DEFAULT_SAMPLE_RATE = 44100
-
 PARAMETER_QUANTIZATION_LEVELS = 16
+
 
 class InputException(Exception):
 	def __init__(self, message):
@@ -82,20 +79,12 @@ def isactive(xdevice):
 		return str(xdevice.IsActive) == "true"
 
 
-def f2i(f):
-	return struct.unpack('I', struct.pack('f', f))[0]
-
-def i2f(i):
-	return struct.unpack('f', struct.pack('I', i))[0]
-
-
 class Track:
 	def __init__(self, number, name, instr, notes):
 		self.number = number
 		self.name = name
 		self.instr = instr
 		self.notes = notes
-		self.note_lengths = dict()
 
 		self.title = self.name
 
@@ -103,9 +92,6 @@ class Track:
 		for c in self.name:
 			if c.isalnum() or c == '_':
 				self.labelname += c
-
-		self.latest_note = 0
-		self.max_length = 0
 
 		for note in notes:
 			if not note.off:
@@ -116,20 +102,6 @@ class Track:
 					raise InputException("Track '%s' column %d pattern %d line %d: Note has no length" % (name, note.column, note.pat, note.patline))
 				if note.tone is None:
 					raise InputException("Track '%s' column %d pattern %d line %d: Toneless note" % (name, note.column, note.pat, note.patline))
-				self.latest_note = max(self.latest_note, note.line)
-				self.max_length = max(self.max_length, length)
-
-				if length not in self.note_lengths:
-					self.note_lengths[length] = 0
-				self.note_lengths[length] += 1
-
-		self.latest_note = 0
-
-		if len(self.note_lengths) == 1:
-			for l in self.note_lengths:
-				self.singular_length = l if l <= 255 else None
-		else:
-			self.singular_length = None
 
 
 class Music:
@@ -152,6 +124,7 @@ class Music:
 
 		self.datainit = None
 		self.out = None
+		self.latest_note = None
 
 	def dataline(self, data):
 		if len(data) > 0:
@@ -181,13 +154,13 @@ class Music:
 				self.label("%s%d_%s_%d" % (prefix, i, track.labelname, track.instr))
 				prev_n = None
 				pat_data = []
-				track.latest_note = 0
+				self.latest_note = 0
 				for n in track.notes:
 					if not n.off if prev_n is None else n.songpos != prev_n.songpos:
 						self.dataline(pat_data)
 						pat_data = []
 						self.comment("Position %d, pattern %d" % (n.songpos, n.pat))
-					pat_data += datafunc(track, prev_n, n)
+					pat_data += datafunc(prev_n, n)
 					prev_n = n
 				self.dataline(pat_data)
 			self.dataline(trackterm)
@@ -210,15 +183,13 @@ class Music:
 		self.datainit = "\tdb\t"
 		self.out = ""
 
-		spt = int(self.ticklength * self.sample_rate)
+		spt = int(round(self.ticklength * self.sample_rate))
 		total_samples = (self.length * self.ticklength) * self.sample_rate
 
 		def roundup(v):
 			return (int(v) & -0x10000) + 0x10000
 
 		global infile
-		self.out += "; Music converted from %s %s\n" % (infile, str(datetime.datetime.now())[:-7])
-		self.out += "\n"
 		self.out += "%%define SAMPLE_RATE %d\n" % self.sample_rate
 		self.out += "\n"
 		self.out += "%%define NUM_TRACKS %d\n" % len(self.track_order)
@@ -227,7 +198,7 @@ class Music:
 		self.out += "%%define TOTAL_SAMPLES %d\n" % roundup(total_samples)
 		self.out += "\n"
 		self.out += "%%define SAMPLES_PER_TICK %d\n" % spt
-		self.out += "%%define TICKS_PER_SECOND %.9f\n" % (1.0 / self.ticklength)
+		self.out += "%%define TICKS_PER_SECOND %.9f\n" % (self.sample_rate / spt)
 		self.out += "\n"
 
 		def encode_distance(dist):
@@ -236,19 +207,19 @@ class Music:
 			else:
 				return [255 - (dist >> 8), dist & 255]
 
-		def emit_velocity(track, prev_n, n):
+		def emit_velocity(prev_n, n):
 			return [n.velocity] if not n.off else []
 
-		def emit_key(track, prev_n, n):
+		def emit_key(prev_n, n):
 			return [n.tone] if not n.off else []
 
-		def emit_length(track, prev_n, n):
+		def emit_length(prev_n, n):
 			return encode_distance(n.length) if not n.off else []
 
-		def emit_distance(track, prev_n, n):
+		def emit_distance(prev_n, n):
 			if not n.off:
-				dist = n.line - track.latest_note
-				track.latest_note = n.line
+				dist = n.line - self.latest_note
+				self.latest_note = n.line
 				return encode_distance(dist)
 			return []
 
@@ -563,9 +534,13 @@ def printMusicStats(music, ansi):
 
 		print(form(" H") % track.title)
 
+		note_lengths = dict()
+		for length in (note.length for note in track.notes if note.length is not None):
+			note_lengths[length] = note_lengths.get(length, 0) + 1
+
 		lengths = ""
-		for l in sorted(track.note_lengths.keys()):
-			lengths += form(" LN") % (l, track.note_lengths[l])
+		for l in sorted(note_lengths.keys()):
+			lengths += form(" LN") % (l, note_lengths[l])
 		print("  Lengths:  " + lengths)
 
 
