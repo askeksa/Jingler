@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/convert",
     "crates/ir",
     "crates/runtime",
     "crates/zing",
