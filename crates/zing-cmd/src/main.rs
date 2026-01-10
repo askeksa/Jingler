@@ -22,6 +22,7 @@ struct PlayOptions {
 	run: bool,
 	play: bool,
 	dump_instructions: bool,
+	byte_index: bool,
 	write_wav: Option<String>,
 	write_source: Option<String>,
 	jingler_asm_path: String,
@@ -36,6 +37,7 @@ impl Default for PlayOptions {
 			run: true,
 			play: true,
 			dump_instructions: false,
+			byte_index: false,
 			write_wav: None,
 			write_source: None,
 			jingler_asm_path: "jingler.asm".to_string(),
@@ -79,7 +81,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 							let parameter_quantization = 1.0 / (options.parameter_quantization_levels as f32);
 							if let Err(e) = encode_bytecodes_source(
 									&program, &options.jingler_asm_path,
-									options.sample_rate, parameter_quantization,
+									options.sample_rate, !options.byte_index, parameter_quantization,
 									&mut file) {
 								println!("Error writing output file '{}': {}", filename, e);
 							}
@@ -175,6 +177,7 @@ fn main() {
 		(@arg SILENT: -n --noaudio "Don't play audio.")
 		(@arg DUMP: -g --dump "Dump generated code.")
 		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
+		(@arg BYTE_INDEX: -b --byteindex "Use separate index byte for constant instructions.")
 		(@arg OUTPUT: -o --output +takes_value "Output source file for music.")
 		(@arg JINGLER_ASM: -j --jinglerasm +takes_value "Path to jingler.asm file.")
 		(@arg QUANTIZATION: -q --quantization +takes_value "Number of quantization levels for parameters.")
@@ -211,6 +214,9 @@ fn main() {
 	}
 	if matches.is_present("DUMP") {
 		options.dump_instructions = true;
+	}
+	if matches.is_present("BYTE_INDEX") {
+		options.byte_index = true;
 	}
 	if let Some(wav_filename) = matches.value_of("WAV_FILE") {
 		options.write_wav = Some(wav_filename.to_string());

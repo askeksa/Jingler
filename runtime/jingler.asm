@@ -720,7 +720,7 @@ JinglerNoteOff:
 
 	; Pointer snips
 %if __BITS__ == 32
-	snipcode	pointer, I_PROC_CALL+I_CONSTANT+I_NOTE_PROPERTY
+	snipcode	pointer, I_PROC_CALL+I_NOTE_PROPERTY+I_CONSTANT
 	shl			eax, 2
 	add			[rdi-4], eax
 %else
@@ -734,13 +734,10 @@ JinglerNoteOff:
 	call		[dword rlabel(ProcPointers) + 0]
 .end:
 %if __BITS__ == 64
-	snipcode	pointer, I_CONSTANT+I_NOTE_PROPERTY
+	snipcode	pointer, I_NOTE_PROPERTY+I_CONSTANT
 	shl			eax, 2
 	add			[rdi-4], eax
 %endif
-
-	snip		constant, sr, I_CONSTANT
-	cvtss2sd	xmm0, [dword rsi + 0]
 
 	snip		note_property, sr, I_NOTE_PROPERTY
 	mov			eax, [rcx]
@@ -749,6 +746,17 @@ JinglerNoteOff:
 	add			rax, r9
 %endif
 	cvtsi2sd	xmm0, [dword rax + 4]
+
+	snip		constant, sr, I_CONSTANT
+	cvtss2sd	xmm0, [dword rsi + 0]
+
+	snipcode	byte_index, I_CONSTANT_BYTE_INDEX
+	lodsb
+	shl			eax, 2
+	add			[rdi-4], eax
+
+	snip		constant_byte_index, sr, I_CONSTANT_BYTE_INDEX
+	cvtss2sd	xmm0, [dword rsi + 0]
 
 	; Offset snips
 	snipcode	offset, I_STACK_LOAD+I_STACK_STORE

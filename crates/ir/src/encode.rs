@@ -41,8 +41,9 @@ enum EncodedBytecode {
 	Fop,
 	Proc,
 	ProcCall,
-	Constant,
 	ReadNoteProperty,
+	Constant,
+	ConstantByteIndex,
 	StackLoad,
 	StackStore,
 	Label,
@@ -148,8 +149,9 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		Fop => ("fop", Some(arg)),
 		Proc => ("proc", None),
 		ProcCall => ("proc_call", Some(arg)),
-		Constant => ("constant", Some(arg)),
 		ReadNoteProperty => ("note_property", Some(arg)),
+		Constant => ("constant", Some(arg)),
+		ConstantByteIndex => ("constant_byte_index", Some(arg)),
 		StackLoad => ("stack_load", Some(arg)),
 		StackStore => ("stack_store", Some(arg)),
 		Label => ("label", None),
@@ -213,7 +215,7 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 fn encode_bytecode(inst: Instruction, sample_rate: f32,
                    encode: &mut impl FnMut(EncodedBytecode, u16),
                    encode_constant: &mut impl FnMut(u32),
-				   parameter_offset: usize) {
+				   encode_parameter: &mut impl FnMut(u16)) {
 	use EncodedBytecode::*;
 	use EncodedFop::*;
 	use EncodedNoteProperty::*;
@@ -240,7 +242,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
-		Instruction::Parameter(index) => encode(Constant, parameter_offset as u16 + index),
+		Instruction::Parameter(index) => encode_parameter(index),
 		Instruction::StackLoad(offset) => encode(StackLoad, offset),
 		Instruction::StackStore(offset) => encode(StackStore, offset),
 
@@ -373,7 +375,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 	}
 }
 
-fn collect_capacities(program: &Program, sample_rate: f32) -> (Vec<u16>, BTreeSet<u32>) {
+fn collect_capacities(program: &Program, sample_rate: f32, embed_constant_index: bool) -> (Vec<u16>, BTreeSet<u32>) {
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
@@ -384,14 +386,19 @@ fn collect_capacities(program: &Program, sample_rate: f32) -> (Vec<u16>, BTreeSe
 	let mut discover_constant = |value: u32| {
 		constant_set.insert(value);
 	};
+	let mut discover_parameter = |_index: u16| {};
 	for &inst in program.procedures.iter().map(|p| &p.code).flatten() {
-		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant, 0);
+		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant, &mut discover_parameter);
 	}
 	if opcode_capacity[EncodedBytecode::Random as usize] != 0 {
 		constant_set.insert(RANDOM_SCRAMBLE);
 	}
 	opcode_capacity[EncodedBytecode::Proc as usize] = 1;
-	opcode_capacity[EncodedBytecode::Constant as usize] = (program.parameters.len() + constant_set.len() + 1) as u16;
+	if embed_constant_index {
+		opcode_capacity[EncodedBytecode::Constant as usize] = (program.parameters.len() + constant_set.len() + 1) as u16;
+	} else {
+		opcode_capacity[EncodedBytecode::ConstantByteIndex as usize] = 1;
+	}
 
 	(opcode_capacity, constant_set)
 }
@@ -412,21 +419,25 @@ fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<
 	(constants, constant_map, parameter_offset)
 }
 
-fn check_opcode_space(opcode_capacity: &Vec<u16>) -> Result<()> {
+fn check_opcode_space(opcode_capacity: &Vec<u16>, constants: &Vec<u32>) -> Result<()> {
 	let opcode_space = opcode_capacity.iter().sum::<u16>() + 1;
 	if opcode_space > 256 {
 		return Err(anyhow!("\nExceeded opcode space ({} > {}).", opcode_space, 256));
+	}
+	let constant_space = constants.len();
+	if constant_space > 256 {
+		return Err(anyhow!("\nExceeded constant space ({} > {}).", constant_space, 256));
 	}
 	Ok(())
 }
 
 pub fn encode_bytecodes_source(
 		program: &Program, jingler_asm_path: &String,
-		sample_rate: f32, parameter_quantization: f32,
+		sample_rate: f32, embed_constant_index: bool, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
-	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
+	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate, embed_constant_index);
 	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
-	check_opcode_space(&opcode_capacity)?;
+	check_opcode_space(&opcode_capacity, &constants)?;
 
 	for i in 0 .. EncodedBytecode::Implicit as usize {
 		let (name, _) = bytecode_name(EncodedBytecode::from_repr(i).unwrap(), 0);
@@ -445,7 +456,11 @@ pub fn encode_bytecodes_source(
 
 	writeln!(out, "\nsection musdat data align=1")?;
 	writeln!(out, "\n%define b(n) _snip_id_%+n")?;
-	writeln!(out, "%define c(n) _snip_id_constant+n")?;
+	if embed_constant_index {
+		writeln!(out, "%define c(n) _snip_id_constant+n")?;
+	} else {
+		writeln!(out, "%define c(n) _snip_id_constant_byte_index,n")?;
+	}
 
 	writeln!(out, "\nBytecodes:")?;
 	writeln!(out, "\tdb\tb(proc)")?;
@@ -472,7 +487,12 @@ pub fn encode_bytecodes_source(
 				let s = format!("c({arg})");
 				codes.borrow_mut().push(s);
 			};
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, parameter_offset);
+			let mut encode_parameter = |index: u16| {
+				let arg = parameter_offset as u16 + index;
+				let s = format!("c({arg})");
+				codes.borrow_mut().push(s);
+			};
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, &mut encode_parameter);
 			for code in codes.borrow().iter() {
 				if first {
 					write!(out, "\tdb\t{code}")?;
@@ -509,10 +529,10 @@ pub fn encode_bytecodes_source(
 }
 
 pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>, usize)> {
-	let (mut opcode_capacity, constant_set) = collect_capacities(program, sample_rate);
+	let (mut opcode_capacity, constant_set) = collect_capacities(program, sample_rate, false);
 	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
 	adjust_to_fixed_capacities(&mut opcode_capacity)?;
-	check_opcode_space(&opcode_capacity)?;
+	check_opcode_space(&opcode_capacity, &constants)?;
 
 	// Compute opcode base values
 	let mut opcode_base = opcode_capacity;
@@ -529,14 +549,21 @@ pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(V
 		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
 	};
 	let mut encode_constant = |value: u32| {
-		let opcode = EncodedBytecode::Constant;
+		let opcode = EncodedBytecode::ConstantByteIndex;
 		let arg = constant_map[&value];
-		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
+		encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
+		encoded.borrow_mut().push(arg as u8);
+	};
+	let mut encode_parameter = |index: u16| {
+		let opcode = EncodedBytecode::ConstantByteIndex;
+		let arg = parameter_offset as u16 + index;
+		encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
+		encoded.borrow_mut().push(arg as u8);
 	};
 	for procedure in &program.procedures {
 		encode_opcode(EncodedBytecode::Proc, 0);
 		for &inst in &procedure.code {
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, parameter_offset);
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, &mut encode_parameter);
 		}
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);
@@ -548,6 +575,7 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 	for capacity in opcode_capacity.iter_mut() {
 		if *capacity == 0 { *capacity = 1; }
 	}
+	opcode_capacity[EncodedBytecode::Constant as usize] = 0;
 
 	let mut exceeded = BTreeMap::new();
 	let mut adjust = |opcode: EncodedBytecode, fixed_capacity: u16, name: &'static str| {
@@ -560,11 +588,10 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 	};
 
 	adjust(EncodedBytecode::Fop, 15, "fop");
-	adjust(EncodedBytecode::ProcCall, 75, "procedure");
-	adjust(EncodedBytecode::Constant, 50, "constant");
+	adjust(EncodedBytecode::ProcCall, 110, "procedure");
 	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
-	adjust(EncodedBytecode::StackLoad, 20, "stack load");
-	adjust(EncodedBytecode::StackStore, 20, "stack store");
+	adjust(EncodedBytecode::StackLoad, 35, "stack load");
+	adjust(EncodedBytecode::StackStore, 15, "stack store");
 	adjust(EncodedBytecode::Round, 4, "round");
 	adjust(EncodedBytecode::Compare, 7, "compare");
 
