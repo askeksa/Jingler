@@ -1,9 +1,11 @@
 **/target
 **/.DS_Store
 **/*.wav
+**/test_output.txt
 convert/__pycache__
 runtime/*.obj
 runtime/*.exe
 runtime/*.html
 runtime/reuse.txt
+test/actual.asm
 t
