@@ -155,6 +155,7 @@ pub enum Expression {
 		buffer_type: Type,
 		body: Box<Expression>,
 	},
+	BufferLiteral { before: Pos, elements: Vec<Expression>, after: Pos },
 	Expand { exp: Box<Expression>, width: Width },
 }
 
@@ -209,6 +210,7 @@ impl Expression {
 			BufferIndex { ref exp, .. } => exp.pos_before(),
 			For { before, .. } => before,
 			BufferInit { before, .. } => before,
+			BufferLiteral { before, .. } => before,
 			Expand { ref exp, .. } => exp.pos_before(),
 		}
 	}
@@ -229,6 +231,7 @@ impl Expression {
 			BufferIndex { after, .. } => after,
 			For { ref body, .. } => body.pos_after(),
 			BufferInit { ref body, .. } => body.pos_after(),
+			BufferLiteral { after, .. } => after,
 			Expand { ref exp, .. } => exp.pos_after(),
 		}
 	}
@@ -282,6 +285,11 @@ impl Expression {
 			BufferInit { length, body, .. } => {
 				length.traverse(pre, post);
 				body.traverse(pre, post);
+			},
+			BufferLiteral { elements, .. } => {
+				for element in elements {
+					element.traverse(pre, post);
+				}
 			},
 			Expand { exp, .. } => {
 				exp.traverse(pre, post);

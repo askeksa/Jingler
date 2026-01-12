@@ -809,6 +809,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					width: buffer_type.width.unwrap(),
 				});
 			},
+			BufferLiteral { elements, .. } => {
+				for element in elements {
+					self.find_cells(element);
+				}
+			},
 			Expand { exp, .. } => {
 				self.find_cells(exp);
 			}
@@ -1080,6 +1085,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						self.emit(code![CellRead]);
 					},
 					None => panic!("Buffer initialization in a function"),
+				}
+			},
+			BufferLiteral { elements, .. } => {
+				let buffer_width = self.retrieve_width(exp).unwrap();
+				self.emit(code![Constant((elements.len() as f32).to_bits())]);
+				self.emit(code![BufferAlloc(buffer_width.to_ir())]);
+				for element in elements {
+					self.generate(element);
+					self.emit(code![BufferStoreAndStep]);
 				}
 			},
 			Expand { exp, width } => {

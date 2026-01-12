@@ -302,6 +302,11 @@ impl Expression {
 				write!(f, " {} ", buffer_type)?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},
+			BufferLiteral { elements, .. } => {
+				write!(f, "{{ ")?;
+				fmt_parenthesized_list(f, elements)?;
+				write!(f, " }}")?;
+			},
 			Expand { exp, .. } => {
 				write!(f, "[{}]", exp)?;
 			},
@@ -326,6 +331,7 @@ impl Expression {
 			BufferIndex { .. } => Precedence::Primary,
 			For { .. } => Precedence::Expression,
 			BufferInit { .. } => Precedence::Expression,
+			BufferLiteral { .. } => Precedence::Primary,
 			Expand { .. } => Precedence::Primary,
 		}
 	}

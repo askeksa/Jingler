@@ -404,6 +404,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				=> self.infer_for(name, count, combinator, body, loc),
 			BufferInit { length, buffer_type, body, .. }
 				=> self.infer_buffer_init(length, buffer_type, body, loc),
+			BufferLiteral { elements, .. } => self.infer_buffer_literal(elements, loc),
 			Expand { exp: inner, .. } => {
 				// We only get here during subsequent inference passes triggered when
 				// a forward-referenced variable without a declared width is inferred
@@ -743,6 +744,26 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				(vec![TypeResult::Error], None)
 			},
 		}
+	}
+
+	fn infer_buffer_literal(&mut self,
+			elements: &mut Vec<Expression>,
+			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
+		let element_results: Vec<TypeResult> = elements.iter_mut()
+			.map(|e| self.expect_single(e, "element of buffer literal"))
+			.collect();
+
+		let inputs = vec![type_spec!(generic number); elements.len()];
+		let outputs = [type_spec!(generic buffer)];
+		let sig = Signature {
+			inputs: &inputs,
+			outputs: &outputs,
+		};
+
+		let element_refs: Vec<&mut Expression> = elements.iter_mut().collect();
+		let result = self.check_signature(&sig, &element_results, &element_refs, loc);
+		let generic_width = self.generic_instantiation(&sig, &result);
+		(result, generic_width)
 	}
 
 	fn check_call_signature(&mut self, sig: &Signature, args: &mut Vec<Expression>,

@@ -173,6 +173,7 @@ PrimaryExpression: Expression = {
 	<before:@L> <channels:MidiArg*> <name:Id> <args:ParenthesizedExpressions> <after:@R> => Expression::Call {<>},
 	<before:@L> <elements:ParenthesizedExpressions> <after:@R> => Expression::Tuple {<>},
 	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
+	<before:@L> "{" <elements:Comma<Expression>> "}" <after:@R> => Expression::BufferLiteral {<>},
 	<exp:Box<PrimaryExpression>> "[" <index:Box<Expression>> "]" <after:@R> => Expression::BufferIndex {<>},
 };
 
