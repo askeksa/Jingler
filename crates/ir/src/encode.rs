@@ -588,9 +588,9 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 	};
 
 	adjust(EncodedBytecode::Fop, 15, "fop");
-	adjust(EncodedBytecode::ProcCall, 110, "procedure");
+	adjust(EncodedBytecode::ProcCall, 95, "procedure");
 	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
-	adjust(EncodedBytecode::StackLoad, 35, "stack load");
+	adjust(EncodedBytecode::StackLoad, 50, "stack load");
 	adjust(EncodedBytecode::StackStore, 15, "stack store");
 	adjust(EncodedBytecode::Round, 4, "round");
 	adjust(EncodedBytecode::Compare, 7, "compare");
