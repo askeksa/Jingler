@@ -44,6 +44,7 @@ enum EncodedBytecode {
 	ReadNoteProperty,
 	Constant,
 	ConstantByteIndex,
+	ProcCallByteIndex,
 	StackLoad,
 	StackStore,
 	Label,
@@ -152,6 +153,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		ReadNoteProperty => ("note_property", Some(arg)),
 		Constant => ("constant", Some(arg)),
 		ConstantByteIndex => ("constant_byte_index", Some(arg)),
+		ProcCallByteIndex => panic!("proc_call_byte_index not supported for source output"),
 		StackLoad => ("stack_load", Some(arg)),
 		StackStore => ("stack_store", Some(arg)),
 		Label => ("label", None),
@@ -546,7 +548,16 @@ pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(V
 	// Perform the encoding
 	let encoded = RefCell::new(vec![]);
 	let mut encode_opcode = |opcode: EncodedBytecode, arg: u16| {
-		encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
+		match opcode {
+			EncodedBytecode::ProcCall => {
+				let opcode = EncodedBytecode::ProcCallByteIndex;
+				encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
+				encoded.borrow_mut().push(arg as u8);
+			},
+			_ => {
+				encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
+			}
+		}
 	};
 	let mut encode_constant = |value: u32| {
 		let opcode = EncodedBytecode::ConstantByteIndex;
@@ -576,6 +587,7 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 		if *capacity == 0 { *capacity = 1; }
 	}
 	opcode_capacity[EncodedBytecode::Constant as usize] = 0;
+	opcode_capacity[EncodedBytecode::ProcCall as usize] = 0;
 
 	let mut exceeded = BTreeMap::new();
 	let mut adjust = |opcode: EncodedBytecode, fixed_capacity: u16, name: &'static str| {
@@ -588,10 +600,9 @@ fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
 	};
 
 	adjust(EncodedBytecode::Fop, 15, "fop");
-	adjust(EncodedBytecode::ProcCall, 95, "procedure");
 	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
-	adjust(EncodedBytecode::StackLoad, 50, "stack load");
-	adjust(EncodedBytecode::StackStore, 15, "stack store");
+	adjust(EncodedBytecode::StackLoad, 75, "stack load");
+	adjust(EncodedBytecode::StackStore, 75, "stack store");
 	adjust(EncodedBytecode::Round, 4, "round");
 	adjust(EncodedBytecode::Compare, 7, "compare");
 

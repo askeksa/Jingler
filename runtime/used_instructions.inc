@@ -25,12 +25,13 @@
 %define I_FDONE2 1
 %define I_FOP 15
 %define I_PROC 1
-%define I_PROC_CALL 95
+%define I_PROC_CALL 0
+%define I_PROC_CALL_BYTE_INDEX 1
 %define I_NOTE_PROPERTY 3
 %define I_CONSTANT 0
 %define I_CONSTANT_BYTE_INDEX 1
-%define I_STACK_LOAD 50
-%define I_STACK_STORE 15
+%define I_STACK_LOAD 75
+%define I_STACK_STORE 75
 %define I_LABEL 1
 %define I_IF 1
 %define I_LOOPJUMP 1

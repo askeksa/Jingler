@@ -750,13 +750,28 @@ JinglerNoteOff:
 	snip		constant, sr, I_CONSTANT
 	cvtss2sd	xmm0, [dword rsi + 0]
 
-	snipcode	byte_index, I_CONSTANT_BYTE_INDEX
+%if __BITS__ == 32
+	snipcode	byte_index, I_CONSTANT_BYTE_INDEX+I_PROC_CALL_BYTE_INDEX
+%else
+	snipcode	constant_byte_index, I_CONSTANT_BYTE_INDEX
+%endif
 	lodsb
 	shl			eax, 2
 	add			[rdi-4], eax
 
 	snip		constant_byte_index, sr, I_CONSTANT_BYTE_INDEX
 	cvtss2sd	xmm0, [dword rsi + 0]
+
+%if __BITS__ == 64
+	snipcode	proc_call_byte_index, I_PROC_CALL_BYTE_INDEX
+	lodsb
+	shl			eax, 3
+	add			[rdi-4], eax
+%endif
+
+	snip		proc_call_byte_index, ss, I_PROC_CALL_BYTE_INDEX
+	rlea		ProcPointers
+	call		[dword rlabel(ProcPointers) + 0]
 
 	; Offset snips
 	snipcode	offset, I_STACK_LOAD+I_STACK_STORE
