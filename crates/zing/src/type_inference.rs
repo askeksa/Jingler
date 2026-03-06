@@ -11,7 +11,7 @@ use crate::names::*;
 #[derive(Clone, Debug)]
 pub struct FullSignature {
 	pub context: Context,
-	pub kind: ProcedureKind,
+	pub kind: MemberKind,
 	pub midi_input_count: usize,
 	pub inputs: Vec<Type>,
 	pub outputs: Vec<Type>,
@@ -25,7 +25,7 @@ pub fn infer_types<'comp, 'names>(
 			Vec<FullSignature>,
 			HashMap<*const Expression, Width>,
 			Vec<Vec<usize>>,
-			Vec<Vec<*const PrecompiledProcedure>>,
+			Vec<Vec<*const PrecompiledMember>>,
 		), CompileError> {
 	let mut type_inferrer = TypeInferrer::new(names, compiler);
 	type_inferrer.infer_signatures(program)?;
@@ -40,13 +40,13 @@ struct TypeInferrer<'comp, 'names> {
 	signatures: Vec<FullSignature>,
 	stored_widths: HashMap<*const Expression, Width>,
 	callees: Vec<Vec<usize>>,
-	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
+	precompiled_callees: Vec<Vec<*const PrecompiledMember>>,
 
-	// Procedure-local state
+	// Member-local state
 	inputs: Vec<Type>,
 	node_types: Vec<Vec<TypeResult>>,
-	current_proc_index: usize,
-	current_proc_name_loc: PosRange,
+	current_member_index: usize,
+	current_member_name_loc: PosRange,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,13 +76,13 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			precompiled_callees: vec![],
 			inputs: vec![],
 			node_types: vec![],
-			current_proc_index: 0,
-			current_proc_name_loc: PosRange::default(),
+			current_member_index: 0,
+			current_member_name_loc: PosRange::default(),
 		}
 	}
 
 	pub fn lookup_variable(&mut self, name: &Id) -> Option<TypeResult> {
-		match self.names.lookup_variable(self.current_proc_index, &name.text) {
+		match self.names.lookup_variable(self.current_member_index, &name.text) {
 			Some(VariableRef::Parameter { .. }) => Some(TypeResult::Type {
 				inferred_type: type_spec!(dynamic mono number),
 			}),
@@ -107,22 +107,22 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let number_type = &Type { value_type: Some(ValueType::Number), .. Type::default() };
 		let dynamic_number_type = &Type { scope: Some(Scope::Dynamic), .. *number_type };
 
-		for proc in &mut program.procedures {
+		for member in &mut program.members {
 			let mut instrument_types: Vec<Type> = vec![];
 			let mut output_count = 0;
 			let mut seen_generic_input = false;
-			let input_iter = repeat(false).zip(&mut proc.inputs.items);
-			let output_iter = repeat(true).zip(&mut proc.outputs.items);
+			let input_iter = repeat(false).zip(&mut member.inputs.items);
+			let output_iter = repeat(true).zip(&mut member.outputs.items);
 			for (is_output, item) in input_iter.chain(output_iter) {
 				let PatternItem { name: variable_name, item_type } = item;
 				if item_type.width.is_none() {
 					self.compiler.report_error(variable_name,
 						"Inputs and outputs must specify explicit width.");
 				}
-				match proc.kind {
+				match member.kind {
 					// Module inputs/outputs default to dynamic stereo number, and only
 					// inputs can be static.
-					ProcedureKind::Module => {
+					MemberKind::Module => {
 						if is_output {
 							if let Some(Scope::Static) = item_type.scope {
 								self.compiler.report_error(variable_name,
@@ -133,7 +133,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					},
 					// Function inputs/outputs default to stereo number and have no
 					// static/dynamic distinction.
-					ProcedureKind::Function => {
+					MemberKind::Function => {
 						if item_type.scope.is_some() {
 							self.compiler.report_error(variable_name,
 								"Function inputs or outputs can't be marked static or dynamic.");
@@ -144,7 +144,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					// inputs can be static, all static inputs must appear before all
 					// dynamic inputs, there must be exactly one output, and the type
 					// of that output must be mono or stereo number.
-					ProcedureKind::Instrument => {
+					MemberKind::Instrument => {
 						if is_output {
 							match item_type.scope {
 								Some(Scope::Static) => {
@@ -194,30 +194,30 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					}
 				}
 			}
-			if proc.kind == ProcedureKind::Instrument && output_count != 1 {
-				self.compiler.report_error(&proc.name, "Instruments must have exactly one output.");
+			if member.kind == MemberKind::Instrument && output_count != 1 {
+				self.compiler.report_error(&member.name, "Instruments must have exactly one output.");
 			}
-			if proc.name.text == "main" {
-				let output_types: Vec<Type> = proc.outputs.items.iter().map(|item| item.item_type).collect();
+			if member.name.text == "main" {
+				let output_types: Vec<Type> = member.outputs.items.iter().map(|item| item.item_type).collect();
 				if output_types != vec![type_spec!(dynamic stereo number)] {
-					self.compiler.report_error(&proc.outputs, "'main' must have a single output of type stereo number.");
+					self.compiler.report_error(&member.outputs, "'main' must have a single output of type stereo number.");
 				}
 			}
 
 			// Extract signature
-			let input_types = proc.inputs.items.iter().map(|item| {
+			let input_types = member.inputs.items.iter().map(|item| {
 				let mut input_type = item.item_type;
-				if proc.kind == ProcedureKind::Instrument {
+				if member.kind == MemberKind::Instrument {
 					// Seen from the outside, all instrument inputs are dynamic.
 					input_type.scope = Some(Scope::Dynamic);
 				}
 				input_type
 			}).collect();
-			let output_types = proc.outputs.items.iter().map(|item| item.item_type).collect();
+			let output_types = member.outputs.items.iter().map(|item| item.item_type).collect();
 			let signature = FullSignature {
-				context: proc.context,
-				kind: proc.kind,
-				midi_input_count: proc.channels.len(),
+				context: member.context,
+				kind: member.kind,
+				midi_input_count: member.channels.len(),
 				inputs: input_types,
 				outputs: output_types,
 			};
@@ -227,23 +227,23 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	pub fn infer_bodies(&mut self, program: &mut Program) -> Result<(), CompileError> {
-		for (proc_index, proc) in program.procedures.iter_mut().enumerate() {
-			self.current_proc_index = proc_index;
-			self.current_proc_name_loc = PosRange::from(&proc.name);
+		for (member_index, member) in program.members.iter_mut().enumerate() {
+			self.current_member_index = member_index;
+			self.current_member_name_loc = PosRange::from(&member.name);
 			self.callees.push(vec![]);
 			let mut precompiled_calles = vec![];
-			if proc.kind == ProcedureKind::Instrument {
-				precompiled_calles.push(self.names.autokill_key(proc));
+			if member.kind == MemberKind::Instrument {
+				precompiled_calles.push(self.names.autokill_key(member));
 			}
 			self.precompiled_callees.push(precompiled_calles);
-			self.infer_body(proc)?;
-			self.check_outputs(proc)?;
+			self.infer_body(member)?;
+			self.check_outputs(member)?;
 		}
 		Ok(())
 	}
 
-	fn check_outputs(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
-		for PatternItem { name: variable_name, item_type } in &proc.outputs.items {
+	fn check_outputs(&mut self, member: &mut Member) -> Result<(), CompileError> {
+		for PatternItem { name: variable_name, item_type } in &member.outputs.items {
 			match self.lookup_variable(variable_name) {
 				Some(TypeResult::Type { inferred_type }) => {
 					if !inferred_type.assignable_to(item_type) {
@@ -263,15 +263,15 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		self.compiler.check_errors()
 	}
 
-	fn infer_body(&mut self, proc: &mut Procedure) -> Result<(), CompileError> {
-		self.inputs = proc.inputs.items.iter().map(|PatternItem { item_type, .. }| *item_type).collect();
+	fn infer_body(&mut self, member: &mut Member) -> Result<(), CompileError> {
+		self.inputs = member.inputs.items.iter().map(|PatternItem { item_type, .. }| *item_type).collect();
 
 		loop {
 			// Initialize node types from declared types
-			self.node_types = proc.body.iter_mut()
+			self.node_types = member.body.iter_mut()
 				.map(|Statement::Assign { node, .. }| {
 					node.items.iter_mut().map(|PatternItem { name, item_type }| {
-						if let Some(output) = proc.outputs.items.iter().find(|item| item.name.text == name.text) {
+						if let Some(output) = member.outputs.items.iter().find(|item| item.name.text == name.text) {
 							item_type.inherit(&output.item_type);
 						}
 						TypeResult::Type { inferred_type: *item_type }
@@ -280,7 +280,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 
 			// Infer statements in program order
 			let mut repeat = false;
-			for (body_index, Statement::Assign { node, exp }) in proc.body.iter_mut().enumerate() {
+			for (body_index, Statement::Assign { node, exp }) in member.body.iter_mut().enumerate() {
 				let inferred_results = self.infer_statement(node, exp);
 
 				for ((PatternItem { item_type: source_type, .. }, node_type), inferred_type) in
@@ -309,7 +309,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		}
 
 		// Update the nodes with the inferred types
-		for (body_index, Statement::Assign { node, .. }) in proc.body.iter_mut().enumerate() {
+		for (body_index, Statement::Assign { node, .. }) in member.body.iter_mut().enumerate() {
 			for (item, node_type) in node.items.iter_mut().zip(&self.node_types[body_index]) {
 				if let TypeResult::Type { inferred_type } = node_type {
 					item.item_type = *inferred_type;
@@ -323,7 +323,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	fn infer_statement(&mut self,
 			node: &mut Pattern,
 			exp: &mut Expression) -> Vec<TypeResult> {
-		let FullSignature { kind: current_kind, .. } = self.signatures[self.current_proc_index];
+		let FullSignature { kind: current_kind, .. } = self.signatures[self.current_member_index];
 		let exp_types = self.infer_expression(exp);
 		if node.items.len() != exp_types.len() {
 			self.compiler.report_error(node,
@@ -340,11 +340,11 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				TypeResult::Type { inferred_type } => {
 					node_type.inherit(inferred_type);
 					match (current_kind, node_type.scope) {
-						(ProcedureKind::Function, Some(_)) => {
+						(MemberKind::Function, Some(_)) => {
 							self.compiler.report_error(&item.name,
 								"Variables in functions can't be marked static or dynamic.");
 						},
-						(ProcedureKind::Function, None) => {},
+						(MemberKind::Function, None) => {},
 						(_, None) => {
 							node_type.scope = Some(Scope::Static);
 							seen_static = true;
@@ -516,14 +516,14 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	fn infer_call(&mut self,
 			channels: &Vec<MidiChannel>, name: &Id, args: &mut Vec<Expression>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		match self.names.lookup_procedure(&name.text) {
-			Some(ProcedureRef { context, kind, definition }) => {
+		match self.names.lookup_member(&name.text) {
+			Some(MemberRef { context, kind, definition }) => {
 				let FullSignature {
 					context: current_context, kind: current_kind, ..
-				} = self.signatures[self.current_proc_index];
+				} = self.signatures[self.current_member_index];
 				let channels_loc = &(loc.pos_before(), name.before);
 				use Context::*;
-				use ProcedureKind::*;
+				use MemberKind::*;
 				match (channels.len(), context, kind, current_context, current_kind) {
 					(_, _, Module, _, Function) => {
 						self.compiler.report_error(name,
@@ -574,18 +574,18 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					},
 				}
 				match definition {
-					ProcedureDefinition::BuiltIn { sig, .. } => {
+					MemberDefinition::BuiltIn { sig, .. } => {
 						self.check_call_signature(sig, args, loc)
 					}
-					ProcedureDefinition::Precompiled { proc } => {
-						self.precompiled_callees[self.current_proc_index].push(*proc);
-						self.check_call_signature(&proc.signature(), args, loc)
+					MemberDefinition::Precompiled { member } => {
+						self.precompiled_callees[self.current_member_index].push(*member);
+						self.check_call_signature(&member.signature(), args, loc)
 					}
-					ProcedureDefinition::Declaration { proc_index } => {
-						self.callees[self.current_proc_index].push(*proc_index);
+					MemberDefinition::Declaration { member_index } => {
+						self.callees[self.current_member_index].push(*member_index);
 						let FullSignature {
 							midi_input_count, inputs, outputs, ..
-						} = &self.signatures[*proc_index].clone();
+						} = &self.signatures[*member_index].clone();
 						if *kind == Instrument || channels.len() == *midi_input_count {
 							for channel in channels {
 								match channel {
@@ -596,10 +596,10 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 										}
 									},
 									MidiChannel::Named { name } => {
-										if let None = self.names.lookup_midi_input(self.current_proc_index, &name.text) {
+										if let None = self.names.lookup_midi_input(self.current_member_index, &name.text) {
 											self.compiler.report_error(name,
 												format!("Midi channel input not found: '{}'.", name));
-											self.compiler.report_context(&self.current_proc_name_loc,
+											self.compiler.report_context(&self.current_member_name_loc,
 												"Declare midi channel inputs in front of the module name, separated by '::'.");
 										}
 									}
@@ -616,7 +616,11 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				}
 			},
 			None => {
-				self.compiler.report_error(name, format!("Procedure not found: '{}'.", name));
+				if channels.is_empty() {
+					self.compiler.report_error(name, format!("Function or module not found: '{}'.", name));
+				} else {
+					self.compiler.report_error(name, format!("Instrument or global module not found: '{}'.", name));
+				}
 				(vec![TypeResult::Error], None)
 			},
 		}
@@ -693,20 +697,20 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 
 		let target = match body {
 			Expression::Call { name, .. } => {
-				match self.names.lookup_procedure(&name.text) {
-					Some(ProcedureRef {
-						definition: ProcedureDefinition::Declaration { proc_index }, ..
-					}) => Some(&self.signatures[*proc_index]),
+				match self.names.lookup_member(&name.text) {
+					Some(MemberRef {
+						definition: MemberDefinition::Declaration { member_index }, ..
+					}) => Some(&self.signatures[*member_index]),
 					_ => None,
 				}
 			},
 			_ => None,
 		};
 		match target.map(|sig| (sig.context, sig.kind, &sig.inputs)) {
-			Some((Context::Global, ProcedureKind::Module, _)) => {
+			Some((Context::Global, MemberKind::Module, _)) => {
 				self.compiler.report_error(body, "Buffer initialization module can't be global.");
 			},
-			Some((_, ProcedureKind::Module, inputs)) => {
+			Some((_, MemberKind::Module, inputs)) => {
 				if inputs.iter().any(|input| input.scope != Some(Scope::Static)) {
 					self.compiler.report_error(body, "Buffer initialization module can only have static inputs.");
 				}

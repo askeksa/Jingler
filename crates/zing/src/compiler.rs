@@ -210,7 +210,7 @@ impl Location for Include {
 	fn pos_after(&self) -> usize { self.after }
 }
 
-impl Procedure {
+impl Member {
 	pub fn midi_channels_location(&self) -> impl Location {
 		match self.channels.first() {
 			Some(channel) => (channel.pos_before(), self.name.pos_before()),
@@ -300,7 +300,7 @@ impl Compiler {
 			// Parse included file and merge it into the main program
 			let mut included_program = self.parse(&processed_input, start_offset)?;
 			program.parameters.splice(0..0, included_program.parameters);
-			program.procedures.splice(0..0, included_program.procedures);
+			program.members.splice(0..0, included_program.members);
 			include_queue.extend(included_program.includes.drain(..));
 
 			program.includes.push(include);
@@ -339,31 +339,31 @@ impl Compiler {
 
 	fn check_contexts(&mut self, program: &mut Program) -> Result<(), CompileError> {
 		let mut found_main = false;
-		for proc in &mut program.procedures {
-			match (proc.context, proc.kind, proc.name.text.as_str()) {
-				(Context::Global, ProcedureKind::Module, "main") => {
+		for member in &mut program.members {
+			match (member.context, member.kind, member.name.text.as_str()) {
+				(Context::Global, MemberKind::Module, "main") => {
 					found_main = true;
-					if !proc.channels.is_empty() {
-						self.report_error(&proc.midi_channels_location(),
+					if !member.channels.is_empty() {
+						self.report_error(&member.midi_channels_location(),
 							"'main' can't have midi channel inputs.");
 					}
 				},
 				(_, _, "main") => {
-					self.report_error(&proc.name, "'main' must be a global module.");
+					self.report_error(&member.name, "'main' must be a global module.");
 				},
-				(Context::Global, ProcedureKind::Instrument, _) => {
-					self.report_error(&proc.name, "Instruments can't be global.");
+				(Context::Global, MemberKind::Instrument, _) => {
+					self.report_error(&member.name, "Instruments can't be global.");
 				},
-				(Context::Note, ProcedureKind::Instrument, _) => {
-					self.report_error(&proc.name, "Instruments have implicit note context.");
+				(Context::Note, MemberKind::Instrument, _) => {
+					self.report_error(&member.name, "Instruments have implicit note context.");
 				},
-				(_, ProcedureKind::Instrument, _) => {
-					proc.context = Context::Note;
+				(_, MemberKind::Instrument, _) => {
+					member.context = Context::Note;
 				},
-				(Context::Global, ProcedureKind::Module, _) => {},
+				(Context::Global, MemberKind::Module, _) => {},
 				_ => {
-					if !proc.channels.is_empty() {
-						self.report_error(&proc.midi_channels_location(),
+					if !member.channels.is_empty() {
+						self.report_error(&member.midi_channels_location(),
 							"Only global modules can have midi channel inputs.");
 					}
 				},

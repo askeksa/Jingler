@@ -9,7 +9,7 @@ use crate::ast::*;
 grammar;
 
 pub Program: Program = {
-	<includes:Include*> <parameters:Parameter*> <procedures:Procedure*> => Program {<>},
+	<includes:Include*> <parameters:Parameter*> <members:Member*> => Program {<>},
 };
 
 Include: Include = {
@@ -29,9 +29,9 @@ ParameterDefault: Option<f64> = {
 	"=" <value:SignedNum> => Some(value),
 };
 
-Procedure: Procedure = {
-	<context:Context> <kind:ProcedureKind> <channels:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
-		=> Procedure {<>},
+Member: Member = {
+	<context:Context> <kind:MemberKind> <channels:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
+		=> Member {<>},
 };
 
 Context: Context = {
@@ -40,10 +40,10 @@ Context: Context = {
 	"note" => Context::Note,
 }
 
-ProcedureKind: ProcedureKind = {
-	"module" => ProcedureKind::Module,
-	"function" => ProcedureKind::Function,
-	"instrument" => ProcedureKind::Instrument,
+MemberKind: MemberKind = {
+	"module" => MemberKind::Module,
+	"function" => MemberKind::Function,
+	"instrument" => MemberKind::Instrument,
 }
 
 Pattern: Pattern = {

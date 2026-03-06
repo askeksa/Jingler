@@ -5,7 +5,7 @@ type Pos = usize;
 pub struct Program {
 	pub includes: Vec<Include>,
 	pub parameters: Vec<Parameter>,
-	pub procedures: Vec<Procedure>,
+	pub members: Vec<Member>,
 }
 
 #[derive(Clone, Debug)]
@@ -24,9 +24,9 @@ pub struct Parameter {
 }
 
 #[derive(Clone, Debug)]
-pub struct Procedure {
+pub struct Member {
 	pub context: Context,
-	pub kind: ProcedureKind,
+	pub kind: MemberKind,
 	pub channels: Vec<Id>,
 	pub name: Id,
 	pub inputs: Pattern,
@@ -42,7 +42,7 @@ pub enum Context {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProcedureKind {
+pub enum MemberKind {
 	Module,
 	Function,
 	Instrument,

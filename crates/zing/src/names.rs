@@ -11,7 +11,7 @@ use crate::compiler::{Compiler, CompileError, Location, PosRange};
 #[derive(Clone, Debug)]
 pub struct Names {
 	parameters: HashMap<String, VariableRef>,
-	procedures: HashMap<String, ProcedureRef>,
+	members: HashMap<String, MemberRef>,
 	channels: Vec<HashMap<String, (usize, PosRange)>>,
 	variables: Vec<HashMap<String, VariableRef>>,
 	combinators: HashMap<String, Combinator>,
@@ -28,24 +28,24 @@ pub enum VariableRef {
 
 /// A reference to a top-level module, function or instrument.
 #[derive(Clone, Debug)]
-pub struct ProcedureRef {
+pub struct MemberRef {
 	pub context: Context,
-	pub kind: ProcedureKind,
-	pub definition: ProcedureDefinition,
+	pub kind: MemberKind,
+	pub definition: MemberDefinition,
 }
 
 /// Is this a built-in definition or declared in the program?
 #[derive(Clone, Debug)]
-pub enum ProcedureDefinition {
+pub enum MemberDefinition {
 	BuiltIn {
 		sig: &'static Signature<'static>,
 		code: &'static [Instruction],
 	},
-	Precompiled { proc: &'static PrecompiledProcedure },
-	Declaration { proc_index: usize },
+	Precompiled { member: &'static PrecompiledMember },
+	Declaration { member_index: usize },
 }
 
-/// Signature of a procedure or operator.
+/// Signature of a member or operator.
 #[derive(Clone, Debug)]
 pub struct Signature<'sig> {
 	pub inputs: &'sig [Type],
@@ -64,39 +64,39 @@ impl Names {
 	pub fn find(program: &Program, compiler: &mut Compiler) -> Result<Names, CompileError> {
 		let mut names = Names {
 			parameters: HashMap::new(),
-			procedures: HashMap::new(),
-			channels: vec![HashMap::new(); program.procedures.len()],
-			variables: vec![HashMap::new(); program.procedures.len()],
+			members: HashMap::new(),
+			channels: vec![HashMap::new(); program.members.len()],
+			variables: vec![HashMap::new(); program.members.len()],
 			combinators: HashMap::new(),
 		};
 
 		// Insert built-in functions and modules
 		for &(name, context, ref sig, code) in BUILTIN_FUNCTIONS {
-			names.procedures.insert(name.to_string(), ProcedureRef {
+			names.members.insert(name.to_string(), MemberRef {
 				context,
-				kind: ProcedureKind::Function,
-				definition: ProcedureDefinition::BuiltIn { sig, code },
+				kind: MemberKind::Function,
+				definition: MemberDefinition::BuiltIn { sig, code },
 			});
 		}
 		for &(name, context, ref sig) in BUILTIN_MODULES {
-			names.procedures.insert(name.to_string(), ProcedureRef {
+			names.members.insert(name.to_string(), MemberRef {
 				context,
-				kind: ProcedureKind::Module,
-				definition: ProcedureDefinition::BuiltIn { sig, code: &[] },
+				kind: MemberKind::Module,
+				definition: MemberDefinition::BuiltIn { sig, code: &[] },
 			});
 		}
-		for proc in PRECOMPILED_FUNCTIONS {
-			names.procedures.insert(proc.name().to_string(), ProcedureRef {
-				context: proc.context(),
-				kind: ProcedureKind::Function,
-				definition: ProcedureDefinition::Precompiled { proc },
+		for member in PRECOMPILED_FUNCTIONS {
+			names.members.insert(member.name().to_string(), MemberRef {
+				context: member.context(),
+				kind: MemberKind::Function,
+				definition: MemberDefinition::Precompiled { member },
 			});
 		}
-		for proc in PRECOMPILED_MODULES {
-			names.procedures.insert(proc.name().to_string(), ProcedureRef {
-				context: proc.context(),
-				kind: ProcedureKind::Module,
-				definition: ProcedureDefinition::Precompiled { proc },
+		for member in PRECOMPILED_MODULES {
+			names.members.insert(member.name().to_string(), MemberRef {
+				context: member.context(),
+				kind: MemberKind::Module,
+				definition: MemberDefinition::Precompiled { member },
 			});
 		}
 		for &(name, neutral, code) in REPETITION_COMBINATORS {
@@ -108,35 +108,35 @@ impl Names {
 			names.parameters.insert(param.name.text.clone(), VariableRef::Parameter { index });
 		}
 
-		// Run through all procedures in the program
-		for (proc_index, proc) in program.procedures.iter().enumerate() {
-			let proc_ref = ProcedureRef {
-				context: proc.context,
-				kind: proc.kind,
-				definition: ProcedureDefinition::Declaration { proc_index },
+		// Run through all members in the program
+		for (member_index, member) in program.members.iter().enumerate() {
+			let member_ref = MemberRef {
+				context: member.context,
+				kind: member.kind,
+				definition: MemberDefinition::Declaration { member_index },
 			};
-			names.insert_procedure(program, compiler, &proc.name, proc_ref);
+			names.insert_member(program, compiler, &member.name, member_ref);
 
 			// Insert midi channel inputs
-			for (index, name) in proc.channels.iter().enumerate() {
-				names.insert_channel(compiler, proc_index, name, index);
+			for (index, name) in member.channels.iter().enumerate() {
+				names.insert_channel(compiler, member_index, name, index);
 			}
 
-			// Run through all patterns in the procedure; first the inputs,
+			// Run through all patterns in the member; first the inputs,
 			// then the left-hand sides of all assignments.
-			for (index, item) in proc.inputs.items.iter().enumerate() {
-				names.insert_variable(program, compiler, proc_index, &item.name,
+			for (index, item) in member.inputs.items.iter().enumerate() {
+				names.insert_variable(program, compiler, member_index, &item.name,
 					VariableRef::Input { index });
 			}
-			for (body_index, Statement::Assign { node, exp }) in proc.body.iter().enumerate() {
+			for (body_index, Statement::Assign { node, exp }) in member.body.iter().enumerate() {
 				for (tuple_index, item) in node.items.iter().enumerate() {
-					names.insert_variable(program, compiler, proc_index, &item.name,
+					names.insert_variable(program, compiler, member_index, &item.name,
 						VariableRef::Node { body_index, tuple_index });
 				}
 				// Add any repetition variables in the right-hand side.
 				exp.traverse_pre(&mut |exp| {
 					if let Expression::For { name, .. } = exp {
-						names.insert_variable(program, compiler, proc_index, &name,
+						names.insert_variable(program, compiler, member_index, &name,
 							VariableRef::For { variable_pos: PosRange::from(name) });
 					}
 				});
@@ -146,45 +146,45 @@ impl Names {
 		compiler.if_no_errors(names)
 	}
 
-	fn insert_procedure(&mut self,
+	fn insert_member(&mut self,
 			program: &Program, compiler: &mut Compiler,
-			name: &Id, proc_ref: ProcedureRef) {
-		self.procedures.entry(name.text.clone()).and_modify(|existing| {
+			name: &Id, member_ref: MemberRef) {
+		self.members.entry(name.text.clone()).and_modify(|existing| {
 			match existing.definition {
-				ProcedureDefinition::BuiltIn { .. } | ProcedureDefinition::Precompiled { .. } => {
+				MemberDefinition::BuiltIn { .. } | MemberDefinition::Precompiled { .. } => {
 					compiler.report_error(name,
 						format!("The {} '{}' has the same name as a built-in {}.",
-							proc_ref.kind, name, existing.kind));
+							member_ref.kind, name, existing.kind));
 				},
-				ProcedureDefinition::Declaration { proc_index } => {
+				MemberDefinition::Declaration { member_index } => {
 					compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
-					let existing_name = &program.procedures[proc_index].name;
+					let existing_name = &program.members[member_index].name;
 					compiler.report_context(existing_name, "Previously defined here.");
 				},
 			}
-		}).or_insert(proc_ref);
+		}).or_insert(member_ref);
 	}
 
 	fn insert_channel(&mut self,
 			compiler: &mut Compiler,
-			proc_index: usize, name: &Id, index: usize) {
+			member_index: usize, name: &Id, index: usize) {
 		if name.text == "_" { return; }
-		self.channels[proc_index].entry(name.text.clone()).and_modify(|_| {
+		self.channels[member_index].entry(name.text.clone()).and_modify(|_| {
 			compiler.report_error(name, format!("Duplicate midi channel input '{}'.", name));
 		}).or_insert((index, PosRange::from(name)));
 	}
 
 	fn insert_variable(&mut self,
 			program: &Program, compiler: &mut Compiler,
-			proc_index: usize, name: &Id, var_ref: VariableRef) {
+			member_index: usize, name: &Id, var_ref: VariableRef) {
 		if name.text == "_" { return; }
-		self.variables[proc_index].entry(name.text.clone()).and_modify(|existing| {
+		self.variables[member_index].entry(name.text.clone()).and_modify(|existing| {
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
-			let proc = &program.procedures[proc_index];
+			let member = &program.members[member_index];
 			let loc: &dyn Location = match existing {
 				VariableRef::Parameter { index } => &program.parameters[*index].name,
-				VariableRef::Input { index } => &proc.inputs.items[*index].name,
-				VariableRef::Node { body_index, tuple_index } => match proc.body[*body_index] {
+				VariableRef::Input { index } => &member.inputs.items[*index].name,
+				VariableRef::Node { body_index, tuple_index } => match member.body[*body_index] {
 					Statement::Assign { ref node, .. } => &node.items[*tuple_index].name,
 				},
 				VariableRef::For { variable_pos } => variable_pos,
@@ -194,26 +194,26 @@ impl Names {
 	}
 
 	/// Look up a module, function or instrument by name.
-	pub fn lookup_procedure(&self, name: &String) -> Option<&ProcedureRef> {
-		self.procedures.get(name)
+	pub fn lookup_member(&self, name: &String) -> Option<&MemberRef> {
+		self.members.get(name)
 	}
 
 	// Lookup a precompiled module or function by name.
-	pub fn lookup_precompiled(&self, name: &str) -> Option<&'static PrecompiledProcedure> {
-		match self.lookup_procedure(&name.to_string()) {
-			Some(ProcedureRef { definition: ProcedureDefinition::Precompiled { proc }, .. }) => Some(proc),
+	pub fn lookup_precompiled(&self, name: &str) -> Option<&'static PrecompiledMember> {
+		match self.lookup_member(&name.to_string()) {
+			Some(MemberRef { definition: MemberDefinition::Precompiled { member }, .. }) => Some(member),
 			_ => None,
 		}
 	}
 
-	/// Look up a MIDI channel input by name inside a specific procedure.
-	pub fn lookup_midi_input(&self, proc_index: usize, name: &String) -> Option<usize> {
-		self.channels[proc_index].get(name).map(|(index, _)| *index)
+	/// Look up a MIDI channel input by name inside a specific member.
+	pub fn lookup_midi_input(&self, member_index: usize, name: &String) -> Option<usize> {
+		self.channels[member_index].get(name).map(|(index, _)| *index)
 	}
 
-	/// Look up a variable by name inside a specific procedure.
-	pub fn lookup_variable(&self, proc_index: usize, name: &String) -> Option<&VariableRef> {
-		self.variables[proc_index].get(name).or_else(|| self.parameters.get(name))
+	/// Look up a variable by name inside a specific member.
+	pub fn lookup_variable(&self, member_index: usize, name: &String) -> Option<&VariableRef> {
+		self.variables[member_index].get(name).or_else(|| self.parameters.get(name))
 	}
 
 	pub fn lookup_combinator(&self, combinator: &String) -> Option<&Combinator> {
@@ -232,13 +232,13 @@ impl Names {
 	}
 
 	// The name of the autokill precompiled module for a given instrument.
-	pub fn autokill_key(&self, proc: &Procedure) -> *const PrecompiledProcedure {
-		assert!(proc.kind == ProcedureKind::Instrument);
-		let autokill_name = match proc.outputs.items.first().unwrap().item_type.width {
+	pub fn autokill_key(&self, member: &Member) -> *const PrecompiledMember {
+		assert!(member.kind == MemberKind::Instrument);
+		let autokill_name = match member.outputs.items.first().unwrap().item_type.width {
 			Some(Width::Mono) => "$autokill_mono",
 			Some(Width::Stereo) => "$autokill_stereo",
 			_ => unreachable!("Missing instrument output width"),
 		};
-		self.lookup_precompiled(&autokill_name).unwrap() as *const PrecompiledProcedure
+		self.lookup_precompiled(&autokill_name).unwrap() as *const PrecompiledMember
 	}
 }

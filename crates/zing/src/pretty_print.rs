@@ -7,8 +7,8 @@ impl Display for Program {
 		for parameter in &self.parameters {
 			write!(f, "{}", parameter)?;
 		}
-		for procedure in &self.procedures {
-			write!(f, "\n{}", procedure)?;
+		for member in &self.members {
+			write!(f, "\n{}", member)?;
 		}
 		Ok(())
 	}
@@ -25,7 +25,7 @@ impl Display for Parameter {
 	}
 }
 
-impl Display for Procedure {
+impl Display for Member {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		if self.context != Context::Universal {
 			write!(f, "{} ", self.context)?;
@@ -57,9 +57,9 @@ impl Display for Context {
 	}
 }
 
-impl Display for ProcedureKind {
+impl Display for MemberKind {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-		use ProcedureKind::*;
+		use MemberKind::*;
 		match *self {
 			Module => "module",
 			Function => "function",

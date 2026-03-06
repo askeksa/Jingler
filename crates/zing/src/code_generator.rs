@@ -16,12 +16,12 @@ pub fn generate_code<'ast, 'comp, 'names>(
 		signatures: Vec<FullSignature>,
 		stored_widths: HashMap<*const Expression, Width>,
 		callees: Vec<Vec<usize>>,
-		precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
+		precompiled_callees: Vec<Vec<*const PrecompiledMember>>,
 		compiler: &mut Compiler)
 -> Result<(Vec<ir::Procedure>, usize, usize, Vec<usize>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
-	let main_index = match names.lookup_procedure(&"main".to_string()).unwrap().definition {
-		ProcedureDefinition::Declaration { proc_index } => proc_index,
+	let main_index = match names.lookup_member(&"main".to_string()).unwrap().definition {
+		MemberDefinition::Declaration { member_index } => member_index,
 		_ => panic!("No main"),
 	};
 	cg.generate_code_for_program(program, main_index)?;
@@ -111,27 +111,27 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	signatures: Vec<FullSignature>,
 	stored_widths: HashMap<*const Expression, Width>,
 	callees: Vec<Vec<usize>>,
-	precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>,
+	precompiled_callees: Vec<Vec<*const PrecompiledMember>>,
 
-	/// Is the procedure reachable from main?
+	/// Is the member reachable from main?
 	live: Vec<bool>,
-	/// Is the precompiled procedure reachable from main?
-	live_precompiled: HashSet<*const PrecompiledProcedure>,
+	/// Is the precompiled member reachable from main?
+	live_precompiled: HashSet<*const PrecompiledMember>,
 	/// Procedure ID for functions
 	function_proc_id: Vec<u16>,
 	/// Static procedure ID for modules and instruments
 	static_proc_id: Vec<u16>,
 	/// Dynamic procedure ID for modules and instruments
 	dynamic_proc_id: Vec<u16>,
-	/// Procedure IDs for precompiled procedures
-	precompiled_proc_ids: HashMap<*const PrecompiledProcedure, Vec<u16>>,
-	/// Procedure and scope for ID
-	proc_for_id: Vec<(ProcedureRef, Option<Scope>)>,
-	/// The current procedure index
-	current_proc_index: usize,
-	/// The current procedure kind
-	current_kind: ProcedureKind,
-	/// The current procedure scope
+	/// Procedure IDs for precompiled members
+	precompiled_proc_ids: HashMap<*const PrecompiledMember, Vec<u16>>,
+	/// Member and scope for ID
+	member_for_id: Vec<(MemberRef, Option<Scope>)>,
+	/// The current member index
+	current_member_index: usize,
+	/// The current member kind
+	current_kind: MemberKind,
+	/// The current member scope
 	current_scope: Option<Scope>,
 
 	procedures: Vec<ir::Procedure>,
@@ -159,7 +159,7 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 #[derive(Clone, Debug)]
 enum TrackOrderNode {
 	Instrument { channel: MidiChannelArg },
-	Module { proc_index: usize, args: Vec<MidiChannelArg> },
+	Module { member_index: usize, args: Vec<MidiChannelArg> },
 }
 
 #[derive(Clone, Debug)]
@@ -175,9 +175,9 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			signatures: Vec<FullSignature>,
 			stored_widths: HashMap<*const Expression, Width>,
 			callees: Vec<Vec<usize>>,
-			precompiled_callees: Vec<Vec<*const PrecompiledProcedure>>)
+			precompiled_callees: Vec<Vec<*const PrecompiledMember>>)
 			-> CodeGenerator<'ast, 'comp, 'names> {
-		let proc_count = callees.len();
+		let member_count = callees.len();
 		CodeGenerator {
 			names,
 			compiler,
@@ -186,15 +186,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			callees,
 			precompiled_callees,
 
-			live: vec![false; proc_count],
+			live: vec![false; member_count],
 			live_precompiled: HashSet::new(),
-			function_proc_id: vec![0; proc_count],
-			static_proc_id: vec![0; proc_count],
-			dynamic_proc_id: vec![0; proc_count],
+			function_proc_id: vec![0; member_count],
+			static_proc_id: vec![0; member_count],
+			dynamic_proc_id: vec![0; member_count],
 			precompiled_proc_ids: HashMap::new(),
-			proc_for_id: vec![],
-			current_proc_index: 0,
-			current_kind: ProcedureKind::Module,
+			member_for_id: vec![],
+			current_member_index: 0,
+			current_kind: MemberKind::Module,
 			current_scope: None,
 
 			procedures: vec![],
@@ -207,7 +207,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			name_in_cell: HashMap::new(),
 			repetition_depth: 0,
 			module_call: vec![],
-			track_order: vec![vec![]; proc_count],
+			track_order: vec![vec![]; member_count],
 			update_stack: vec![],
 		}
 	}
@@ -224,21 +224,21 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		for &inst in code {
 			let (popped, pushed) = match inst {
 				Instruction::Call(id, ..) => {
-					let (ref proc, scope) = self.proc_for_id[id as usize];
-					let (inputs, outputs) = match &proc.definition {
-						ProcedureDefinition::Declaration { proc_index } => {
-							let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index];
+					let (ref member, scope) = self.member_for_id[id as usize];
+					let (inputs, outputs) = match &member.definition {
+						MemberDefinition::Declaration { member_index } => {
+							let FullSignature { inputs, outputs, .. } = &self.signatures[*member_index];
 							(&inputs[..], &outputs[..])
 						},
-						ProcedureDefinition::Precompiled { proc } => {
-							(proc.inputs(), proc.outputs())
+						MemberDefinition::Precompiled { member } => {
+							(member.inputs(), member.outputs())
 						},
-						ProcedureDefinition::BuiltIn { .. } => {
-							panic!("Call of built-in procedure");
+						MemberDefinition::BuiltIn { .. } => {
+							panic!("Call of built-in member");
 						},
 					};
-					match proc.kind {
-						ProcedureKind::Module => {
+					match member.kind {
+						MemberKind::Module => {
 							if scope == Some(Scope::Static) {
 								let input_count = inputs.iter()
 									.filter(|t| t.scope == Some(Scope::Static)).count();
@@ -249,10 +249,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								(input_count, outputs.len())
 							}
 						},
-						ProcedureKind::Function => {
+						MemberKind::Function => {
 							(inputs.len(), outputs.len())
 						},
-						ProcedureKind::Instrument => {
+						MemberKind::Instrument => {
 							(inputs.len() + 1, inputs.len() + 1)
 						},
 					}
@@ -282,14 +282,14 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
-	fn compute_track_order_inner(&mut self, proc_index: usize, inputs: &Vec<MidiChannelArg>, track_order: &mut Vec<usize>) {
-		for node in self.track_order[proc_index].clone() {
+	fn compute_track_order_inner(&mut self, member_index: usize, inputs: &Vec<MidiChannelArg>, track_order: &mut Vec<usize>) {
+		for node in self.track_order[member_index].clone() {
 			match node {
 				TrackOrderNode::Instrument { channel } => {
 					track_order.push(self.resolve_midi_channel_arg(&channel, inputs));
 				},
-				TrackOrderNode::Module { proc_index, args  } => {
-					self.compute_track_order_inner(proc_index, &args, track_order);
+				TrackOrderNode::Module { member_index, args  } => {
+					self.compute_track_order_inner(member_index, &args, track_order);
 				},
 			}
 		}
@@ -300,28 +300,28 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.propagate_liveness(main_index);
 
 		self.init_proc_id(program);
-		for id in 0..self.proc_for_id.len() {
-			let (ref proc, scope) = self.proc_for_id[id];
-			let proc = match proc.definition {
-				ProcedureDefinition::Declaration { proc_index } => {
-					self.generate_code_for_procedure(program, proc_index, scope)?
+		for id in 0..self.member_for_id.len() {
+			let (ref member, scope) = self.member_for_id[id];
+			let proc = match member.definition {
+				MemberDefinition::Declaration { member_index } => {
+					self.generate_code_for_member(program, member_index, scope)?
 				},
-				ProcedureDefinition::Precompiled { proc } => {
+				MemberDefinition::Precompiled { member } => {
 					let (kind, index) = match scope {
 						None => (ir::ProcedureKind::Function, 0),
 						Some(Scope::Static) => (ir::ProcedureKind::Module { scope: ir::Scope::Static }, 0),
 						Some(Scope::Dynamic) => (ir::ProcedureKind::Module { scope: ir::Scope::Dynamic }, 1),
 					};
 					ir::Procedure {
-						name: proc.name().to_string(),
+						name: member.name().to_string(),
 						kind,
-						inputs: self.make_type_list(proc.inputs().iter().copied(), scope),
-						outputs: self.make_type_list(proc.outputs().iter().copied(), scope),
-						code: proc.instructions()[index].to_vec()
+						inputs: self.make_type_list(member.inputs().iter().copied(), scope),
+						outputs: self.make_type_list(member.outputs().iter().copied(), scope),
+						code: member.instructions()[index].to_vec()
 					}
 				},
-				ProcedureDefinition::BuiltIn { .. } => {
-					panic!("Code generation for built-in procedure");
+				MemberDefinition::BuiltIn { .. } => {
+					panic!("Code generation for built-in member");
 				},
 			};
 			self.procedures.push(proc);
@@ -329,21 +329,21 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.compiler.check_errors()
 	}
 
-	fn generate_code_for_procedure(&mut self,
+	fn generate_code_for_member(&mut self,
 		program: &'ast Program,
-		proc_index: usize,
+		member_index: usize,
 		scope: Option<Scope>,
 	) -> Result<ir::Procedure, CompileError> {
-		let proc = &program.procedures[proc_index];
-		let Procedure { kind, name, inputs, outputs, body, .. } = proc;
-		self.current_proc_index = proc_index;
+		let member = &program.members[member_index];
+		let Member { kind, name, inputs, outputs, body, .. } = member;
+		self.current_member_index = member_index;
 		self.current_kind = *kind;
 		self.current_scope = scope;
 		let proc_kind;
 		let proc_inputs;
 		let proc_outputs;
 		match kind {
-			ProcedureKind::Module => {
+			MemberKind::Module => {
 				if scope == Some(Scope::Static) {
 					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Static };
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
@@ -364,7 +364,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					self.adjust_stack(&stack_adjust[..], self.stack_height);
 				}
 			},
-			ProcedureKind::Function => {
+			MemberKind::Function => {
 				proc_kind = ir::ProcedureKind::Function;
 				proc_inputs = self.make_proc_type_list(inputs, None);
 				proc_outputs = self.make_proc_type_list(outputs, None);
@@ -375,7 +375,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				let stack_adjust = self.stack_adjust_from_outputs(outputs);
 				self.adjust_stack(&stack_adjust[..], self.stack_height);
 			},
-			ProcedureKind::Instrument => {
+			MemberKind::Instrument => {
 				// Extra implicit input for accumulating instrument outputs.
 				let mut real_inputs = inputs.clone();
 				real_inputs.items.push(PatternItem {
@@ -384,7 +384,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					},
 					item_type: type_spec!(dynamic stereo number),
 				});
-				let autokill_key = self.names.autokill_key(proc);
+				let autokill_key = self.names.autokill_key(member);
 				if scope == Some(Scope::Static) {
 					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
@@ -421,35 +421,35 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		})
 	}
 
-	fn propagate_liveness(&mut self, proc_index: usize) {
-		if !self.live[proc_index] {
-			self.live[proc_index] = true;
-			for &callee in &self.callees[proc_index].clone() {
+	fn propagate_liveness(&mut self, member_index: usize) {
+		if !self.live[member_index] {
+			self.live[member_index] = true;
+			for &callee in &self.callees[member_index].clone() {
 				self.propagate_liveness(callee);
 			}
-			for precompiled_callee in &self.precompiled_callees[proc_index] {
+			for precompiled_callee in &self.precompiled_callees[member_index] {
 				self.live_precompiled.insert(*precompiled_callee);
 			}
 		}
 	}
 
-	fn assign_ids(&mut self, program: &Program, pred: &dyn Fn(ProcedureKind, &str) -> bool) {
-		for (proc_index, proc) in program.procedures.iter().enumerate() {
-			if self.live[proc_index] && pred(proc.kind, proc.name.text.as_str()) {
+	fn assign_ids(&mut self, program: &Program, pred: &dyn Fn(MemberKind, &str) -> bool) {
+		for (member_index, member) in program.members.iter().enumerate() {
+			if self.live[member_index] && pred(member.kind, member.name.text.as_str()) {
 				let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
-					proc_id[proc_index] = self.proc_for_id.len() as u16;
-					let proc = ProcedureRef {
-						context: proc.context,
-						kind: proc.kind,
-						definition: ProcedureDefinition::Declaration { proc_index }
+					proc_id[member_index] = self.member_for_id.len() as u16;
+					let member_ref = MemberRef {
+						context: member.context,
+						kind: member.kind,
+						definition: MemberDefinition::Declaration { member_index }
 					};
-					self.proc_for_id.push((proc, scope));
+					self.member_for_id.push((member_ref, scope));
 				};
-				match proc.kind {
-					ProcedureKind::Function => {
+				match member.kind {
+					MemberKind::Function => {
 						push_id(&mut self.function_proc_id, None);
 					},
-					ProcedureKind::Module | ProcedureKind::Instrument => {
+					MemberKind::Module | MemberKind::Instrument => {
 						push_id(&mut self.static_proc_id, Some(Scope::Static));
 						push_id(&mut self.dynamic_proc_id, Some(Scope::Dynamic));
 					},
@@ -459,34 +459,34 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	}
 
 	fn assign_precompiled_ids(&mut self,
-		procs: &'static [PrecompiledProcedure],
-		kind: ProcedureKind,
+		procs: &'static [PrecompiledMember],
+		kind: MemberKind,
 		scopes: &[Option<Scope>]
 	) {
-		for proc in procs {
-			if self.live_precompiled.contains(&(proc as *const PrecompiledProcedure)) {
+		for member in procs {
+			if self.live_precompiled.contains(&(member as *const PrecompiledMember)) {
 				for &scope in scopes {
-					self.precompiled_proc_ids.entry(proc).or_default().push(self.proc_for_id.len() as u16);
-					let proc = ProcedureRef {
-						context: proc.context(),
+					self.precompiled_proc_ids.entry(member).or_default().push(self.member_for_id.len() as u16);
+					let member_ref = MemberRef {
+						context: member.context(),
 						kind: kind,
-						definition: ProcedureDefinition::Precompiled { proc }
+						definition: MemberDefinition::Precompiled { member }
 					};
-					self.proc_for_id.push((proc, scope));
+					self.member_for_id.push((member_ref, scope));
 				};
 			}
 		}
 	}
 
 	fn init_proc_id(&mut self, program: &Program) {
-		// Assign ID to all procedures in this order:
+		// Assign procedure IDs to all members in this order:
 		// main, instruments, modules (except main), functions.
 		self.assign_ids(program, &|_, name| name == "main");
-		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Instrument);
-		self.assign_precompiled_ids(PRECOMPILED_MODULES, ProcedureKind::Module, &[Some(Scope::Static), Some(Scope::Dynamic)]);
-		self.assign_ids(program, &|kind, name| kind == ProcedureKind::Module && name != "main");
-		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, ProcedureKind::Function, &[None]);
-		self.assign_ids(program, &|kind, _| kind == ProcedureKind::Function);
+		self.assign_ids(program, &|kind, _| kind == MemberKind::Instrument);
+		self.assign_precompiled_ids(PRECOMPILED_MODULES, MemberKind::Module, &[Some(Scope::Static), Some(Scope::Dynamic)]);
+		self.assign_ids(program, &|kind, name| kind == MemberKind::Module && name != "main");
+		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, MemberKind::Function, &[None]);
+		self.assign_ids(program, &|kind, _| kind == MemberKind::Function);
 	}
 
 	fn generate_static_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
@@ -681,22 +681,22 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.find_cells(otherwise);
 			},
 			Call { channels, name, args, .. } => {
-				match self.names.lookup_procedure(&name.text) {
-					Some(ProcedureRef { kind, definition, .. }) => {
-						let current_proc_index = self.current_proc_index;
+				match self.names.lookup_member(&name.text) {
+					Some(MemberRef { kind, definition, .. }) => {
+						let current_member_index = self.current_member_index;
 						let convert_midi_channel = |channel: &MidiChannel| -> MidiChannelArg {
 							match channel {
 								&MidiChannel::Value { channel } => MidiChannelArg::Value {
 									channel
 								},
 								MidiChannel::Named { name } => MidiChannelArg::Input {
-									index: self.names.lookup_midi_input(current_proc_index, &name.text).unwrap()
+									index: self.names.lookup_midi_input(current_member_index, &name.text).unwrap()
 								},
 							}
 						};
 
-						use ProcedureKind::*;
-						use ProcedureDefinition::*;
+						use MemberKind::*;
+						use MemberDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
 								if self.repetition_depth > 0 {
@@ -720,14 +720,14 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									_ => panic!("Unknown built-in module"),
 								}
 							},
-							(Module, Precompiled { proc }) => {
-								let inputs = proc.inputs();
+							(Module, Precompiled { member }) => {
+								let inputs = member.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.find_cells(arg);
 									}
 								}
-								let key = *proc as *const PrecompiledProcedure;
+								let key = *member as *const PrecompiledMember;
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs.to_vec(),
 									static_proc_id: self.precompiled_proc_ids[&key][0],
@@ -735,9 +735,9 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									args,
 								});
 							},
-							(Module, Declaration { proc_index }) => {
-								let proc_index = *proc_index;
-								let FullSignature { context, inputs, .. } = &self.signatures[proc_index];
+							(Module, Declaration { member_index }) => {
+								let member_index = *member_index;
+								let FullSignature { context, inputs, .. } = &self.signatures[member_index];
 								let context = *context;
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
@@ -747,14 +747,14 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								}
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs,
-									static_proc_id: self.static_proc_id[proc_index],
+									static_proc_id: self.static_proc_id[member_index],
 									generic_width: self.retrieve_width(exp),
 									args,
 								});
 								if context == Context::Global {
 									let args = channels.iter().map(convert_midi_channel).collect();
-									let node = TrackOrderNode::Module { proc_index, args };
-									self.track_order[current_proc_index].push(node);
+									let node = TrackOrderNode::Module { member_index, args };
+									self.track_order[self.current_member_index].push(node);
 								}
 							},
 							(Function, _) => {
@@ -765,7 +765,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							(Instrument, Declaration { .. }) => {
 								let channel = convert_midi_channel(&channels[0]);
 								let node = TrackOrderNode::Instrument { channel };
-								self.track_order[current_proc_index].push(node);
+								self.track_order[current_member_index].push(node);
 								for arg in args {
 									self.find_cells(arg);
 								}
@@ -773,7 +773,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							(Instrument, _) => panic!("Built-in instrument"),
 						}
 					},
-					None => panic!("Procedure not found"),
+					None => panic!("Member not found"),
 				}
 			},
 			Tuple { elements, ..} => {
@@ -882,7 +882,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						self.emit(code![StackLoad(offset as u16)]);
 					},
 					None => {
-						match self.names.lookup_variable(self.current_proc_index, &name.text) {
+						match self.names.lookup_variable(self.current_member_index, &name.text) {
 							Some(VariableRef::Parameter { index }) => {
 								self.emit(code![Parameter(*index as u16)]);
 							},
@@ -921,10 +921,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.emit(code![StackLoad(2), AndNot, Or, PopNext]);
 			},
 			Call { name, args, .. } => {
-				match self.names.lookup_procedure(&name.text) {
-					Some(ProcedureRef { kind, definition, .. }) => {
-						use ProcedureKind::*;
-						use ProcedureDefinition::*;
+				match self.names.lookup_member(&name.text) {
+					Some(MemberRef { kind, definition, .. }) => {
+						use MemberKind::*;
+						use MemberDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
 								match name.text.as_str() {
@@ -945,26 +945,26 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									_ => panic!("Unknown built-in module"),
 								}
 							},
-							(Module, Precompiled { proc }) => {
-								let inputs = proc.inputs();
+							(Module, Precompiled { member }) => {
+								let inputs = member.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
 									}
 								}
-								let key = *proc as *const PrecompiledProcedure;
+								let key = *member as *const PrecompiledMember;
 								let proc_id = self.precompiled_proc_ids[&key][1];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
-							(Module, Declaration { proc_index }) => {
-								let FullSignature { inputs, .. } = &self.signatures[*proc_index];
+							(Module, Declaration { member_index }) => {
+								let FullSignature { inputs, .. } = &self.signatures[*member_index];
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
 									}
 								}
-								let proc_id = self.dynamic_proc_id[*proc_index];
+								let proc_id = self.dynamic_proc_id[*member_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Function, BuiltIn { code, .. }) => {
@@ -973,26 +973,26 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								}
 								self.emit(code);
 							},
-							(Function, Precompiled { proc }) => {
+							(Function, Precompiled { member }) => {
 								for arg in args {
 									self.generate(arg);
 								}
-								let key = *proc as *const PrecompiledProcedure;
+								let key = *member as *const PrecompiledMember;
 								let proc_id = self.precompiled_proc_ids[&key][0];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
-							(Function, Declaration { proc_index }) => {
+							(Function, Declaration { member_index }) => {
 								for arg in args {
 									self.generate(arg);
 								}
-								let proc_id = self.function_proc_id[*proc_index];
+								let proc_id = self.function_proc_id[*member_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
-							(Instrument, Declaration { proc_index }) => {
-								let static_proc_id = self.static_proc_id[*proc_index];
-								let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
+							(Instrument, Declaration { member_index }) => {
+								let static_proc_id = self.static_proc_id[*member_index];
+								let dynamic_proc_id = self.dynamic_proc_id[*member_index];
 
-								let FullSignature { inputs, outputs, .. } = &self.signatures[*proc_index];
+								let FullSignature { inputs, outputs, .. } = &self.signatures[*member_index];
 								let width = outputs.first().unwrap().width.unwrap();
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								for arg in args {
@@ -1007,7 +1007,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							(Instrument, _) => panic!("Built-in instrument"),
 						}
 					},
-					None => panic!("Procedure not found"),
+					None => panic!("Member not found"),
 				}
 			},
 			Tuple { elements, ..} => {
@@ -1048,13 +1048,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						let Expression::Call { ref name, ref args, .. } = **body else {
 							panic!("Buffer initialization must be a call");
 						};
-						let proc_index = match self.names.lookup_procedure(&name.text) {
-							Some(ProcedureRef { definition: ProcedureDefinition::Declaration { proc_index }, .. }) => proc_index,
+						let member_index = match self.names.lookup_member(&name.text) {
+							Some(MemberRef { definition: MemberDefinition::Declaration { member_index }, .. }) => member_index,
 							_ => panic!("Buffer initialization must be a call"),
 						};
 
-						let static_proc_id = self.static_proc_id[*proc_index];
-						let dynamic_proc_id = self.dynamic_proc_id[*proc_index];
+						let static_proc_id = self.static_proc_id[*member_index];
+						let dynamic_proc_id = self.dynamic_proc_id[*member_index];
 
 						let body_width = self.retrieve_width(body);
 						let buffer_width = self.retrieve_width(exp);

@@ -59,9 +59,9 @@ macro_rules! sig {
 
 pub type BuiltinFunction = (&'static str, Context, Signature<'static>, &'static [Instruction]);
 pub type BuiltinModule = (&'static str, Context, Signature<'static>);
-pub type PrecompiledProcedure = (&'static str, Context, Signature<'static>, &'static [&'static [Instruction]]);
+pub type PrecompiledMember = (&'static str, Context, Signature<'static>, &'static [&'static [Instruction]]);
 
-pub trait PrecompiledProcedureTrait {
+pub trait PrecompiledMemberTrait {
 	fn name(&self) -> &'static str;
 	fn context(&self) -> Context;
 	fn signature(&self) -> &Signature<'static>;
@@ -71,7 +71,7 @@ pub trait PrecompiledProcedureTrait {
 	fn outputs(&self) -> &'static [Type] { self.signature().outputs }
 }
 
-impl PrecompiledProcedureTrait for PrecompiledProcedure {
+impl PrecompiledMemberTrait for PrecompiledMember {
 	fn name(&self) -> &'static str { self.0 }
 	fn context(&self) -> Context { self.1 }
 	fn signature(&self) -> &Signature<'static> { &self.2 }
@@ -115,7 +115,7 @@ pub static BUILTIN_MODULES: &[BuiltinModule] = &[
 	("dyndelay", U, sig!([dynamic generic typeless, dynamic mono number, static mono number] [dynamic generic typeless])),
 ];
 
-pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
+pub static PRECOMPILED_FUNCTIONS: &[PrecompiledMember] = &[
 	("center", U, sig!([stereo] [mono]), &[code![
 		SplitRL,
 		Add,
@@ -129,7 +129,7 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
 	]]),
 ];
 
-pub static PRECOMPILED_MODULES: &[PrecompiledProcedure] = &[
+pub static PRECOMPILED_MODULES: &[PrecompiledMember] = &[
 	("$autokill_mono", N, sig!([mono, mono] [mono]), &[code![
 		Constant(0),
 		CellInit
