@@ -38,6 +38,7 @@ enum EncodedBytecode {
 	Exp2Body,
 	Fdone,
 	Fdone2,
+	Fld1,
 	Fop,
 	Proc,
 	ProcCall,
@@ -147,6 +148,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		Exp2Body => ("exp2_body", None),
 		Fdone => ("fdone", None),
 		Fdone2 => ("fdone2", None),
+		Fld1 => ("fld1", None),
 		Fop => ("fop", Some(arg)),
 		Proc => ("proc", None),
 		ProcCall => ("proc_call", Some(arg)),
@@ -322,9 +324,17 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 			encode(Exp2Body, 0);
 			encode(Fdone, 0);
 		},
-		Instruction::Mlog2 => {
+		Instruction::Log2 => {
+			encode(Fld1, 0);
+			encode_fop(Fyl2x, encode);
+			encode(Fdone, 0);
+		},
+		Instruction::Pow => {
 			encode(Fputnext, 0);
 			encode_fop(Fyl2x, encode);
+			encode(Fdone, 0);
+			encode_fop(Frndint, encode);
+			encode(Exp2Body, 0);
 			encode(Fdone, 0);
 		},
 		Instruction::Sin => {

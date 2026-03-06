@@ -54,7 +54,8 @@ pub enum Instruction {
 	Atan2,
 	Cos,
 	Exp2,
-	Mlog2,
+	Log2,
+	Pow,
 	Sin,
 	SinCos,
 	Sqrt,
@@ -134,8 +135,8 @@ impl Instruction {
 			Eq | Greater | GreaterEq | Less | LessEq | Neq => (2, 1),
 			Ceil | Floor | Round | Trunc => (1, 1),
 
-			Atan2 | Mlog2 => (2, 1),
-			Cos | Exp2 | Sin | Sqrt | Tan => (1, 1),
+			Atan2 | Pow => (2, 1),
+			Cos | Exp2 | Log2 | Sin | Sqrt | Tan => (1, 1),
 			SinCos => (1, 2),
 
 			Left | Right | Expand(..) => (1, 1),

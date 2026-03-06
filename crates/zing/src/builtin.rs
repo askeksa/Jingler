@@ -94,9 +94,9 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 	("key",        N, sig!([] [mono]),                    code![ReadNoteProperty(Key)]),
 	("left",       U, sig!([stereo] [mono]),              code![Left]),
 	("length",     U, sig!([generic buffer] [mono]),      code![BufferLength]),
+	("log2",       U, sig!([mono] [mono]),                code![Log2]),
 	("max",        U, sig!([generic, generic] [generic]), code![Max]),
 	("min",        U, sig!([generic, generic] [generic]), code![Min]),
-	("mlog2",      U, sig!([mono, mono] [mono]),          code![Mlog2]),
 	("random",     U, sig!([mono, mono] [mono]),          code![Random, Constant(0x30000000), Mul]),
 	("right",      U, sig!([stereo] [mono]),              code![Right]),
 	("round",      U, sig!([generic] [generic]),          code![Round]),
@@ -121,6 +121,11 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledProcedure] = &[
 		Add,
 		Constant(0.5f32.to_bits()),
 		Mul
+	]]),
+	("pow", U, sig!([mono, mono] [mono]), &[code![
+		StackLoad(1),
+		Pow,
+		PopNext
 	]]),
 ];
 
