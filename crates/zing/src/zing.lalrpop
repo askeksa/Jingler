@@ -21,12 +21,12 @@ String: String = {
 };
 
 Parameter: Parameter = {
-	"parameter" <name:Id> <min:Num> "to" <max:Num> <default:ParameterDefault> => Parameter {<>},
+	"parameter" <name:Id> <min:SignedNum> "to" <max:SignedNum> <default:ParameterDefault> => Parameter {<>},
 };
 
 ParameterDefault: Option<f64> = {
 	=> None,
-	"=" <value:Num> => Some(value),
+	"=" <value:SignedNum> => Some(value),
 };
 
 Procedure: Procedure = {
@@ -184,6 +184,11 @@ MidiParam: Id = <name:Id> "::" => name;
 MidiArg: MidiChannel = {
 	<value:Uint> "::" => MidiChannel::Value { channel: value as usize },
 	<name:Id> "::" => MidiChannel::Named { name },
+};
+
+SignedNum: f64 = {
+	"-" <num:Num> => -num,
+	<num:Num> => num,
 };
 
 Num: f64 = {
