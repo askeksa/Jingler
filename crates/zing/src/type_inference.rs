@@ -402,8 +402,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			BufferIndex { exp, index, .. } => self.infer_buffer_index(exp, index, loc),
 			For { name, count, combinator, body, .. }
 				=> self.infer_for(name, count, combinator, body, loc),
-			BufferInit { length, buffer_type, body, .. }
-				=> self.infer_buffer_init(length, buffer_type, body, loc),
+			BufferInit { length, width, body, .. }
+				=> self.infer_buffer_init(length, width, body, loc),
 			BufferLiteral { elements, .. } => self.infer_buffer_literal(elements, loc),
 			Expand { exp: inner, .. } => {
 				// We only get here during subsequent inference passes triggered when
@@ -687,14 +687,9 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 
 	fn infer_buffer_init(&mut self,
 			length: &mut Expression,
-			buffer_type: &mut Type,
+			width: &mut Option<Width>,
 			body: &mut Expression,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
-		match buffer_type.scope {
-			Some(Scope::Dynamic) => self.compiler.report_error(loc, "Dynamic buffer initialization is not supported."),
-			_ => buffer_type.scope = Some(Scope::Static),
-		}
-
 		let target = match body {
 			Expression::Call { name, .. } => {
 				match self.names.lookup_member(&name.text) {
@@ -724,9 +719,9 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 		let body_operand = self.expect_single(body, "buffer initialization");
 		let buffer_sig = sig!([static mono number, dynamic generic number] [static generic buffer]);
 		let mut results = self.check_signature(&buffer_sig, &[length_operand, body_operand], &[length, body], loc);
-		match (buffer_type.width, body_operand.width()) {
-			(None, Some(width)) => {
-				buffer_type.width = Some(width);
+		match (*width, body_operand.width()) {
+			(None, Some(body_width)) => {
+				*width = Some(body_width);
 				(results, None)
 			},
 			(Some(buffer_width), Some(body_width)) if buffer_width == body_width => {
@@ -757,8 +752,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			.map(|e| self.expect_single(e, "element of buffer literal"))
 			.collect();
 
-		let inputs = vec![type_spec!(generic number); elements.len()];
-		let outputs = [type_spec!(generic buffer)];
+		let inputs = vec![type_spec!(static generic number); elements.len()];
+		let outputs = [type_spec!(static generic buffer)];
 		let sig = Signature {
 			inputs: &inputs,
 			outputs: &outputs,

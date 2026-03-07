@@ -152,7 +152,7 @@ pub enum Expression {
 	BufferInit {
 		before: Pos,
 		length: Box<Expression>,
-		buffer_type: Type,
+		width: Option<Width>,
 		body: Box<Expression>,
 	},
 	BufferLiteral { before: Pos, elements: Vec<Expression>, after: Pos },

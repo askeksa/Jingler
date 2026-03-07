@@ -296,10 +296,13 @@ impl Expression {
 				write!(f, " {} ", combinator)?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},
-			BufferInit { length, buffer_type, body, .. } => {
+			BufferInit { length, width, body, .. } => {
 				write!(f, "for ")?;
 				length.fmt_with_precedence(f, Precedence::Expression)?;
-				write!(f, " {} ", buffer_type)?;
+				if let Some(width) = width {
+					write!(f, " {}", width)?;
+				}
+				write!(f, " buffer ")?;
 				body.fmt_with_precedence(f, Precedence::Expression)?;
 			},
 			BufferLiteral { elements, .. } => {

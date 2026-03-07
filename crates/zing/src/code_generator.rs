@@ -802,11 +802,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				};
 				self.module_call.push(module_call);
 			},
-			BufferInit { buffer_type, .. } => {
+			BufferInit { width, .. } => {
 				self.module_call.push(ModuleCall::Init {
 					kind: StateKind::Cell,
 					value: exp,
-					width: buffer_type.width.unwrap(),
+					width: width.unwrap(),
 				});
 			},
 			BufferLiteral { elements, .. } => {
