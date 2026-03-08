@@ -19,7 +19,6 @@ use rodio::{OutputStream, Sink};
 struct PlayOptions {
 	sample_rate: f32,
 	duration: Duration,
-	run: bool,
 	play: bool,
 	dump_instructions: bool,
 	byte_index: bool,
@@ -34,8 +33,7 @@ impl Default for PlayOptions {
 		PlayOptions {
 			sample_rate: 44100.0,
 			duration: Duration::from_secs(1),
-			run: true,
-			play: true,
+			play: false,
 			dump_instructions: false,
 			byte_index: false,
 			write_wav: None,
@@ -107,7 +105,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 						println!();
 					}
 				}
-				if options.run {
+				if options.play || options.write_wav.is_some() {
 					let mut runtime = NativeRuntime::new();
 					if let Err(e) = runtime.load_program(program, options.sample_rate) {
 						println!("Runtime error: {}", e);
@@ -173,8 +171,7 @@ fn main() {
 		(@arg SAMPLE_RATE: -s --samplerate +takes_value "Sample rate to play at.")
 		(@arg DURATION: -d --duration +takes_value "Duration of audio, in seconds.")
 		(@arg WAV_FILE: -w --writewav +takes_value "Write WAV file.")
-		(@arg COMPILE_ONLY: -c --compileonly "Don't run generated audio code.")
-		(@arg SILENT: -n --noaudio "Don't play audio.")
+		(@arg PLAY: -p --play "Play audio.")
 		(@arg DUMP: -g --dump "Dump generated code.")
 		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
 		(@arg BYTE_INDEX: -b --byteindex "Use separate index byte for constant instructions.")
@@ -206,11 +203,8 @@ fn main() {
 			},
 		}
 	}
-	if matches.is_present("COMPILE_ONLY") {
-		options.run = false;
-	}
-	if matches.is_present("SILENT") {
-		options.play = false;
+	if matches.is_present("PLAY") {
+		options.play = true;
 	}
 	if matches.is_present("DUMP") {
 		options.dump_instructions = true;
