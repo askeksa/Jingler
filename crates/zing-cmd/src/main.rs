@@ -10,39 +10,59 @@ use std::sync::mpsc::channel;
 use std::time::{Duration};
 
 use chrono::Local;
-use clap::clap_app;
+use clap::Parser;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
 
+#[derive(Parser)]
+#[command(version = "0.3.0")]
 struct PlayOptions {
-	sample_rate: f32,
-	duration: Duration,
+	/// Zing file to play.
+	zing_file: String,
+
+	/// Stay resident and reload file when it changes.
+	#[arg(short, long)]
+	resident: bool,
+
+	/// Play audio.
+	#[arg(short, long)]
 	play: bool,
-	dump_instructions: bool,
+
+	/// Dump generated code.
+	#[arg(short, long)]
+	dump: bool,
+
+	/// Use separate index byte for constant instructions.
+	#[arg(short, long)]
 	byte_index: bool,
+
+	/// Sample rate to play at.
+	#[arg(short, long, value_name = "SAMPLE_RATE", default_value_t = 44100.0)]
+	sample_rate: f32,
+
+	/// Duration of audio, in seconds.
+	#[arg(short, long, value_name = "DURATION", default_value_t = 1.0)]
+	duration: f32,
+
+	/// Write WAV file.
+	#[arg(short, long, value_name = "WAV_FILE")]
 	write_wav: Option<String>,
-	write_source: Option<String>,
+
+	/// Output source file for music.
+	#[arg(short, long, value_name = "OUTPUT_FILE")]
+	output: Option<String>,
+
+	/// Path to jingler.asm file.
+	#[arg(short, long, value_name = "JINGLER_ASM", default_value = "jingler.asm")]
 	jingler_asm_path: String,
-	parameter_quantization_levels: u16,
+
+	/// Number of quantization levels for parameters.
+	#[arg(short, long, value_name = "QUANTIZATION", default_value_t = 16)]
+	quantization_levels: u16,
 }
 
-impl Default for PlayOptions {
-	fn default() -> Self {
-		PlayOptions {
-			sample_rate: 44100.0,
-			duration: Duration::from_secs(1),
-			play: false,
-			dump_instructions: false,
-			byte_index: false,
-			write_wav: None,
-			write_source: None,
-			jingler_asm_path: "jingler.asm".to_string(),
-			parameter_quantization_levels: 16,
-		}
-	}
-}
 
 fn write_wav(filename: &str, sample_rate: f32, data: &[f32]) -> Result<(), hound::Error> {
 	let spec = WavSpec {
@@ -69,14 +89,15 @@ fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
 	Ok(())
 }
 
-fn play_file(filename: &str, options: &PlayOptions) {
-	match fs::read_to_string(&filename) {
+fn play_file(options: &PlayOptions) {
+	let filename = &options.zing_file;
+	match fs::read_to_string(filename) {
 		Ok(s) => match compiler::Compiler::new(filename.to_string(), s).compile() {
 			Ok(program) => {
-				if let Some(filename) = &options.write_source {
+				if let Some(filename) = &options.output {
 					match File::create(filename) {
 						Ok(mut file) => {
-							let parameter_quantization = 1.0 / (options.parameter_quantization_levels as f32);
+							let parameter_quantization = 1.0 / (options.quantization_levels as f32);
 							if let Err(e) = encode_bytecodes_source(
 									&program, &options.jingler_asm_path,
 									options.sample_rate, !options.byte_index, parameter_quantization,
@@ -96,7 +117,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 					}
 					println!();
 				}
-				if options.dump_instructions {
+				if options.dump {
 					for (p, proc) in program.procedures.iter().enumerate() {
 						println!("{:2}: {}", p, proc);
 						for (i, inst) in proc.code.iter().enumerate() {
@@ -110,7 +131,7 @@ fn play_file(filename: &str, options: &PlayOptions) {
 					if let Err(e) = runtime.load_program(program, options.sample_rate) {
 						println!("Runtime error: {}", e);
 					} else {
-						let n_samples = (options.duration.as_secs_f32() * options.sample_rate) as usize;
+						let n_samples = (options.duration * options.sample_rate) as usize;
 						let output = (0..n_samples)
 							.map(|_| runtime.next_sample())
 							.flatten()
@@ -143,18 +164,19 @@ fn play_file(filename: &str, options: &PlayOptions) {
 	}
 }
 
-fn play_file_resident(filename: &str, options: &PlayOptions) -> Result<(), Box<dyn Error>> {
+fn play_file_resident(options: &PlayOptions) -> Result<(), Box<dyn Error>> {
+	let filename = &options.zing_file;
 	let (tx, rx) = channel();
 	let mut watcher = watcher(tx, Duration::from_secs_f32(0.1))?;
 	watcher.watch(filename, RecursiveMode::NonRecursive)?;
 
-	play_file(filename, options);
+	play_file(options);
 
 	loop {
 		match rx.recv()? {
 			DebouncedEvent::Write(_) => {
 				println!("Reloading '{}' at {}", filename, Local::now().to_rfc2822());
-				play_file(filename, options);
+				play_file(options);
 			},
 			DebouncedEvent::Error(e, _) => {
 				Err(e)?;
@@ -165,78 +187,13 @@ fn play_file_resident(filename: &str, options: &PlayOptions) -> Result<(), Box<d
 }
 
 fn main() {
-	let matches = clap_app!(zing =>
-		(version: "0.3.0")
-		(@arg ZING: +required "Zing file to play.")
-		(@arg SAMPLE_RATE: -s --samplerate +takes_value "Sample rate to play at.")
-		(@arg DURATION: -d --duration +takes_value "Duration of audio, in seconds.")
-		(@arg WAV_FILE: -w --writewav +takes_value "Write WAV file.")
-		(@arg PLAY: -p --play "Play audio.")
-		(@arg DUMP: -g --dump "Dump generated code.")
-		(@arg RESIDENT: -r --resident "Stay resident and reload file when it changes.")
-		(@arg BYTE_INDEX: -b --byteindex "Use separate index byte for constant instructions.")
-		(@arg OUTPUT: -o --output +takes_value "Output source file for music.")
-		(@arg JINGLER_ASM: -j --jinglerasm +takes_value "Path to jingler.asm file.")
-		(@arg QUANTIZATION: -q --quantization +takes_value "Number of quantization levels for parameters.")
-	).get_matches();
+	let options = PlayOptions::parse();
 
-	let zing_filename = matches.value_of("ZING").unwrap();
-
-	let mut options = PlayOptions::default();
-	if let Some(sample_rate) = matches.value_of("SAMPLE_RATE") {
-		match sample_rate.parse::<f32>() {
-			Ok(sample_rate) => {
-				options.sample_rate = sample_rate;
-			},
-			Err(_) => {
-				println!("Invalid sample rate: {}", sample_rate);
-			},
-		}
-	}
-	if let Some(duration) = matches.value_of("DURATION") {
-		match duration.parse::<f32>() {
-			Ok(duration) => {
-				options.duration = Duration::from_secs_f32(duration);
-			},
-			Err(_) => {
-				println!("Invalid duration: {}", duration);
-			},
-		}
-	}
-	if matches.is_present("PLAY") {
-		options.play = true;
-	}
-	if matches.is_present("DUMP") {
-		options.dump_instructions = true;
-	}
-	if matches.is_present("BYTE_INDEX") {
-		options.byte_index = true;
-	}
-	if let Some(wav_filename) = matches.value_of("WAV_FILE") {
-		options.write_wav = Some(wav_filename.to_string());
-	}
-	if let Some(filename) = matches.value_of("OUTPUT") {
-		options.write_source = Some(filename.to_string());
-	}
-	if let Some(jingler_asm_path) = matches.value_of("JINGLER_ASM") {
-		options.jingler_asm_path = jingler_asm_path.to_string();
-	}
-	if let Some(q) = matches.value_of("QUANTIZATION") {
-		match q.parse::<u16>() {
-			Ok(q) => {
-				options.parameter_quantization_levels = q;
-			},
-			Err(_) => {
-				println!("Invalid quantization: {}", q);
-			},
-		}
-	}
-
-	if matches.is_present("RESIDENT") {
-		if let Err(e) = play_file_resident(zing_filename, &options) {
-			println!("Error watching file '{}': {}", zing_filename, e);
+	if options.resident {
+		if let Err(e) = play_file_resident(&options) {
+			println!("Error watching file '{}': {}", options.zing_file, e);
 		}
 	} else {
-		play_file(zing_filename, &options);
+		play_file(&options);
 	}
 }

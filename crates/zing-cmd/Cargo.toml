@@ -7,7 +7,7 @@ edition.workspace = true
 
 [dependencies]
 chrono = "0.4.11"
-clap = "2.33.0"
+clap = { version = "4.5.60", features = ["derive"] }
 hound = "3.4.0"
 notify = "4.0.15"
 rodio = "0.20.1"
