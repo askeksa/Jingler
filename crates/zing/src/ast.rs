@@ -178,7 +178,7 @@ pub struct BinOp {
 
 #[derive(Clone, Copy, Debug)]
 pub enum BinOpKind {
-	Add, Sub, Mul, Div, And, Or, Xor, Eq, Neq, Less, LessEq, Greater, GreaterEq,
+	Add, Sub, AddSub, Mul, Div, And, Or, Xor, Eq, Neq, Less, LessEq, Greater, GreaterEq,
 }
 
 #[derive(Clone, Debug)]

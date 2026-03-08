@@ -225,6 +225,7 @@ impl OperatorSemantics for BinOpKind {
 		match self {
 			Add       => &sig!([generic number, generic number] [generic number]),
 			Sub       => &sig!([generic number, generic number] [generic number]),
+			AddSub    => &sig!([stereo number, stereo number] [stereo number]),
 			Mul       => &sig!([generic number, generic number] [generic number]),
 			Div       => &sig!([generic number, generic number] [generic number]),
 			And       => &sig!([generic bool, generic bool] [generic bool]),
@@ -244,6 +245,7 @@ impl OperatorSemantics for BinOpKind {
 		match self {
 			Add       => code![Add],
 			Sub       => code![Sub],
+			AddSub    => code![AddSub],
 			Mul       => code![Mul],
 			Div       => code![Div],
 			And       => code![And],

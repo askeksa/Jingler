@@ -134,6 +134,7 @@ AdditiveExpression = BinOpLevel<AdditiveOp, MultiplicativeExpression>;
 AdditiveOp: BinOpKind = {
 	"+" => BinOpKind::Add,
 	"-" => BinOpKind::Sub,
+	"-+" => BinOpKind::AddSub,
 };
 
 MultiplicativeExpression = BinOpLevel<MultiplicativeOp, UnaryExpression>;

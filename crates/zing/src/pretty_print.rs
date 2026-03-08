@@ -185,7 +185,7 @@ impl BinOpKind {
 			Xor => Precedence::Xor,
 			And => Precedence::And,
 			Eq | Neq | Less | LessEq | Greater | GreaterEq => Precedence::Compare,
-			Add | Sub => Precedence::Additive,
+			Add | Sub | AddSub => Precedence::Additive,
 			Mul | Div => Precedence::Multiplicative,
 		}
 	}
@@ -219,6 +219,7 @@ impl Display for BinOpKind {
 		match self {
 			Add => "+",
 			Sub => "-",
+			AddSub => "-+",
 			Mul => "*",
 			Div => "/",
 			And => "&",
