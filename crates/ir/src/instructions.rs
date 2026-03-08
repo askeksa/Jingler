@@ -2,6 +2,8 @@
 use std::f32;
 use std::fmt::{Display, Error, Formatter};
 
+use serde::{Deserialize, Serialize};
+
 use crate::program::Width;
 
 #[macro_export]
@@ -16,7 +18,7 @@ macro_rules! code {
 	}
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Instruction {
 	// Constants
 	Constant(u32),
@@ -115,7 +117,7 @@ pub enum Instruction {
 	GmDlsSample,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum NoteProperty {
 	Gate,
 	Key,

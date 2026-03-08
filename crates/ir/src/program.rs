@@ -1,8 +1,10 @@
 use std::fmt::{Display, Error, Formatter};
 
+use serde::{Deserialize, Serialize};
+
 use crate::instructions::Instruction;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Program {
 	// Parameters
 	pub parameters: Vec<Parameter>,
@@ -16,7 +18,7 @@ pub struct Program {
 	pub track_order: Vec<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Parameter {
 	pub name: String,
 	pub min: f32,
@@ -24,7 +26,7 @@ pub struct Parameter {
 	pub default: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Procedure {
 	pub name: String,
 	pub kind: ProcedureKind,
@@ -33,33 +35,33 @@ pub struct Procedure {
 	pub code: Vec<Instruction>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ProcedureKind {
 	Function,
 	Module { scope: Scope },
 	Instrument { scope: Scope },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Scope {
 	Static,
 	Dynamic,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Width {
 	Mono,
 	Stereo,
 	Generic,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ValueType {
 	Number,
 	Buffer,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Type {
 	pub width: Width,
 	pub value_type: ValueType,

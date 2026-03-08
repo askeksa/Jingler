@@ -1,0 +1,16 @@
+[package]
+name = "plugin"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+bincode = "1"
+
+ir = { path = "../ir" }
+runtime = { path = "../runtime" }

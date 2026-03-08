@@ -2,6 +2,7 @@
 members = [
     "crates/convert",
     "crates/ir",
+    "crates/plugin",
     "crates/runtime",
     "crates/zing",
     "crates/zing-cmd",
