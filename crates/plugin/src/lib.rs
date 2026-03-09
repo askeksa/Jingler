@@ -291,7 +291,7 @@ impl Plugin for JinglerPlugin {
 }
 
 impl Vst3Plugin for JinglerPlugin {
-	const VST3_CLASS_ID: [u8; 16] = *b"JinglerNetPlugin";
+	const VST3_CLASS_ID: [u8; 16] = *b"JinglerVstPlugin";
 	const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
 		&[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
