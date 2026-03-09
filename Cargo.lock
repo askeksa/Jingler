@@ -3965,6 +3965,7 @@ dependencies = [
 name = "zing-cmd"
 version = "0.3.0"
 dependencies = [
+ "bincode",
  "chrono",
  "clap",
  "hound",

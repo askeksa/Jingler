@@ -6,8 +6,11 @@ use zing::compiler;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
+use std::net::TcpStream;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
+
+use std::io::Write;
 
 use chrono::Local;
 use clap::Parser;
@@ -15,6 +18,8 @@ use hound::{SampleFormat, WavSpec, WavWriter};
 use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
+
+const CONNECT_ADDR: &str = "127.0.0.1:26127";
 
 #[derive(Parser)]
 #[command(version = "0.3.0")]
@@ -29,6 +34,10 @@ struct PlayOptions {
 	/// Play audio.
 	#[arg(short, long)]
 	play: bool,
+
+	/// Send the program to a listening plugin.
+	#[arg(short, long)]
+	connect: bool,
 
 	/// Dump generated code.
 	#[arg(short, long)]
@@ -89,6 +98,17 @@ fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
 	Ok(())
 }
 
+fn send_program(program: &ir::Program) -> Result<(), Box<dyn Error>> {
+	let addr = CONNECT_ADDR;
+	let mut stream = TcpStream::connect(addr)?;
+	let data = bincode::serialize(program)?;
+	let len = data.len() as u32;
+	stream.write_all(&len.to_le_bytes())?;
+	stream.write_all(&data)?;
+	println!("Sent program to {} ({} bytes)", addr, data.len());
+	Ok(())
+}
+
 fn play_file(options: &PlayOptions) {
 	let filename = &options.zing_file;
 	match fs::read_to_string(filename) {
@@ -116,6 +136,11 @@ fn play_file(options: &PlayOptions) {
 						print!(" {}", channel);
 					}
 					println!();
+				}
+				if options.connect {
+					if let Err(e) = send_program(&program) {
+						println!("Error sending program: {}", e);
+					}
 				}
 				if options.dump {
 					for (p, proc) in program.procedures.iter().enumerate() {
