@@ -22,7 +22,7 @@ use rodio::{OutputStream, Sink};
 const CONNECT_ADDR: &str = "127.0.0.1:26127";
 
 #[derive(Parser)]
-#[command(version = "0.3.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct PlayOptions {
 	/// Zing file to play.
 	zing_file: String,

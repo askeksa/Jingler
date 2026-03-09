@@ -645,7 +645,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "convert"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "roxmltree",
  "zip",
@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2177,7 +2177,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "plugin"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "ir",
@@ -2442,7 +2442,7 @@ checksum = "3cd14fd5e3b777a7422cca79358c57a8f6e3a703d9ac187448d0daf220c2407f"
 
 [[package]]
 name = "runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -3954,7 +3954,7 @@ dependencies = [
 
 [[package]]
 name = "zing"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ir",
  "lalrpop",
@@ -3963,7 +3963,7 @@ dependencies = [
 
 [[package]]
 name = "zing-cmd"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -3978,7 +3978,7 @@ dependencies = [
 
 [[package]]
 name = "zing-vst"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ir",
  "notify",
