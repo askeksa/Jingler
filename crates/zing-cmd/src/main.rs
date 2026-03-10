@@ -31,45 +31,45 @@ struct PlayOptions {
 	#[arg(short, long)]
 	resident: bool,
 
-	/// Play audio.
-	#[arg(short, long)]
-	play: bool,
-
-	/// Send the program to a listening plugin.
-	#[arg(short, long)]
-	connect: bool,
-
 	/// Dump generated code.
-	#[arg(short, long)]
+	#[arg(short, long, help_heading = "Code output")]
 	dump: bool,
 
+	/// Send the program to a listening plugin.
+	#[arg(short, long, help_heading = "Code output")]
+	connect: bool,
+
+	/// Output source file for music.
+	#[arg(short, long, value_name = "OUTPUT_FILE", help_heading = "Code output")]
+	output: Option<String>,
+
+	/// Play audio.
+	#[arg(short, long, help_heading = "Audio output")]
+	play: bool,
+
+	/// Write WAV file.
+	#[arg(short, long, value_name = "WAV_FILE", help_heading = "Audio output")]
+	write_wav: Option<String>,
+
+	/// Path to jingler.asm file.
+	#[arg(short, long, value_name = "JINGLER_ASM", default_value = "jingler.asm", help_heading = "Source output options")]
+	jingler_asm_path: String,
+
 	/// Use separate index byte for constant instructions.
-	#[arg(short, long)]
+	#[arg(short, long, help_heading = "Source output options")]
 	byte_index: bool,
 
+	/// Number of quantization levels for parameters.
+	#[arg(short, long, value_name = "QUANTIZATION", default_value_t = 16, help_heading = "Source output options")]
+	quantization_levels: u16,
+
 	/// Sample rate to play at.
-	#[arg(short, long, value_name = "SAMPLE_RATE", default_value_t = 44100.0)]
+	#[arg(short, long, value_name = "SAMPLE_RATE", default_value_t = 44100.0, help_heading = "Audio output options")]
 	sample_rate: f32,
 
 	/// Duration of audio, in seconds.
-	#[arg(short, long, value_name = "DURATION", default_value_t = 1.0)]
+	#[arg(short, long, value_name = "DURATION", default_value_t = 1.0, help_heading = "Audio output options")]
 	duration: f32,
-
-	/// Write WAV file.
-	#[arg(short, long, value_name = "WAV_FILE")]
-	write_wav: Option<String>,
-
-	/// Output source file for music.
-	#[arg(short, long, value_name = "OUTPUT_FILE")]
-	output: Option<String>,
-
-	/// Path to jingler.asm file.
-	#[arg(short, long, value_name = "JINGLER_ASM", default_value = "jingler.asm")]
-	jingler_asm_path: String,
-
-	/// Number of quantization levels for parameters.
-	#[arg(short, long, value_name = "QUANTIZATION", default_value_t = 16)]
-	quantization_levels: u16,
 }
 
 
