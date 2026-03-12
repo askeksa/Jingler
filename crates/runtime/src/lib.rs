@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::native::NativeRuntime;
 
 pub trait JinglerRuntime: Send {
-	fn load_program(&mut self, program: ir::Program, sample_rate: f32) -> Result<()>;
+	fn load_program(&mut self, program: &ir::Program, sample_rate: f32) -> Result<()>;
 	fn unload_program(&mut self);
 
 	fn reset(&mut self);

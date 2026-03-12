@@ -34,10 +34,10 @@ impl NativeRuntime {
 }
 
 impl JinglerRuntime for NativeRuntime {
-	fn load_program(&mut self, program: ir::Program, sample_rate: f32) -> Result<()> {
+	fn load_program(&mut self, program: &ir::Program, sample_rate: f32) -> Result<()> {
 		self.unload_program();
 
-		let (bytecodes, constants, parameter_offset) = ir::encode::encode_bytecodes_binary(&program, sample_rate)?;
+		let (bytecodes, constants, parameter_offset) = ir::encode::encode_bytecodes_binary(program, sample_rate)?;
 
 		#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 		unsafe {
@@ -47,7 +47,7 @@ impl JinglerRuntime for NativeRuntime {
 		}
 
 		self.program = Some(NativeProgram {
-			program,
+			program: program.clone(),
 			constants,
 			parameter_offset,
 		});

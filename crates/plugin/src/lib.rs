@@ -152,12 +152,11 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 // ─── Plugin implementation ────────────────────────────────────────────────────
 
 impl JinglerPlugin {
-	fn load_program(&mut self, program: ir::Program) {
-		self.program = Some(program);
-		let program = self.program.as_ref().unwrap();
+	fn load_program_if_present(&mut self) {
+		let Some(program) = &self.program else { return; };
 		self.runtime.unload_program();
 		self.zing_params = program.parameters.clone();
-		self.program_active = match self.runtime.load_program(program.clone(), self.sample_rate) {
+		self.program_active = match self.runtime.load_program(program, self.sample_rate) {
 			Ok(_) => true,
 			Err(e) => {
 				nih_error!("Jingler: runtime error: {}", e);
@@ -229,9 +228,7 @@ impl Plugin for JinglerPlugin {
 		});
 
 		// If a program was already loaded, reload it at the new sample rate.
-		if let Some(program) = &self.program {
-			self.load_program(program.clone());
-		}
+		self.load_program_if_present();
 
 		true
 	}
@@ -251,7 +248,8 @@ impl Plugin for JinglerPlugin {
 		// Use try_lock so the audio thread never blocks waiting for the listener.
 		let new_program = self.pending_program.try_lock().ok().and_then(|mut g| g.take());
 		if let Some(program) = new_program {
-			self.load_program(program);
+			self.program = Some(program);
+			self.load_program_if_present();
 		}
 
 		// Push normalised (0–1) parameter values to the runtime.
@@ -271,8 +269,8 @@ impl Plugin for JinglerPlugin {
 					Some(ref event) if event.timing() <= sample_id as u32 => {
 						match *event {
 							NoteEvent::NoteOn { channel, note, velocity, .. } => {
-								if !self.program_active && let Some(program) = &self.program {
-									self.load_program(program.clone());
+								if !self.program_active {
+									self.load_program_if_present();
 								}
 								self.runtime.note_on(channel, note, (velocity * 127.0) as u8);
 							}

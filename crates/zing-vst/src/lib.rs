@@ -106,7 +106,7 @@ impl ZingPlugin {
 	}
 
 	fn init_program(&mut self, program: ir::Program) {
-		match self.runtime.load_program(program.clone(), self.sample_rate) {
+		match self.runtime.load_program(&program, self.sample_rate) {
 			Ok(_) => self.program = Some(program),
 			Err(e) => {
 				let message = format!("Runtime error: {}", e);

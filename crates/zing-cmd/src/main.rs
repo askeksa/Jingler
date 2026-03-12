@@ -156,7 +156,7 @@ fn play_file(options: &PlayOptions) {
 				}
 				if options.play || options.write_wav.is_some() {
 					let mut runtime = default_jingler_runtime();
-					if let Err(e) = runtime.load_program(program, options.sample_rate) {
+					if let Err(e) = runtime.load_program(&program, options.sample_rate) {
 						println!("Runtime error: {}", e);
 					} else {
 						let n_samples = (options.duration * options.sample_rate) as usize;
