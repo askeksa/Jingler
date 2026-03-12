@@ -179,6 +179,10 @@ impl Names {
 			member_index: usize, name: &Id, var_ref: VariableRef) {
 		if name.text == "_" { return; }
 		self.variables[member_index].entry(name.text.clone()).and_modify(|existing| {
+			if let (VariableRef::For { .. }, VariableRef::For { .. }) = (&existing, &var_ref) {
+				// Different repetition variables in the same body can have the same name.
+				return;
+			}
 			compiler.report_error(name, format!("Duplicate definition of '{}'.", name));
 			let member = &program.members[member_index];
 			let loc: &dyn Location = match existing {
