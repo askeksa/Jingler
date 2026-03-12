@@ -1,4 +1,3 @@
-**/target
 **/.DS_Store
 **/*.wav
 **/test_output.txt
@@ -8,4 +7,5 @@ runtime/*.exe
 runtime/*.html
 runtime/reuse.txt
 test/actual.asm
-t
+target*
+/.*
