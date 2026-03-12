@@ -8,7 +8,7 @@ use nih_plug::prelude::*;
 use runtime::{JinglerRuntime, NativeRuntime};
 
 const NUM_PARAMS: usize = 15;
-const LISTEN_ADDR: &str = "localhost:26127";
+const LISTEN_ADDR: &str = "0.0.0.0:26127";
 /// Sanity cap on incoming serialised program size to prevent OOM from rogue senders.
 const MAX_PROGRAM_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
