@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
 use nih_plug::prelude::*;
-use runtime::{JinglerRuntime, NativeRuntime};
+use runtime::{JinglerRuntime, default_jingler_runtime};
 
 const NUM_PARAMS: usize = 15;
 const LISTEN_ADDR: &str = "0.0.0.0:26127";
@@ -79,7 +79,7 @@ struct JinglerPlugin {
 	params: Arc<JinglerParams>,
 	/// Parameter metadata from the currently loaded program. Audio-thread only.
 	zing_params: Vec<ir::Parameter>,
-	runtime: NativeRuntime,
+	runtime: Box<dyn JinglerRuntime>,
 	/// Stored so the program can be reloaded when the sample rate changes.
 	program: Option<ir::Program>,
 	/// Shared with the global listener thread; checked each audio callback.
@@ -92,7 +92,7 @@ impl Default for JinglerPlugin {
 		Self {
 			params: Arc::new(JinglerParams::default()),
 			zing_params: vec![],
-			runtime: NativeRuntime::new(),
+			runtime: default_jingler_runtime(),
 			program: None,
 			pending_program: global_pending(),
 			sample_rate: 44100.0,

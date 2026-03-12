@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
-use runtime::{JinglerRuntime, NativeRuntime};
+use runtime::{JinglerRuntime, default_jingler_runtime};
 use zing::compiler;
 
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher, watcher};
@@ -28,7 +28,7 @@ struct ZingPlugin {
 	watcher: RecommendedWatcher,
 	watcher_receiver: Receiver<DebouncedEvent>,
 
-	runtime: NativeRuntime,
+	runtime: Box<dyn JinglerRuntime>,
 	program: Option<ir::Program>,
 
 	parameters: Arc<ZingParameters>,
@@ -76,7 +76,7 @@ impl Default for ZingPlugin {
 			watcher,
 			watcher_receiver: rx,
 
-			runtime: NativeRuntime::new(),
+			runtime: default_jingler_runtime(),
 			program: None,
 
 			parameters: Arc::new(ZingParameters::default()),
