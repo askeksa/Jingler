@@ -20,8 +20,6 @@ global L(RunProcedure)
 global L(NoteOn)
 global L(NoteOff)
 
-%define CODE_SPACE 0x10000
-
 %define MEM_COMMIT 0x00001000
 %define MEM_RESERVE 0x00002000
 %define MEM_RELEASE 0x00008000
