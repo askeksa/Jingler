@@ -82,6 +82,7 @@ struct JinglerPlugin {
 	runtime: Box<dyn JinglerRuntime>,
 	/// Stored so the program can be reloaded when the sample rate changes.
 	program: Option<ir::Program>,
+	program_active: bool,
 	/// Shared with the global listener thread; checked each audio callback.
 	pending_program: Arc<Mutex<Option<ir::Program>>>,
 	sample_rate: f32,
@@ -94,6 +95,7 @@ impl Default for JinglerPlugin {
 			zing_params: vec![],
 			runtime: default_jingler_runtime(),
 			program: None,
+			program_active: false,
 			pending_program: global_pending(),
 			sample_rate: 44100.0,
 		}
@@ -151,11 +153,16 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 
 impl JinglerPlugin {
 	fn load_program(&mut self, program: ir::Program) {
+		self.program = Some(program);
+		let program = self.program.as_ref().unwrap();
 		self.runtime.unload_program();
 		self.zing_params = program.parameters.clone();
-		match self.runtime.load_program(program.clone(), self.sample_rate) {
-			Ok(_) => self.program = Some(program),
-			Err(e) => nih_error!("Jingler: runtime error: {}", e),
+		self.program_active = match self.runtime.load_program(program.clone(), self.sample_rate) {
+			Ok(_) => true,
+			Err(e) => {
+				nih_error!("Jingler: runtime error: {}", e);
+				false
+			}
 		}
 	}
 
@@ -222,8 +229,8 @@ impl Plugin for JinglerPlugin {
 		});
 
 		// If a program was already loaded, reload it at the new sample rate.
-		if let Some(program) = self.program.take() {
-			self.load_program(program);
+		if let Some(program) = &self.program {
+			self.load_program(program.clone());
 		}
 
 		true
@@ -231,7 +238,7 @@ impl Plugin for JinglerPlugin {
 
 	fn deactivate(&mut self) {
 		self.runtime.unload_program();
-		self.program = None;
+		self.program_active = false;
 	}
 
 	fn process(
@@ -264,6 +271,9 @@ impl Plugin for JinglerPlugin {
 					Some(ref event) if event.timing() <= sample_id as u32 => {
 						match *event {
 							NoteEvent::NoteOn { channel, note, velocity, .. } => {
+								if !self.program_active && let Some(program) = &self.program {
+									self.load_program(program.clone());
+								}
 								self.runtime.note_on(channel, note, (velocity * 127.0) as u8);
 							}
 							NoteEvent::NoteOff { channel, note, .. } => {
