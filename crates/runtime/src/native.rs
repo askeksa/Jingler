@@ -1,6 +1,9 @@
 use anyhow::Result;
+use std::sync::{Mutex, Condvar, OnceLock};
 
 use crate::JinglerRuntime;
+
+static RUNTIME_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 unsafe extern "C" {
@@ -15,6 +18,7 @@ unsafe extern "C" {
 
 pub struct NativeRuntime {
 	program: Option<NativeProgram>,
+	_semaphore_guard: SemaphoreGuard,
 }
 
 struct NativeProgram {
@@ -25,11 +29,14 @@ struct NativeProgram {
 
 impl NativeRuntime {
 	pub fn new() -> Self {
+		let semaphore = RUNTIME_SEMAPHORE.get_or_init(|| Semaphore::new(1));
+		semaphore.acquire();
+
 		#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 		unsafe {
 			LoadGmDls();
 		}
-		NativeRuntime { program: None }
+		NativeRuntime { program: None, _semaphore_guard: SemaphoreGuard(semaphore) }
 	}
 }
 
@@ -128,5 +135,44 @@ impl JinglerRuntime for NativeRuntime {
 impl Drop for NativeRuntime {
 	fn drop(&mut self) {
 		self.unload_program();
+	}
+}
+
+
+/// A simple semaphore using Mutex and Condvar for blocking acquisition
+struct Semaphore {
+	count: Mutex<u32>,
+	condvar: Condvar,
+}
+
+impl Semaphore {
+	fn new(initial: u32) -> Self {
+		Semaphore {
+			count: Mutex::new(initial),
+			condvar: Condvar::new(),
+		}
+	}
+
+	fn acquire(&self) {
+		let mut count = self.count.lock().unwrap();
+		while *count == 0 {
+			count = self.condvar.wait(count).unwrap();
+		}
+		*count -= 1;
+	}
+
+	fn release(&self) {
+		let mut count = self.count.lock().unwrap();
+		*count += 1;
+		self.condvar.notify_one();
+	}
+}
+
+/// Guard that holds a semaphore permit and releases it when dropped
+struct SemaphoreGuard(&'static Semaphore);
+
+impl Drop for SemaphoreGuard {
+	fn drop(&mut self) {
+		self.0.release();
 	}
 }
