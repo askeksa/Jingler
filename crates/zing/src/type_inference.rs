@@ -198,6 +198,10 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				self.compiler.report_error(&member.name, "Instruments must have exactly one output.");
 			}
 			if member.name.text == "main" {
+				let input_types: Vec<Type> = member.inputs.items.iter().map(|item| item.item_type).collect();
+				if input_types != vec![] {
+					self.compiler.report_error(&member.inputs, "'main' can't have any inputs.");
+				}
 				let output_types: Vec<Type> = member.outputs.items.iter().map(|item| item.item_type).collect();
 				if output_types != vec![type_spec!(dynamic stereo number)] {
 					self.compiler.report_error(&member.outputs, "'main' must have a single output of type stereo number.");
