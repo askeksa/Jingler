@@ -588,6 +588,7 @@ pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(V
 		}
 	}
 	encode_opcode(EncodedBytecode::Proc, 0);
+	encoded.borrow_mut().push(0); // Zero termination
 
 	Ok((encoded.into_inner(), constants, parameter_offset))
 }
