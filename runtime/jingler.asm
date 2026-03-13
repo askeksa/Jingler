@@ -391,7 +391,7 @@ JinglerResetState:
 section noteon text align=1
 
 JinglerNoteOn:
-	; EAX/RAX = Channel
+	; EAX/RAX = Track
 	; EBX = Sample offset
 	; ECX = Key
 	; EDX = Velocity
@@ -420,7 +420,7 @@ JinglerNoteOn:
 section noteoff text align=1
 
 JinglerNoteOff:
-	; EAX/RAX = Channel
+	; EAX/RAX = Track
 	; EBX = Sample offset
 	; ECX = Key
 

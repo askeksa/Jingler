@@ -14,7 +14,7 @@ pub struct Program {
 	pub main_static_proc_id: usize,
 	// Dynamic procedure ID of the main module
 	pub main_dynamic_proc_id: usize,
-	// Tracks in execution order
+	// MIDI channel (zero based) for each track in execution order
 	pub track_order: Vec<usize>,
 }
 
