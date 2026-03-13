@@ -448,7 +448,7 @@ JinglerNoteOff:
 	test		edi, edi
 	jz			.done
 %if __BITS__ == 64
-	mov			r9, NoteSpace
+	mov			r9, NoteSpaceBase
 	add			rdi, r9
 %endif
 	cmp			[rdi + 8], ecx
@@ -636,7 +636,7 @@ JinglerNoteOff:
 	mov			[rdi], eax
 	mov			[rcx], edi
 %if __BITS__ == 64
-	mov			r9, NoteSpace
+	mov			r9, NoteSpaceBase
 	sub			[rcx], r9d
 %endif
 
@@ -658,7 +658,7 @@ JinglerNoteOff:
 	test		edi, edi
 	je			_snip_play_instrument3.activedone + CALL_SIZE
 %if __BITS__ == 64
-	mov			r9, NoteSpace
+	mov			r9, NoteSpaceBase
 	add			rdi, r9
 %endif
 	push		rdi
@@ -678,7 +678,7 @@ JinglerNoteOff:
 	snip		kill, ss, I_KILL
 	mov			eax, [rcx]
 %if __BITS__ == 64
-	mov			r9, NoteSpace
+	mov			r9, NoteSpaceBase
 	add			rax, r9
 %endif
 	mov			eax, [rax]
@@ -746,7 +746,7 @@ JinglerNoteOff:
 	snip		note_property, sr, I_NOTE_PROPERTY
 	mov			eax, [rcx]
 %if __BITS__ == 64
-	mov			r9, NoteSpace
+	mov			r9, NoteSpaceBase
 	add			rax, r9
 %endif
 	cvtsi2sd	xmm0, [dword rax + 4]
@@ -1002,6 +1002,8 @@ StateSpace:
 	reso STATE_SPACE
 
 section notesp bss align=16
+NoteSpaceBase:
+	reso 1
 NoteSpace:
 .align16:
 	reso NOTE_SPACE
