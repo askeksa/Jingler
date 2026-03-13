@@ -2448,6 +2448,7 @@ dependencies = [
  "cc",
  "ir",
  "nasm-rs",
+ "zing",
 ]
 
 [[package]]

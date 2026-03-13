@@ -10,6 +10,9 @@ anyhow = "1.0"
 
 ir = { path = "../ir" }
 
+[dev-dependencies]
+zing = { path = "../zing" }
+
 [build-dependencies]
 nasm-rs = "0.3.1"
 cc = "1.0"
