@@ -76,7 +76,7 @@ impl Default for ZingPlugin {
 			watcher,
 			watcher_receiver: rx,
 
-			runtime: default_jingler_runtime(),
+			runtime: default_jingler_runtime().unwrap(),
 			program: None,
 
 			parameters: Arc::new(ZingParameters::default()),
@@ -186,7 +186,7 @@ impl Plugin for ZingPlugin {
 		}
 
 		for i in 0..NUM_PARAMETERS {
-			self.runtime.set_parameter(i, self.parameters.values[i].get());
+			self.runtime.set_parameter(i, self.parameters.values[i].get()).unwrap();
 		}
 
 		let mut base = 0usize;
@@ -201,17 +201,17 @@ impl Plugin for ZingPlugin {
 				match data[0] & 0xF0 {
 					0x90 => {
 						// Note On
-						self.runtime.note_on(channel, key, velocity);
+						self.runtime.note_on(channel, key, velocity).unwrap();
 						dirty = true;
 					},
 					0x80 => {
 						// Note Off
-						self.runtime.note_off(channel, key);
+						self.runtime.note_off(channel, key).unwrap();
 					},
 					0xB0 if data[1] == 120 => {
 						// All sound off
 						if dirty {
-							self.runtime.reset();
+							self.runtime.reset().unwrap();
 							dirty = false;
 						}
 					},
@@ -221,7 +221,7 @@ impl Plugin for ZingPlugin {
 			}
 			let length = (next_time - self.time) as usize;
 			for i in 0..length {
-				let [left, right] = self.runtime.next_sample();
+				let [left, right] = self.runtime.next_sample().unwrap();
 				out[0][base + i] = left as f32;
 				out[1][base + i] = right as f32;
 			}

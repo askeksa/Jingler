@@ -155,13 +155,13 @@ fn play_file(options: &PlayOptions) {
 					}
 				}
 				if options.play || options.write_wav.is_some() {
-					let mut runtime = default_jingler_runtime();
+					let mut runtime = default_jingler_runtime().unwrap();
 					if let Err(e) = runtime.load_program(&program, options.sample_rate) {
 						println!("Runtime error: {}", e);
 					} else {
 						let n_samples = (options.duration * options.sample_rate) as usize;
 						let output = (0..n_samples)
-							.map(|_| runtime.next_sample())
+							.map(|_| runtime.next_sample().unwrap())
 							.flatten()
 							.map(|s| s as f32)
 							.collect::<Vec<f32>>();

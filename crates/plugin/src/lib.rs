@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
 use nih_plug::prelude::*;
-use runtime::{JinglerRuntime, default_jingler_runtime};
+use runtime::{DummyRuntime, JinglerRuntime, default_jingler_runtime};
 
 const NUM_PARAMS: usize = 15;
 const LISTEN_ADDR: &str = "0.0.0.0:26127";
@@ -93,7 +93,7 @@ impl Default for JinglerPlugin {
 		Self {
 			params: Arc::new(JinglerParams::default()),
 			zing_params: vec![],
-			runtime: default_jingler_runtime(),
+			runtime: Box::new(DummyRuntime),
 			program: None,
 			program_active: false,
 			pending_program: global_pending(),
@@ -152,8 +152,8 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 // ─── Plugin implementation ────────────────────────────────────────────────────
 
 impl JinglerPlugin {
-	fn load_program_if_present(&mut self) {
-		let Some(program) = &self.program else { return; };
+	fn load_program_if_present(&mut self) -> bool {
+		let Some(program) = &self.program else { return true; };
 		self.runtime.unload_program();
 		self.zing_params = program.parameters.clone();
 		self.program_active = match self.runtime.load_program(program, self.sample_rate) {
@@ -162,7 +162,8 @@ impl JinglerPlugin {
 				nih_error!("Jingler: runtime error: {}", e);
 				false
 			}
-		}
+		};
+		self.program_active
 	}
 
 	fn param_values(&self) -> [f32; NUM_PARAMS] {
@@ -217,6 +218,13 @@ impl Plugin for JinglerPlugin {
 	) -> bool {
 		self.sample_rate = buffer_config.sample_rate;
 
+		if let Ok(runtime) = default_jingler_runtime() {
+			self.runtime = runtime;
+		} else {
+			nih_error!("Jingler: failed to create runtime");
+			return false;
+		}
+
 		// Spawn the TCP listener thread exactly once for the whole process lifetime,
 		// so DAW re-instantiation doesn't cause "address already in use" errors.
 		LISTENER_INIT.call_once(|| {
@@ -228,9 +236,7 @@ impl Plugin for JinglerPlugin {
 		});
 
 		// If a program was already loaded, reload it at the new sample rate.
-		self.load_program_if_present();
-
-		true
+		return self.load_program_if_present();
 	}
 
 	fn deactivate(&mut self) {
@@ -244,19 +250,34 @@ impl Plugin for JinglerPlugin {
 		_aux: &mut AuxiliaryBuffers,
 		context: &mut impl ProcessContext<Self>,
 	) -> ProcessStatus {
+		macro_rules! check {
+			($action:expr, $where:expr) => {
+				match $action {
+					Ok(result) => result,
+					Err(e) => {
+						nih_error!("Jingler: runtime error in {}: {}", $where, e);
+						self.program_active = false;
+						return ProcessStatus::Error(concat!("Runtime error in ", $where));
+					}
+				}
+			};
+		}
+
 		// Hot-swap program if a new one arrived over the network.
 		// Use try_lock so the audio thread never blocks waiting for the listener.
 		let new_program = self.pending_program.try_lock().ok().and_then(|mut g| g.take());
 		if let Some(program) = new_program {
 			self.program = Some(program);
-			self.load_program_if_present();
+			if !self.load_program_if_present() {
+				return ProcessStatus::Error("Runtime error in load_program");
+			}
 		}
 
 		// Push normalised (0–1) parameter values to the runtime.
 		// The runtime scales them to the Zing parameter range internally.
 		let values = self.param_values();
 		for (i, &v) in values.iter().enumerate() {
-			self.runtime.set_parameter(i, v);
+			check!(self.runtime.set_parameter(i, v), "set_parameter");
 		}
 
 		// Process audio sample-by-sample, interleaving MIDI events at their
@@ -270,15 +291,17 @@ impl Plugin for JinglerPlugin {
 						match *event {
 							NoteEvent::NoteOn { channel, note, velocity, .. } => {
 								if !self.program_active {
-									self.load_program_if_present();
+									if !self.load_program_if_present() {
+										return ProcessStatus::Error("Runtime error in load_program");
+									}
 								}
-								self.runtime.note_on(channel, note, (velocity * 127.0) as u8);
+								check!(self.runtime.note_on(channel, note, (velocity * 127.0) as u8), "note_on");
 							}
 							NoteEvent::NoteOff { channel, note, .. } => {
-								self.runtime.note_off(channel, note);
+								check!(self.runtime.note_off(channel, note), "note_off");
 							}
 							NoteEvent::Choke { channel, note, .. } => {
-								self.runtime.note_off(channel, note);
+								check!(self.runtime.note_off(channel, note), "note_off");
 							}
 							_ => {}
 						}
@@ -288,7 +311,7 @@ impl Plugin for JinglerPlugin {
 				}
 			}
 
-			let [left, right] = self.runtime.next_sample();
+			let [left, right] = check!(self.runtime.next_sample(), "next_sample");
 			let mut samples = channel_samples.into_iter();
 			if let Some(l) = samples.next() { *l = left as f32; }
 			if let Some(r) = samples.next() { *r = right as f32; }

@@ -28,7 +28,7 @@ struct NativeProgram {
 }
 
 impl NativeRuntime {
-	pub fn new() -> Self {
+	pub fn new() -> Result<Self> {
 		let semaphore = RUNTIME_SEMAPHORE.get_or_init(|| Semaphore::new(1));
 		semaphore.acquire();
 
@@ -36,7 +36,7 @@ impl NativeRuntime {
 		unsafe {
 			LoadGmDls();
 		}
-		NativeRuntime { program: None, _semaphore_guard: SemaphoreGuard(semaphore) }
+		Ok(NativeRuntime { program: None, _semaphore_guard: SemaphoreGuard(semaphore) })
 	}
 }
 
@@ -71,7 +71,7 @@ impl JinglerRuntime for NativeRuntime {
 		}
 	}
 
-	fn reset(&mut self) {
+	fn reset(&mut self) -> Result<()> {
 		if let Some(p) = &mut self.program {
 			#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 			unsafe {
@@ -79,23 +79,24 @@ impl JinglerRuntime for NativeRuntime {
 				RunProcedure(p.constants.as_ptr(), p.program.main_static_proc_id);
 			}
 		}
+		Ok(())
 	}
 
-	fn next_sample(&mut self) -> [f64; 2] {
+	fn next_sample(&mut self) -> Result<[f64; 2]> {
 		#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-		return [0.0, 0.0];
+		return Ok([0.0, 0.0]);
 
 		#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 		if let Some(p) = &mut self.program {
 			unsafe {
-				*RunProcedure(p.constants.as_ptr(), p.program.main_dynamic_proc_id)
+				Ok(*RunProcedure(p.constants.as_ptr(), p.program.main_dynamic_proc_id))
 			}
 		} else {
-			[0.0, 0.0]
+			Ok([0.0, 0.0])
 		}
 	}
 
-	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) {
+	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
 		if let Some(p) = &mut self.program {
 			#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 			unsafe {
@@ -106,9 +107,10 @@ impl JinglerRuntime for NativeRuntime {
 				}
 			}
 		}
+		Ok(())
 	}
 
-	fn note_off(&mut self, channel: u8, note: u8) {
+	fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
 		if let Some(p) = &mut self.program {
 			#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 			unsafe {
@@ -119,9 +121,10 @@ impl JinglerRuntime for NativeRuntime {
 				}
 			}
 		}
+		Ok(())
 	}
 
-	fn set_parameter(&mut self, index: usize, value: f32) {
+	fn set_parameter(&mut self, index: usize, value: f32) -> Result<()> {
 		if let Some(p) = &mut self.program {
 			if index < p.program.parameters.len() {
 				let param = &p.program.parameters[index];
@@ -129,6 +132,7 @@ impl JinglerRuntime for NativeRuntime {
 				p.constants[p.parameter_offset + index] = quant_value.to_bits();
 			}
 		}
+		Ok(())
 	}
 }
 

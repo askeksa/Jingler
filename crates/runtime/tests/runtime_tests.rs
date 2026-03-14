@@ -11,14 +11,14 @@ fn compile(src: &str) -> ir::Program {
 
 fn make_runtime(src: &str) -> Box<dyn JinglerRuntime> {
 	let program = compile(src);
-	let mut rt = default_jingler_runtime();
+	let mut rt = default_jingler_runtime().unwrap();
 	rt.load_program(&program, SAMPLE_RATE).unwrap();
 	rt
 }
 
 fn run(src: &str, n: usize) -> Vec<[f64; 2]> {
 	let mut rt = make_runtime(src);
-	(0..n).map(|_| rt.next_sample()).collect()
+	(0..n).map(|_| rt.next_sample().unwrap()).collect()
 }
 
 fn run1(src: &str) -> [f64; 2] {
@@ -649,13 +649,13 @@ fn instrument_note_on() {
 	let mut rt = make_runtime(src);
 
 	// Before note_on, instrument should be silent
-	let s = rt.next_sample();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 0.0);
 
-	rt.note_on(0, 60, 127);
+	rt.note_on(0, 60, 127).unwrap();
 
 	// After note_on, should produce output
-	let s = rt.next_sample();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 1.0);
 }
 
@@ -670,8 +670,8 @@ fn instrument_key_property() {
 	"#;
 	let mut rt = make_runtime(src);
 
-	rt.note_on(0, 60, 127);
-	let s = rt.next_sample();
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 60.0);
 }
 
@@ -686,8 +686,8 @@ fn instrument_velocity_property() {
 	"#;
 	let mut rt = make_runtime(src);
 
-	rt.note_on(0, 60, 100);
-	let s = rt.next_sample();
+	rt.note_on(0, 60, 100).unwrap();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 100.0);
 }
 
@@ -702,12 +702,12 @@ fn instrument_gate_property() {
 	"#;
 	let mut rt = make_runtime(src);
 
-	rt.note_on(0, 60, 127);
-	let s = rt.next_sample();
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 1.0);
 
-	rt.note_off(0, 60);
-	let s = rt.next_sample();
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 0.0);
 }
 
@@ -739,8 +739,8 @@ fn parameter_set() {
 	let mut rt = make_runtime(src);
 
 	// Set parameter to 0.5 normalized → value = 0 + 0.5 * (100-0) = 50
-	rt.set_parameter(0, 0.5);
-	let s = rt.next_sample();
+	rt.set_parameter(0, 0.5).unwrap();
+	let s = rt.next_sample().unwrap();
 	assert_approx(s[0], 50.0);
 }
 
