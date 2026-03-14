@@ -1,8 +1,10 @@
 mod native;
+mod wasm;
 
 use anyhow::Result;
 
 use crate::native::NativeRuntime;
+use crate::wasm::WasmRuntime;
 
 pub trait JinglerRuntime: Send {
 	fn load_program(&mut self, program: &ir::Program, sample_rate: f32) -> Result<()>;
@@ -16,7 +18,11 @@ pub trait JinglerRuntime: Send {
 }
 
 pub fn default_jingler_runtime() -> Result<Box<dyn JinglerRuntime>> {
-	NativeRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>)
+	match std::env::var("JINGLER_RUNTIME").unwrap_or_else(|_| "native".to_string()).as_str() {
+		"native" => NativeRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>),
+		"wasm" => WasmRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>),
+		_ => Err(anyhow::anyhow!("Invalid JINGLER_RUNTIME environment variable")),  
+	}
 }
 
 pub struct DummyRuntime;
