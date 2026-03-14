@@ -122,6 +122,10 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledMember] = &[
 		Constant(0.5f32.to_bits()),
 		Mul
 	]]),
+	("swap", U, sig!([stereo] [stereo]), &[code![
+		SplitRL,
+		MergeLR
+	]]),
 	("pow", U, sig!([mono, mono] [mono]), &[code![
 		StackLoad(1),
 		Pow,

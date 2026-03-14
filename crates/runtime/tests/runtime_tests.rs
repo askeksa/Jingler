@@ -337,6 +337,12 @@ fn center_fn() {
 }
 
 #[test]
+fn swap_fn() {
+	let s = run1("global module main () -> (out: stereo)  out = swap([2.0, 4.0])");
+	assert_sample(s, 4.0, 2.0);
+}
+
+#[test]
 fn mono_to_stereo_expand() {
 	let src = r#"
 		global module main () -> (out: stereo)
@@ -564,12 +570,12 @@ fn function_method_syntax() {
 #[test]
 fn function_multi_output() {
 	let src = r#"
-		function swap(a: mono, b: mono) -> (x: mono, y: mono)
+		function exchange(a: mono, b: mono) -> (x: mono, y: mono)
 			x = b
 			y = a
 
 		global module main () -> (out: stereo)
-			x, y = swap(3, 7)
+			x, y = exchange(3, 7)
 			out = x - y
 	"#;
 	let s = run1(src);
