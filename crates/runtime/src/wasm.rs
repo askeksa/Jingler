@@ -34,7 +34,17 @@ struct WasmProgram {
 impl WasmRuntime {
 	pub fn new() -> Result<Self> {
 		let engine = Engine::default();
-		let linker = Linker::new(&engine);
+		let mut linker = Linker::new(&engine);
+
+		linker.func_wrap("math", "atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })?;
+		linker.func_wrap("math", "cos", |x: f64| -> f64 { x.cos() })?;
+		linker.func_wrap("math", "exp2", |x: f64| -> f64 { x.exp2() })?;
+		linker.func_wrap("math", "log2", |x: f64| -> f64 { x.log2() })?;
+		linker.func_wrap("math", "pow", |x: f64, y: f64| -> f64 { x.powf(y) })?;
+		linker.func_wrap("math", "sin", |x: f64| -> f64 { x.sin() })?;
+		linker.func_wrap("math", "sincos", |x: f64| -> (f64, f64) { x.sin_cos() })?;
+		linker.func_wrap("math", "tan", |x: f64| -> f64 { x.tan() })?;
+
 		let data = Arc::new(WasmRuntimeData {});
 		let store = Store::new(&engine, data.clone());
 
@@ -117,12 +127,28 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(sample_rate)));
 	let state_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
 
+	let f64_to_f64 = module.types.add(&[ValType::F64], &[ValType::F64]);
+	let f64_f64_to_f64 = module.types.add(&[ValType::F64, ValType::F64], &[ValType::F64]);
+	let f64_to_f64_f64 = module.types.add(&[ValType::F64], &[ValType::F64, ValType::F64]);
+
+	let (atan2, _) = module.add_import_func("math", "atan2", f64_f64_to_f64);
+	let (cos, _) = module.add_import_func("math", "cos", f64_to_f64);
+	let (exp2, _) = module.add_import_func("math", "exp2", f64_to_f64);
+	let (log2, _) = module.add_import_func("math", "log2", f64_to_f64);
+	let (pow, _) = module.add_import_func("math", "pow", f64_f64_to_f64);
+	let (sin, _) = module.add_import_func("math", "sin", f64_to_f64);
+	let (sincos, _) = module.add_import_func("math", "sincos", f64_to_f64_f64);
+	let (tan, _) = module.add_import_func("math", "tan", f64_to_f64);
+
+	let math = MathImports { sin, cos, tan, exp2, log2, pow, atan2, sincos };
+
 	let mut generator = WasmGenerator {
 		program,
 		module: RefCell::new(module),
 		memory,
 		sample_rate,
 		state_ptr,
+		math,
 		function_id_map: HashMap::new(),
 	};
 
@@ -131,12 +157,24 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	Ok(generator.module().emit_wasm())
 }
 
+struct MathImports {
+	atan2: FunctionId,
+	cos: FunctionId,
+	exp2: FunctionId,
+	log2: FunctionId,
+	pow: FunctionId,
+	sin: FunctionId,
+	sincos: FunctionId,
+	tan: FunctionId,
+}
+
 struct WasmGenerator<'ir> {
 	program: &'ir ir::Program,
 	module: RefCell<walrus::Module>,
 	memory: MemoryId,
 	sample_rate: GlobalId,
 	state_ptr: GlobalId,
+	math: MathImports,
 
 	function_id_map: HashMap<u16, FunctionId>,
 }
@@ -345,6 +383,72 @@ impl<'ir> WasmGenerator<'ir> {
 					push();
 					b().local_get(loc);
 					b().unop(UnaryOp::F64x2ExtractLane { idx: 1 });
+					b().unop(UnaryOp::F64x2Splat);
+					push();
+				},
+
+				Cos => op(1, 1, &mut || {
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.cos);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+				Exp2 => op(1, 1, &mut || {
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.exp2);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+				Log2 => op(1, 1, &mut || {
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.log2);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+				Sin => op(1, 1, &mut || {
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.sin);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+				Tan => op(1, 1, &mut || {
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.tan);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+
+				Atan2 => {
+					let (top, second) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+					b().local_get(top);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().local_get(second);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.atan2);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
+				},
+				Pow => {
+					let (top, second) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+					b().local_get(top);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().local_get(second);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.pow);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
+				},
+				SinCos => {
+					let input = operand_stack.borrow_mut().pop().unwrap();
+					let cos_tmp = self.module().locals.add(ValType::F64);
+					b().local_get(input);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().call(self.math.sincos);
+					b().local_set(cos_tmp);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
+					b().local_get(cos_tmp);
 					b().unop(UnaryOp::F64x2Splat);
 					push();
 				},
