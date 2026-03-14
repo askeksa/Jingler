@@ -248,6 +248,16 @@ fn cos_zero() {
 }
 
 #[test]
+fn sincos_zero() {
+	let s = run1(r#"
+		global module main () -> (out: stereo)
+			s, c = sincos(0)
+			out = [s, c]
+	"#);
+	assert_sample(s, 0.0, 1.0);
+}
+
+#[test]
 fn tan_zero() {
 	let s = run1("global module main () -> (out: stereo)  out = tan(0)");
 	assert_mono(s, 0.0);
