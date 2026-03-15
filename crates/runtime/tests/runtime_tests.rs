@@ -1148,3 +1148,95 @@ fn for_loop_with_module() {
 	assert_mono(samples[1], 3.0);
 	assert_mono(samples[2], 6.0);
 }
+
+// ============================================================
+// GM DLS (General MIDI Downloadable Sounds)
+// ============================================================
+
+#[test]
+fn gmdls_specific_outputs() {
+	// Verify exact output for various sound IDs and sample indices.
+	// The gmdls function looks up samples from the gm.dls sound bank.
+	// First argument is sound ID (0-494), second is sample index.
+	let cases: &[(i64, i64, f64)] = &[
+		// Sound 0 (looped): Acoustic Grand Piano
+		(    0,        0,  0.0),
+		(    0,        1, -0.004241943359375),
+		(    0,        2, -0.015106265898793936),
+		(    0,       10, -0.44199201138690114),
+		(    0,      100, -0.7043263777159154),
+		(    0,     1000, -0.8835582514293492),
+		(    0,    10000, -0.2870198437012732),
+		// Sound 1 (looped)
+		(    1,        0,  0.0),
+		(    1,       50, -0.8096446059644222),
+		(    1,      500,  0.14663843624293804),
+		// Sound 494 (looped): last sound
+		(  494,        0,  0.0),
+		(  494,       50, -0.4717072690837085),
+		(  494,      500,  0.060060085728764534),
+		// Sound 17 (unlooped): starts with nonzero, decays to zero
+		(   17,        0, -0.010986328125),
+		(   17,       50, -0.08834809437394142),
+		(   17,      500,  0.27740538911893964),
+		// Sound 120 (unlooped)
+		(  120,        0,  0.0),
+		(  120,       50,  0.00823981873691082),
+		(  120,      500,  0.3287384216673672),
+		// Sound 474 (unlooped)
+		(  474,        0,  0.007110595703125),
+		(  474,       50, -0.6069420916028321),
+		(  474,      500, -0.6055092359893024),
+	];
+	for &(sound, index, expected) in cases {
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, {index})");
+		let s = run1(&src);
+		assert_eq!(s[0], expected, "gmdls({sound}, {index}) left mismatch");
+		assert_eq!(s[1], expected, "gmdls({sound}, {index}) right mismatch");
+	}
+}
+
+#[test]
+fn gmdls_looped_sound_continues_at_large_index() {
+	// Looped sounds should continue producing non-zero samples
+	// even at very large indices (millions of samples).
+	let looped_sounds = [0, 1, 100, 200, 494];
+	for sound in looped_sounds {
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, 5000000)");
+		let s = run1(&src);
+		assert_ne!(s[0], 0.0, "looped sound {sound} should be non-zero at index 5000000");
+
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, 10000000)");
+		let s = run1(&src);
+		assert_ne!(s[0], 0.0, "looped sound {sound} should be non-zero at index 10000000");
+	}
+}
+
+#[test]
+fn gmdls_unlooped_sound_decays_to_zero() {
+	// Unlooped sounds should return zero once the sample data is exhausted.
+	let unlooped_sounds = [17, 120, 474];
+	for sound in unlooped_sounds {
+		// At moderate index, the sound has ended
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, 5000)");
+		let s = run1(&src);
+		assert_eq!(s[0], 0.0, "unlooped sound {sound} should be zero at index 5000");
+
+		// At very large index, definitely zero
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, 5000000)");
+		let s = run1(&src);
+		assert_eq!(s[0], 0.0, "unlooped sound {sound} should be zero at index 5000000");
+	}
+}
+
+#[test]
+fn gmdls_all_sounds_start() {
+	// All 495 sounds should be accessible and produce a sample at index 0.
+	// Step by 13 to save time but still test both ends of the range.
+	// (The value may or may not be zero at index 0, but it should not crash.)
+	for sound in (0..495).step_by(13) {
+		let src = format!("global module main () -> (out: stereo)  out = gmdls({sound}, 0)");
+		let s = run1(&src);
+		assert_eq!(s[0], s[1], "gmdls({sound}, 0) should be mono (left == right)");
+	}
+}
