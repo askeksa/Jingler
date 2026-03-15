@@ -888,6 +888,168 @@ fn stereo_cell() {
 	assert_sample(samples[2], 2.0, 4.0);
 }
 
+// ============================================================
+// State: dyndelay
+// ============================================================
+
+#[test]
+fn dyndelay_fixed_delay() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = dyndelay(t, 2, 4)
+	"#;
+	let samples = run(src, 6);
+	// t: 0, 1, 2, 3, 4, 5  (cell returns before update)
+	// dyndelay with constant delay=2, maxdelay=4:
+	// same as delay(t, 2) — value from 2 samples ago
+	// sample 0: delayed=0 (buffer init zero)
+	// sample 1: delayed=0
+	// sample 2: delayed=0 (t from sample 0)
+	// sample 3: delayed=1 (t from sample 1)
+	// sample 4: delayed=2
+	// sample 5: delayed=3
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 0.0);
+	assert_mono(samples[3], 1.0);
+	assert_mono(samples[4], 2.0);
+	assert_mono(samples[5], 3.0);
+}
+
+#[test]
+fn dyndelay_max_delay() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = dyndelay(t, 4, 4)
+	"#;
+	let samples = run(src, 8);
+	// t: 0, 1, 2, 3, 4, 5, 6, 7
+	// delay=4 (equal to maxdelay): value from 4 samples ago
+	// samples 0-3: 0 (buffer init zero)
+	// sample 4: 0 (t from sample 0)
+	// sample 5: 1
+	// sample 6: 2
+	// sample 7: 3
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 0.0);
+	assert_mono(samples[3], 0.0);
+	assert_mono(samples[4], 0.0);
+	assert_mono(samples[5], 1.0);
+	assert_mono(samples[6], 2.0);
+	assert_mono(samples[7], 3.0);
+}
+
+#[test]
+fn dyndelay_varying_delay() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 1)
+			d = cell(d + 1, 1)
+			out = dyndelay(t, d, 8)
+	"#;
+	let samples = run(src, 8);
+	// t: 1, 2, 3, 4, 5, 6, 7, 8  (cell returns before update)
+	// d: 1, 2, 3, 4, 5, 6, 7, 8  (delay amount increases each sample)
+	// Since d == t, we always look back exactly as far as we've progressed,
+	// so we always read the initial zero.
+	for i in 0..8 {
+		assert_mono(samples[i], 0.0);
+	}
+}
+
+#[test]
+fn dyndelay_delay_one() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = dyndelay(t, 1, 4)
+	"#;
+	let samples = run(src, 5);
+	// t: 0, 1, 2, 3, 4
+	// delay=1: value from 1 sample ago
+	// sample 0: 0 (buffer zero)
+	// sample 1: 0 (t from sample 0)
+	// sample 2: 1
+	// sample 3: 2
+	// sample 4: 3
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 1.0);
+	assert_mono(samples[3], 2.0);
+	assert_mono(samples[4], 3.0);
+}
+
+#[test]
+fn dyndelay_fractional_rounds_down() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = dyndelay(t, 2.3, 8)
+	"#;
+	let samples = run(src, 6);
+	// cvtsd2si rounds 2.3 to 2 (round-to-nearest-even)
+	// Same as delay=2: value from 2 samples ago
+	// t: 0, 1, 2, 3, 4, 5
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 0.0);
+	assert_mono(samples[3], 1.0);
+	assert_mono(samples[4], 2.0);
+	assert_mono(samples[5], 3.0);
+}
+
+#[test]
+fn dyndelay_fractional_rounds_up() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = dyndelay(t, 2.7, 8)
+	"#;
+	let samples = run(src, 7);
+	// cvtsd2si rounds 2.7 to 3 (round-to-nearest-even)
+	// Same as delay=3: value from 3 samples ago
+	// t: 0, 1, 2, 3, 4, 5, 6
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 0.0);
+	assert_mono(samples[3], 0.0);
+	assert_mono(samples[4], 1.0);
+	assert_mono(samples[5], 2.0);
+	assert_mono(samples[6], 3.0);
+}
+
+#[test]
+fn dyndelay_step_change() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			step = t < 4 ? 1 : 3
+			out = dyndelay(t, step, 8)
+	"#;
+	let samples = run(src, 8);
+	// t:    0, 1, 2, 3, 4, 5, 6, 7
+	// step: 1, 1, 1, 1, 3, 3, 3, 3  (switches from delay=1 to delay=3 at t=4)
+	// sample 0: delay=1, read t[-1]=0 (zero init)
+	// sample 1: delay=1, read t[0]=0
+	// sample 2: delay=1, read t[1]=1
+	// sample 3: delay=1, read t[2]=2
+	// sample 4: delay=3, read t[1]=1
+	// sample 5: delay=3, read t[2]=2
+	// sample 6: delay=3, read t[3]=3
+	// sample 7: delay=3, read t[4]=4
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 0.0);
+	assert_mono(samples[2], 1.0);
+	assert_mono(samples[3], 2.0);
+	assert_mono(samples[4], 1.0);
+	assert_mono(samples[5], 2.0);
+	assert_mono(samples[6], 3.0);
+	assert_mono(samples[7], 4.0);
+}
+
 #[test]
 fn for_loop_with_module() {
 	let src = r#"
