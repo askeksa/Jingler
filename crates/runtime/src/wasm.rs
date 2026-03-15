@@ -12,6 +12,9 @@ use ::ir;
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
 const STATE_ADDRESS: i32 = 0;
+const BUFFER_BASE_ADDRESS: i32 = 0x100000; // 1MB into Wasm memory
+const INITIAL_MEMORY_SIZE: u64 = BUFFER_BASE_ADDRESS as u64; // 1MB
+const MAX_MEMORY_SIZE: u64 = 0x40000000; // 1GB
 
 pub struct WasmRuntime {
 	engine: Engine,
@@ -124,9 +127,10 @@ impl JinglerRuntime for WasmRuntime {
 fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	let config = ModuleConfig::new();
 	let mut module = walrus::Module::with_config(config);
-	let memory = module.memories.add_local(false, false, 16, Some(16), None);
+	let memory = module.memories.add_local(false, false, INITIAL_MEMORY_SIZE >> 16, Some(MAX_MEMORY_SIZE >> 16), None);
 	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(sample_rate)));
 	let state_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
+	let buffer_alloc_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(BUFFER_BASE_ADDRESS)));
 
 	let f64_to_f64 = module.types.add(&[ValType::F64], &[ValType::F64]);
 	let f64_f64_to_f64 = module.types.add(&[ValType::F64, ValType::F64], &[ValType::F64]);
@@ -143,7 +147,8 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 
 	let math = MathImports { sin, cos, tan, exp2, log2, pow, atan2, sincos };
 
-	let folded_multiply = generate_folded_multiply(&mut module);
+	let folded_multiply_fn = generate_folded_multiply_fn(&mut module);
+	let buffer_alloc_fn = generate_buffer_alloc_fn(&mut module, memory, buffer_alloc_ptr);
 
 	let mut generator = WasmGenerator {
 		program,
@@ -151,8 +156,10 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 		memory,
 		sample_rate,
 		state_ptr,
+		buffer_alloc_ptr,
 		math,
-		folded_multiply,
+		folded_multiply_fn,
+		buffer_alloc_fn,
 		function_id_map: HashMap::new(),
 	};
 
@@ -164,7 +171,7 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 /// Build folded_multiply(val: i32) -> i32:
 ///   product = (val as u64) * RANDOM_SCRAMBLE
 ///   return (product as i32) ^ ((product >> 32) as i32)
-fn generate_folded_multiply(module: &mut walrus::Module) -> FunctionId {
+fn generate_folded_multiply_fn(module: &mut walrus::Module) -> FunctionId {
 	let params = [ValType::I32];
 	let results = [ValType::I32];
 	let args: Vec<LocalId> = params.iter().map(|p| module.locals.add(*p)).collect();
@@ -186,6 +193,77 @@ fn generate_folded_multiply(module: &mut walrus::Module) -> FunctionId {
 	builder.finish(args, &mut module.funcs)
 }
 
+/// Build buffer_alloc(size: i32) -> v128:
+///   ptr = buffer_alloc_ptr
+///   buffer_alloc_ptr += size * 16
+///   ensure memory is large enough via memory.grow
+///   return v128 descriptor: [index=0, length=size, ptr, 0]
+fn generate_buffer_alloc_fn(module: &mut walrus::Module, memory: MemoryId, buffer_alloc_ptr: GlobalId) -> FunctionId {
+	let params = [ValType::I32];
+	let results = [ValType::V128];
+	let args: Vec<LocalId> = params.iter().map(|p| module.locals.add(*p)).collect();
+	let mut builder = FunctionBuilder::new(&mut module.types, &params, &results);
+	builder.name("buffer_alloc".to_string());
+	let ptr = module.locals.add(ValType::I32);
+	let end_addr = module.locals.add(ValType::I32);
+	let mut b = builder.func_body();
+
+	// ptr = buffer_alloc_ptr (current allocation pointer)
+	b.global_get(buffer_alloc_ptr);
+	b.local_set(ptr);
+
+	// end_addr = ptr + size * 16
+	b.local_get(ptr);
+	b.local_get(args[0]);
+	b.i32_const(4);
+	b.binop(BinaryOp::I32Shl);
+	b.binop(BinaryOp::I32Add);
+	b.local_tee(end_addr);
+
+	// buffer_alloc_ptr = end_addr
+	b.global_set(buffer_alloc_ptr);
+
+	// Ensure memory covers end_addr: grow if needed
+	// required_pages = (end_addr + 65535) / 65536
+	// current_pages = memory.size
+	// if required_pages > current_pages: memory.grow(required_pages - current_pages)
+	b.local_get(end_addr);
+	b.i32_const(65535);
+	b.binop(BinaryOp::I32Add);
+	b.i32_const(16);
+	b.binop(BinaryOp::I32ShrU);
+	b.memory_size(memory);
+	b.binop(BinaryOp::I32Sub);
+	// Stack: pages_to_grow (may be <= 0)
+	let pages_to_grow = module.locals.add(ValType::I32);
+	b.local_tee(pages_to_grow);
+	b.i32_const(0);
+	b.binop(BinaryOp::I32GtS);
+	b.if_else(
+		None,
+		|then| {
+			then.local_get(pages_to_grow);
+			then.memory_grow(memory);
+			then.drop();
+		},
+		|_else| {},
+	);
+
+	// Build V128 descriptor: [0, size, ptr, 0] as i32x4
+	// Start with zero vector
+	b.i32_const(0);
+	b.unop(UnaryOp::I32x4Splat);
+	// Lane 0 = 0 (index, already zero)
+	// Lane 1 = size
+	b.local_get(args[0]);
+	b.binop(BinaryOp::I32x4ReplaceLane { idx: 1 });
+	// Lane 2 = ptr
+	b.local_get(ptr);
+	b.binop(BinaryOp::I32x4ReplaceLane { idx: 2 });
+
+	builder.finish(args, &mut module.funcs)
+}
+
 struct MathImports {
 	atan2: FunctionId,
 	cos: FunctionId,
@@ -203,8 +281,10 @@ struct WasmGenerator<'ir> {
 	memory: MemoryId,
 	sample_rate: GlobalId,
 	state_ptr: GlobalId,
+	buffer_alloc_ptr: GlobalId,
 	math: MathImports,
-	folded_multiply: FunctionId,
+	folded_multiply_fn: FunctionId,
+	buffer_alloc_fn: FunctionId,
 
 	function_id_map: HashMap<u16, FunctionId>,
 }
@@ -242,6 +322,7 @@ impl<'ir> WasmGenerator<'ir> {
 
 	fn generate_function_for_procedure(&mut self, proc_id: u16) -> FunctionId {
 		let procedure = &self.program.procedures[proc_id as usize];
+		let memory = self.memory;
 
 		// First scan for calls and generate all callees
 		let mut callees = HashMap::new();
@@ -490,7 +571,7 @@ impl<'ir> WasmGenerator<'ir> {
 					b().binop(BinaryOp::I32Add);
 					b().global_set(self.state_ptr);
 					pop();
-					b().store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 				},
 				CellRead => {
 					b().global_get(self.state_ptr);
@@ -498,7 +579,7 @@ impl<'ir> WasmGenerator<'ir> {
 					b().i32_const(16);
 					b().binop(BinaryOp::I32Add);
 					b().global_set(self.state_ptr);
-					b().load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
 					push();
 				},
 				CellPush => {
@@ -510,20 +591,224 @@ impl<'ir> WasmGenerator<'ir> {
 					b().i32_const(16);
 					b().binop(BinaryOp::I32Add);
 					b().global_set(self.state_ptr);
-					b().load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
 					push();
 				},
 				CellFetch => {
 					let state_addr = *cell_stack.last().unwrap();
 					b().local_get(state_addr);
-					b().load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
 					push();
 				},
 				CellPop => {
 					let state_addr = cell_stack.pop().unwrap();
 					b().local_get(state_addr);
 					pop();
-					b().store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+				},
+
+				StateEnter => {
+					let saved_state = self.module().locals.add(ValType::I32);
+					cell_stack.push(saved_state);
+					b().global_get(self.state_ptr);
+					b().local_set(saved_state);
+				},
+				StateLeave => {
+					let saved_state = cell_stack.pop().unwrap();
+					b().local_get(saved_state);
+					b().global_set(self.state_ptr);
+				},
+
+				BufferAlloc(_width) => {
+					// Pop size (V128), extract lane 0 as f64, convert to i32
+					let size_v128 = operand_stack.borrow_mut().pop().unwrap();
+					b().local_get(size_v128);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().unop(UnaryOp::F64Nearest);
+					b().unop(UnaryOp::I32TruncSSatF64);
+					// Call buffer_alloc(size) -> v128 descriptor
+					b().call(self.buffer_alloc_fn);
+					push();
+				},
+
+				BufferLoad => {
+					// Pop descriptor (V128 with i32x4 layout: [index, length, ptr, 0])
+					let desc = operand_stack.borrow_mut().pop().unwrap();
+					// addr = ptr + index * 16
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b().i32_const(4);
+					b().binop(BinaryOp::I32Shl); // index * 16
+					b().binop(BinaryOp::I32Add); // ptr + index * 16
+					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push();
+				},
+
+				BufferLoadWithOffset => {
+					// Pop offset (V128) and descriptor (V128)
+					let (offset_v128, desc) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+
+					// Convert offset to i32 (round-to-nearest, like cvtsd2si)
+					let offset_i32 = self.module().locals.add(ValType::I32);
+					b().local_get(offset_v128);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().unop(UnaryOp::F64Nearest);
+					b().unop(UnaryOp::I32TruncSSatF64);
+					b().local_set(offset_i32);
+
+					// read_index = index - offset
+					let read_index = self.module().locals.add(ValType::I32);
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b().local_get(offset_i32);
+					b().binop(BinaryOp::I32Sub);
+					b().local_set(read_index);
+
+					// if read_index < 0, wrap: read_index += length
+					b().local_get(read_index);
+					b().i32_const(0);
+					b().binop(BinaryOp::I32LtS);
+					b().if_else(
+						None,
+						|then| {
+							then.local_get(read_index);
+							then.local_get(desc);
+							then.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+							then.binop(BinaryOp::I32Add);
+							then.local_set(read_index);
+						},
+						|_else| {},
+					);
+
+					// addr = ptr + read_index * 16
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+					b().local_get(read_index);
+					b().i32_const(4);
+					b().binop(BinaryOp::I32Shl);
+					b().binop(BinaryOp::I32Add);
+					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push();
+				},
+
+				BufferLoadIndexed => {
+					// Pop index (V128) and descriptor (V128)
+					let (index_v128, desc) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+
+					// Convert index to i32
+					let idx = self.module().locals.add(ValType::I32);
+					b().local_get(index_v128);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().unop(UnaryOp::F64Nearest);
+					b().unop(UnaryOp::I32TruncSSatF64);
+					b().local_set(idx);
+
+					// Bounds check: if index >= length, return zero
+					let result = self.module().locals.add(ValType::V128);
+					// Default to zero
+					b().i32_const(0);
+					b().unop(UnaryOp::I32x4Splat);
+					b().local_set(result);
+
+					b().local_get(idx);
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+					b().binop(BinaryOp::I32LtU);
+					b().if_else(
+						None,
+						|then| {
+							// addr = ptr + index * 16
+							then.local_get(desc);
+							then.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+							then.local_get(idx);
+							then.i32_const(4);
+							then.binop(BinaryOp::I32Shl);
+							then.binop(BinaryOp::I32Add);
+							then.load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+							then.local_set(result);
+						},
+						|_else| {},
+					);
+
+					b().local_get(result);
+					push();
+				},
+
+				BufferStoreAndStep => {
+					// Pop value (V128) and descriptor (V128)
+					let (value, desc) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+
+					// Store value at ptr + index * 16
+					let index = self.module().locals.add(ValType::I32);
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b().local_set(index);
+
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+					b().local_get(index);
+					b().i32_const(4);
+					b().binop(BinaryOp::I32Shl);
+					b().binop(BinaryOp::I32Add);
+					b().local_get(value);
+					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+
+					// Increment index
+					b().local_get(index);
+					b().i32_const(1);
+					b().binop(BinaryOp::I32Add);
+					b().local_set(index);
+
+					// Wrap: if index >= length, index = 0
+					b().local_get(index);
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+					b().binop(BinaryOp::I32GeU);
+					b().if_else(
+						None,
+						|then| {
+							then.i32_const(0);
+							then.local_set(index);
+						},
+						|_else| {},
+					);
+
+					// Update descriptor with new index
+					b().local_get(desc);
+					b().local_get(index);
+					b().binop(BinaryOp::I32x4ReplaceLane { idx: 0 });
+					push();
+				},
+
+				BufferIndex => {
+					// Pop descriptor, push current index as f64x2
+					let desc = operand_stack.borrow_mut().pop().unwrap();
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 });
+					b().unop(UnaryOp::F64ConvertSI32);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
+				},
+
+				BufferLength => {
+					// Pop descriptor, push length as f64x2
+					let desc = operand_stack.borrow_mut().pop().unwrap();
+					b().local_get(desc);
+					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 });
+					b().unop(UnaryOp::F64ConvertSI32);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
 				},
 
 				Random => {
@@ -547,7 +832,7 @@ impl<'ir> WasmGenerator<'ir> {
 					b().unop(UnaryOp::I32TruncSSatF64);
 
 					// First folded multiply
-					b().call(self.folded_multiply);
+					b().call(self.folded_multiply_fn);
 					// XOR with upper 32 bits of second arg
 					b().local_get(bits);
 					b().i64_const(32);
@@ -556,14 +841,14 @@ impl<'ir> WasmGenerator<'ir> {
 					b().binop(BinaryOp::I32Xor);
 
 					// Second folded multiply
-					b().call(self.folded_multiply);
+					b().call(self.folded_multiply_fn);
 					// XOR with lower 32 bits of second arg
 					b().local_get(bits);
 					b().unop(UnaryOp::I32WrapI64);
 					b().binop(BinaryOp::I32Xor);
 
 					// Third folded multiply
-					b().call(self.folded_multiply);
+					b().call(self.folded_multiply_fn);
 
 					// Convert signed i32 to f64, splat to V128
 					b().unop(UnaryOp::F64ConvertSI32);
@@ -593,6 +878,8 @@ impl<'ir> WasmGenerator<'ir> {
 
 		b.i32_const(STATE_ADDRESS);
 		b.global_set(self.state_ptr);
+		b.i32_const(BUFFER_BASE_ADDRESS);
+		b.global_set(self.buffer_alloc_ptr);
 		b.call(self.get_function_id(self.program.main_static_proc_id as u16));
 
 		builder.finish(args, &mut self.module().funcs)
