@@ -789,6 +789,33 @@ fn random_different_seeds() {
 	assert!(s1[0] != s2[0], "Expected different values for different seeds");
 }
 
+#[test]
+fn random_specific_outputs() {
+	// Verify exact output for various input combinations.
+	// The random function is a deterministic PRNG seeded by its two arguments.
+	let cases: &[(i64, i64, f64)] = &[
+		(    0,     0,  0.0),
+		(    1,     1, -0.6668139002285898),
+		(    1,     2, -0.6345644812099636),
+		(    2,     1,  0.7871766686439514),
+		(    0,     1, -0.6515078167431056),
+		(    1,     0, -0.5959545937366784),
+		(   10,     5, -0.007433788850903511),
+		(  100,   200, -0.09859279682859778),
+		(   -1,     1, -0.05100200977176428),
+		(    1,    -1, -0.2551103332079947),
+		(   -3,    -7,  0.18342527095228434),
+		(   42,    99, -0.4728339253924787),
+		( 1000,  1000,  0.9038781966082752),
+	];
+	for &(a, b, expected) in cases {
+		let src = format!("global module main () -> (out: stereo)  out = random({a}, {b})");
+		let s = run1(&src);
+		assert_eq!(s[0], expected, "random({a}, {b}) left mismatch");
+		assert_eq!(s[1], expected, "random({a}, {b}) right mismatch");
+	}
+}
+
 // ============================================================
 // Complex programs
 // ============================================================
