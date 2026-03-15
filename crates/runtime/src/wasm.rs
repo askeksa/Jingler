@@ -5,12 +5,17 @@ use std::sync::Arc;
 use anyhow::Result;
 use walrus::*;
 use walrus::ir::*;
-use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
+use wasmtime::{Caller, Engine, Linker, Module, Store, TypedFunc};
 
 use crate::JinglerRuntime;
 use ::ir;
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
+
+const GMDLS_OFFSETS: usize = 0x43E3A;
+const GMDLS_DATA: usize = 0x4462C;
+const GMDLS_COUNT: usize = 495;
+
 const PARAMETER_ADDRESS: i32 = 0;
 const STATE_ADDRESS: i32 = 0x10000;
 const BUFFER_BASE_ADDRESS: i32 = 0x100000; // 1MB into Wasm memory
@@ -24,7 +29,9 @@ pub struct WasmRuntime {
 	program: Option<WasmProgram>,
 }
 
-struct WasmRuntimeData {}
+struct WasmRuntimeData {
+	gmdls_data: Vec<u8>,
+}
 
 struct WasmProgram {
 	program: ir::Program,
@@ -51,7 +58,12 @@ impl WasmRuntime {
 		linker.func_wrap("math", "sincos", |x: f64| -> (f64, f64) { x.sin_cos() })?;
 		linker.func_wrap("math", "tan", |x: f64| -> f64 { x.tan() })?;
 
-		let data = Arc::new(WasmRuntimeData {});
+		linker.func_wrap("gmdls", "sample", |caller: Caller<'_, Arc<WasmRuntimeData>>, sound_id: i32, index: i32| -> i32 {
+			gmdls_lookup(&caller.data().gmdls_data, sound_id, index)
+		})?;
+
+		let gmdls_data = load_gmdls();
+		let data = Arc::new(WasmRuntimeData { gmdls_data });
 		let store = Store::new(&engine, data.clone());
 
 		Ok(Self {
@@ -145,6 +157,7 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	let f64_to_f64 = module.types.add(&[ValType::F64], &[ValType::F64]);
 	let f64_f64_to_f64 = module.types.add(&[ValType::F64, ValType::F64], &[ValType::F64]);
 	let f64_to_f64_f64 = module.types.add(&[ValType::F64], &[ValType::F64, ValType::F64]);
+	let i32_i32_to_i32 = module.types.add(&[ValType::I32, ValType::I32], &[ValType::I32]);
 
 	let (atan2, _) = module.add_import_func("math", "atan2", f64_f64_to_f64);
 	let (cos, _) = module.add_import_func("math", "cos", f64_to_f64);
@@ -154,6 +167,7 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	let (sin, _) = module.add_import_func("math", "sin", f64_to_f64);
 	let (sincos, _) = module.add_import_func("math", "sincos", f64_to_f64_f64);
 	let (tan, _) = module.add_import_func("math", "tan", f64_to_f64);
+	let (gmdls_sample_fn, _) = module.add_import_func("gmdls", "sample", i32_i32_to_i32);
 
 	let math = MathImports { sin, cos, tan, exp2, log2, pow, atan2, sincos };
 
@@ -170,6 +184,7 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 		math,
 		folded_multiply_fn,
 		buffer_alloc_fn,
+		gmdls_sample_fn,
 		function_id_map: HashMap::new(),
 	};
 
@@ -295,6 +310,7 @@ struct WasmGenerator<'ir> {
 	math: MathImports,
 	folded_multiply_fn: FunctionId,
 	buffer_alloc_fn: FunctionId,
+	gmdls_sample_fn: FunctionId,
 
 	function_id_map: HashMap<u16, FunctionId>,
 }
@@ -1065,6 +1081,28 @@ impl<'ir> WasmGenerator<'ir> {
 					return;
 				},
 
+				GmDlsSample => {
+					// Pop index (top), pop sound_id (second)
+					let index_local = stack.pop().unwrap();
+					let sound_id_local = stack.pop().unwrap();
+					// Extract sound_id as i32
+					b.local_get(sound_id_local);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
+					// Extract index as i32
+					b.local_get(index_local);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
+					// Call gmdls_sample(sound_id, index) -> i32
+					b.call(self.gmdls_sample_fn);
+					// Convert signed i32 to f64, splat to v128
+					b.unop(UnaryOp::F64ConvertSI32);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
+				},
+
 				_ => panic!("Unsupported instruction: {:?}", code[*pc]),
 			}
 			*pc += 1;
@@ -1145,4 +1183,60 @@ impl<'ir> WasmGenerator<'ir> {
 
 		builder.finish(args, &mut self.module().funcs)
 	}
+}
+
+fn load_gmdls() -> Vec<u8> {
+	let path = if cfg!(target_os = "windows") {
+		let sys_dir = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+		std::path::PathBuf::from(sys_dir).join("system32").join("drivers").join("gm.dls")
+	} else {
+		let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+		std::path::PathBuf::from(home).join(".jingler").join("gm.dls")
+	};
+	std::fs::read(&path).unwrap_or_default()
+}
+
+fn gmdls_lookup(data: &[u8], sound_id: i32, index: i32) -> i32 {
+	if sound_id < 0 || sound_id as usize >= GMDLS_COUNT {
+		return 0;
+	}
+	if data.len() < GMDLS_DATA {
+		return 0;
+	}
+
+	let off_addr = GMDLS_OFFSETS + sound_id as usize * 4;
+	if off_addr + 4 > data.len() {
+		return 0;
+	}
+	let offset = u32::from_le_bytes(data[off_addr..off_addr + 4].try_into().unwrap()) as usize;
+	let block = GMDLS_DATA + offset;
+	if block + 4 > data.len() {
+		return 0;
+	}
+	let wsmp_rel = u32::from_le_bytes(data[block..block + 4].try_into().unwrap()) as usize;
+	let wsmp = block + wsmp_rel;
+	if wsmp + 12 > data.len() || wsmp < 4 {
+		return 0;
+	}
+
+	let loop_length = u32::from_le_bytes(data[wsmp..wsmp + 4].try_into().unwrap());
+	let loop_base = u32::from_le_bytes(data[wsmp - 4..wsmp].try_into().unwrap());
+
+	let mut eff_index = index as u32;
+	if loop_length != 0 && eff_index >= loop_base {
+		eff_index = (eff_index - loop_base) % loop_length + loop_base;
+	}
+
+	let data_length = u32::from_le_bytes(data[wsmp + 8..wsmp + 12].try_into().unwrap());
+	let sample_count = data_length / 2;
+
+	if eff_index >= sample_count {
+		return 0;
+	}
+
+	let addr = wsmp + 10 + eff_index as usize * 2;
+	if addr + 4 > data.len() {
+		return 0;
+	}
+	i32::from_le_bytes(data[addr..addr + 4].try_into().unwrap())
 }
