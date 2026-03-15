@@ -335,7 +335,6 @@ impl<'ir> WasmGenerator<'ir> {
 
 	fn generate_function_for_procedure(&mut self, proc_id: u16) -> FunctionId {
 		let procedure = &self.program.procedures[proc_id as usize];
-		let memory = self.memory;
 
 		// First scan for calls and generate all callees
 		let mut callees = HashMap::new();
@@ -359,55 +358,83 @@ impl<'ir> WasmGenerator<'ir> {
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
 		builder.name(format!("{}: {}", procedure.kind, procedure.name));
-		let instr_builder = RefCell::new(builder.func_body());
-		let b = || instr_builder.borrow_mut();
+		let mut b = builder.func_body();
 
-		// Cell stack for cell push/fetch/pop
+		let mut stack = args.clone();
+		let mut pc = 0;
+
+		self.generate_function_for_procedure_inner(
+			&procedure.code, &mut pc, &mut b, &mut stack, &callees,
+		);
+
+		// Return values on stack
+		for local in &stack {
+			b.local_get(*local);
+		}
+
+		// Finish function
+		builder.finish(args, &mut self.module().funcs)
+	}
+
+	fn generate_function_for_procedure_inner(
+		&self,
+		code: &[ir::Instruction],
+		pc: &mut usize,
+		b: &mut InstrSeqBuilder,
+		stack: &mut Vec<LocalId>,
+		callees: &HashMap<u16, FunctionId>,
+	) {
+		// Helper: pop local from operand stack and push to wasm stack
+		macro_rules! pop {
+			() => {{
+				b.local_get(stack.pop().unwrap());
+			}}
+		}
+
+		// Helper: save wasm stack top into a new operand stack local
+		macro_rules! push {
+			() => {{
+				let local = self.module().locals.add(ValType::V128);
+				stack.push(local);
+				b.local_set(local);
+			}};
+		}
+
+		// Helper: pop N, run action, push M — only use where it covers the whole instruction
+		macro_rules! op {
+			($pops:expr, $pushes:expr, $action:expr) => {{
+				for _ in 0..$pops {
+					pop!();
+				}
+				$action;
+				for _ in 0..$pushes {
+					push!();
+				}
+			}};
+		}
+
+		// Save stack snapshot for reconciliation
+		let stack_snapshot = stack.clone();
+
 		let mut cell_stack = Vec::new();
-
-		// Operand stack and helpers
-		let operand_stack = RefCell::new(args.clone());
-		let pop = || {
-			b().local_get(operand_stack.borrow_mut().pop().unwrap());
-		};
-		let push = || {
-			let local = self.module().locals.add(ValType::V128);
-			operand_stack.borrow_mut().push(local);
-			b().local_set(local);
-		};
-		let op = |pops: usize, pushes: usize, action: &mut dyn FnMut()| {
-			for _ in 0..pops {
-				pop();
-			}
-			action();
-			for _ in 0..pushes {
-				push();
-			}
-		};
-
-		// Translate instructions
-		for instr in &procedure.code {
+		while *pc < code.len() {
 			use ir::Instruction::*;
-			match *instr {
+			match code[*pc] {
 				Expand(_) => {},
 				StackLoad(index) => {
-					let mut stack = operand_stack.borrow_mut();
 					let index = stack.len() - 1 - (index as usize);
 					let local = stack[index];
 					stack.push(local);
 				},
 				StackStore(index) => {
-					let mut stack = operand_stack.borrow_mut();
 					let local = stack.pop().unwrap();
 					let index = stack.len() - 1 - (index as usize);
 					stack[index] = local;
 				},
 				Pop => {
-					let mut stack = operand_stack.borrow_mut();
 					stack.pop();
 				},
 				PopNext => {
-					let mut stack = operand_stack.borrow_mut();
 					let local = stack.pop().unwrap();
 					stack.pop();
 					stack.push(local);
@@ -417,287 +444,276 @@ impl<'ir> WasmGenerator<'ir> {
 					let procedure = &self.program.procedures[proc_id as usize];
 					let id = callees[&proc_id];
 
-					let mut stack = operand_stack.borrow_mut();
 					let split_point = stack.len() - procedure.inputs.len();
 					let inputs = stack.split_off(split_point);
 					for input in inputs {
-						b().local_get(input);
+						b.local_get(input);
 					}
-					b().call(id);
+					b.call(id);
 					let outputs = procedure.outputs.iter().map(|_| self.module().locals.add(ValType::V128)).collect::<Vec<_>>();
 					for output in outputs.iter().rev() {
-						b().local_set(*output);
+						b.local_set(*output);
 					}
 					stack.extend(outputs);
 				},
 
-				Add => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Add); }),
-				Sub => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Sub); }),
-				Mul => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Mul); }),
-				Div => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Div); }),
-				And => op(2, 1, &mut || { b().binop(BinaryOp::V128And); }),
-				Or => op(2, 1, &mut || { b().binop(BinaryOp::V128Or); }),
-				Xor => op(2, 1, &mut || { b().binop(BinaryOp::V128Xor); }),
-				Min => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Min); }),
-				Max => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Max); }),
-				Eq => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Eq); }),
-				Greater => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Gt); }),
-				GreaterEq => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Ge); }),
-				Less => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Lt); }),
-				LessEq => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Le); }),
-				Neq => op(2, 1, &mut || { b().binop(BinaryOp::F64x2Ne); }),
-				Ceil => op(1, 1, &mut || { b().unop(UnaryOp::F64x2Ceil); }),
-				Floor => op(1, 1, &mut || { b().unop(UnaryOp::F64x2Floor); }),
-				Round => op(1, 1, &mut || { b().unop(UnaryOp::F64x2Nearest); }),
-				Trunc => op(1, 1, &mut || { b().unop(UnaryOp::F64x2Trunc); }),
-				Sqrt => op(1, 1, &mut || { b().unop(UnaryOp::F64x2Sqrt); }),
+				Add => op!(2, 1, b.binop(BinaryOp::F64x2Add)),
+				Sub => op!(2, 1, b.binop(BinaryOp::F64x2Sub)),
+				Mul => op!(2, 1, b.binop(BinaryOp::F64x2Mul)),
+				Div => op!(2, 1, b.binop(BinaryOp::F64x2Div)),
+				And => op!(2, 1, b.binop(BinaryOp::V128And)),
+				Or => op!(2, 1, b.binop(BinaryOp::V128Or)),
+				Xor => op!(2, 1, b.binop(BinaryOp::V128Xor)),
+				Min => op!(2, 1, b.binop(BinaryOp::F64x2Min)),
+				Max => op!(2, 1, b.binop(BinaryOp::F64x2Max)),
+				Eq => op!(2, 1, b.binop(BinaryOp::F64x2Eq)),
+				Greater => op!(2, 1, b.binop(BinaryOp::F64x2Gt)),
+				GreaterEq => op!(2, 1, b.binop(BinaryOp::F64x2Ge)),
+				Less => op!(2, 1, b.binop(BinaryOp::F64x2Lt)),
+				LessEq => op!(2, 1, b.binop(BinaryOp::F64x2Le)),
+				Neq => op!(2, 1, b.binop(BinaryOp::F64x2Ne)),
+				Ceil => op!(1, 1, b.unop(UnaryOp::F64x2Ceil)),
+				Floor => op!(1, 1, b.unop(UnaryOp::F64x2Floor)),
+				Round => op!(1, 1, b.unop(UnaryOp::F64x2Nearest)),
+				Trunc => op!(1, 1, b.unop(UnaryOp::F64x2Trunc)),
+				Sqrt => op!(1, 1, b.unop(UnaryOp::F64x2Sqrt)),
 
-				Constant(value) => op(0, 1, &mut || {
-					b().f32_const(f32::from_bits(value));
-					b().unop(UnaryOp::F64PromoteF32);
-					b().unop(UnaryOp::F64x2Splat);
+				Constant(value) => op!(0, 1, {
+					b.f32_const(f32::from_bits(value));
+					b.unop(UnaryOp::F64PromoteF32);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Parameter(index) => op(0, 1, &mut || {
-					b().i32_const(PARAMETER_ADDRESS + (index as i32) * 4);
-					b().load(memory, LoadKind::F32, MemArg { align: 4, offset: 0 });
-					b().unop(UnaryOp::F64PromoteF32);
-					b().unop(UnaryOp::F64x2Splat);
+				Parameter(index) => op!(0, 1, {
+					b.i32_const(PARAMETER_ADDRESS + (index as i32) * 4);
+					b.load(self.memory, LoadKind::F32, MemArg { align: 4, offset: 0 });
+					b.unop(UnaryOp::F64PromoteF32);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				SampleRate => op(0, 1, &mut || {
-					b().global_get(self.sample_rate);
-					b().unop(UnaryOp::F64PromoteF32);
-					b().unop(UnaryOp::F64x2Splat);
+				SampleRate => op!(0, 1, {
+					b.global_get(self.sample_rate);
+					b.unop(UnaryOp::F64PromoteF32);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Left => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64x2Splat);
+				Left => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Right => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 1 });
-					b().unop(UnaryOp::F64x2Splat);
+				Right => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 1 });
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				MergeLR => op(2, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().binop(BinaryOp::F64x2ReplaceLane { idx: 1 });
+				MergeLR => op!(2, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.binop(BinaryOp::F64x2ReplaceLane { idx: 1 });
 				}),
 
 				AndNot => {
-					let (s0, s1) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
-					b().local_get(s1);
-					b().local_get(s0);
-					b().binop(BinaryOp::V128AndNot);
-					push();
+					let s0 = stack.pop().unwrap();
+					let s1 = stack.pop().unwrap();
+					b.local_get(s1);
+					b.local_get(s0);
+					b.binop(BinaryOp::V128AndNot);
+					push!();
 				},
 				AddSub => {
-					let (s0, s1) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
-					b().local_get(s0);
-					b().local_get(s1);
-					b().local_get(s1);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64Neg);
-					b().binop(BinaryOp::F64x2ReplaceLane { idx: 0 });
-					b().binop(BinaryOp::F64x2Add);
-					push();
+					let s0 = stack.pop().unwrap();
+					let s1 = stack.pop().unwrap();
+					b.local_get(s0);
+					b.local_get(s1);
+					b.local_get(s1);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Neg);
+					b.binop(BinaryOp::F64x2ReplaceLane { idx: 0 });
+					b.binop(BinaryOp::F64x2Add);
+					push!();
 				},
 				SplitRL => {
-					let loc = operand_stack.borrow_mut().pop().unwrap();
-					b().local_get(loc);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64x2Splat);
-					push();
-					b().local_get(loc);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 1 });
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					let loc = stack.pop().unwrap();
+					b.local_get(loc);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
+					b.local_get(loc);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 1 });
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 
-				Cos => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.cos);
-					b().unop(UnaryOp::F64x2Splat);
+				Cos => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.cos);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Exp2 => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.exp2);
-					b().unop(UnaryOp::F64x2Splat);
+				Exp2 => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.exp2);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Log2 => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.log2);
-					b().unop(UnaryOp::F64x2Splat);
+				Log2 => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.log2);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Sin => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.sin);
-					b().unop(UnaryOp::F64x2Splat);
+				Sin => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.sin);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
-				Tan => op(1, 1, &mut || {
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.tan);
-					b().unop(UnaryOp::F64x2Splat);
+				Tan => op!(1, 1, {
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.tan);
+					b.unop(UnaryOp::F64x2Splat);
 				}),
 
 				Atan2 => {
-					let (top, second) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
-					b().local_get(top);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().local_get(second);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.atan2);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					let top = stack.pop().unwrap();
+					let second = stack.pop().unwrap();
+					b.local_get(top);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.local_get(second);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.atan2);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 				Pow => {
-					let (top, second) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
-					b().local_get(top);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().local_get(second);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.pow);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					let top = stack.pop().unwrap();
+					let second = stack.pop().unwrap();
+					b.local_get(top);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.local_get(second);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.pow);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 				SinCos => {
-					let input = operand_stack.borrow_mut().pop().unwrap();
+					let input = stack.pop().unwrap();
 					let cos_tmp = self.module().locals.add(ValType::F64);
-					b().local_get(input);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().call(self.math.sincos);
-					b().local_set(cos_tmp);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
-					b().local_get(cos_tmp);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					b.local_get(input);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.call(self.math.sincos);
+					b.local_set(cos_tmp);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
+					b.local_get(cos_tmp);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 
 				CellInit => {
-					b().global_get(self.state_ptr);
-					b().global_get(self.state_ptr);
-					b().i32_const(16);
-					b().binop(BinaryOp::I32Add);
-					b().global_set(self.state_ptr);
-					pop();
-					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+					b.global_get(self.state_ptr);
+					b.global_get(self.state_ptr);
+					b.i32_const(16);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.state_ptr);
+					pop!();
+					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 				},
 				CellRead => {
-					b().global_get(self.state_ptr);
-					b().global_get(self.state_ptr);
-					b().i32_const(16);
-					b().binop(BinaryOp::I32Add);
-					b().global_set(self.state_ptr);
-					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
-					push();
+					b.global_get(self.state_ptr);
+					b.global_get(self.state_ptr);
+					b.i32_const(16);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.state_ptr);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push!();
 				},
 				CellPush => {
 					let state_addr = self.module().locals.add(ValType::I32);
 					cell_stack.push(state_addr);
-					b().global_get(self.state_ptr);
-					b().local_tee(state_addr);
-					b().global_get(self.state_ptr);
-					b().i32_const(16);
-					b().binop(BinaryOp::I32Add);
-					b().global_set(self.state_ptr);
-					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
-					push();
+					b.global_get(self.state_ptr);
+					b.local_tee(state_addr);
+					b.global_get(self.state_ptr);
+					b.i32_const(16);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.state_ptr);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push!();
 				},
 				CellFetch => {
 					let state_addr = *cell_stack.last().unwrap();
-					b().local_get(state_addr);
-					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
-					push();
+					b.local_get(state_addr);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push!();
 				},
 				CellPop => {
 					let state_addr = cell_stack.pop().unwrap();
-					b().local_get(state_addr);
-					pop();
-					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+					b.local_get(state_addr);
+					pop!();
+					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 				},
 
 				StateEnter => {
 					let saved_state = self.module().locals.add(ValType::I32);
 					cell_stack.push(saved_state);
-					b().global_get(self.state_ptr);
-					b().local_set(saved_state);
+					b.global_get(self.state_ptr);
+					b.local_set(saved_state);
 				},
 				StateLeave => {
 					let saved_state = cell_stack.pop().unwrap();
-					b().local_get(saved_state);
-					b().global_set(self.state_ptr);
+					b.local_get(saved_state);
+					b.global_set(self.state_ptr);
 				},
 
 				BufferAlloc(_width) => {
 					// Pop size (V128), extract lane 0 as f64, convert to i32
-					let size_v128 = operand_stack.borrow_mut().pop().unwrap();
-					b().local_get(size_v128);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64Nearest);
-					b().unop(UnaryOp::I32TruncSSatF64);
+					let size_v128 = stack.pop().unwrap();
+					b.local_get(size_v128);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
 					// Call buffer_alloc(size) -> v128 descriptor
-					b().call(self.buffer_alloc_fn);
-					push();
+					b.call(self.buffer_alloc_fn);
+					push!();
 				},
 
 				BufferLoad => {
 					// Pop descriptor (V128 with i32x4 layout: [index, length, ptr, 0])
-					let desc = operand_stack.borrow_mut().pop().unwrap();
+					let desc = stack.pop().unwrap();
 					// addr = ptr + index * 16
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
-					b().i32_const(4);
-					b().binop(BinaryOp::I32Shl); // index * 16
-					b().binop(BinaryOp::I32Add); // ptr + index * 16
-					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
-					push();
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b.i32_const(4);
+					b.binop(BinaryOp::I32Shl);
+					b.binop(BinaryOp::I32Add);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push!();
 				},
 
 				BufferLoadWithOffset => {
 					// Pop offset (V128) and descriptor (V128)
-					let (offset_v128, desc) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
+					let offset_v128 = stack.pop().unwrap();
+					let desc = stack.pop().unwrap();
 
 					// Convert offset to i32 (round-to-nearest, like cvtsd2si)
 					let offset_i32 = self.module().locals.add(ValType::I32);
-					b().local_get(offset_v128);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64Nearest);
-					b().unop(UnaryOp::I32TruncSSatF64);
-					b().local_set(offset_i32);
+					b.local_get(offset_v128);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
+					b.local_set(offset_i32);
 
 					// read_index = index - offset
 					let read_index = self.module().locals.add(ValType::I32);
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
-					b().local_get(offset_i32);
-					b().binop(BinaryOp::I32Sub);
-					b().local_set(read_index);
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 });
+					b.local_get(offset_i32);
+					b.binop(BinaryOp::I32Sub);
+					b.local_set(read_index);
 
 					// if read_index < 0, wrap: read_index += length
-					b().local_get(read_index);
-					b().i32_const(0);
-					b().binop(BinaryOp::I32LtS);
-					b().if_else(
+					b.local_get(read_index);
+					b.i32_const(0);
+					b.binop(BinaryOp::I32LtS);
+					b.if_else(
 						None,
 						|then| {
 							then.local_get(read_index);
 							then.local_get(desc);
-							then.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+							then.unop(UnaryOp::I32x4ExtractLane { idx: 1 });
 							then.binop(BinaryOp::I32Add);
 							then.local_set(read_index);
 						},
@@ -705,43 +721,41 @@ impl<'ir> WasmGenerator<'ir> {
 					);
 
 					// addr = ptr + read_index * 16
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
-					b().local_get(read_index);
-					b().i32_const(4);
-					b().binop(BinaryOp::I32Shl);
-					b().binop(BinaryOp::I32Add);
-					b().load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
-					push();
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 });
+					b.local_get(read_index);
+					b.i32_const(4);
+					b.binop(BinaryOp::I32Shl);
+					b.binop(BinaryOp::I32Add);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					push!();
 				},
 
 				BufferLoadIndexed => {
 					// Pop index (V128) and descriptor (V128)
-					let (index_v128, desc) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
+					let index_v128 = stack.pop().unwrap();
+					let desc = stack.pop().unwrap();
 
 					// Convert index to i32
 					let idx = self.module().locals.add(ValType::I32);
-					b().local_get(index_v128);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64Nearest);
-					b().unop(UnaryOp::I32TruncSSatF64);
-					b().local_set(idx);
+					b.local_get(index_v128);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
+					b.local_set(idx);
 
 					// Bounds check: if index >= length, return zero
 					let result = self.module().locals.add(ValType::V128);
 					// Default to zero
-					b().i32_const(0);
-					b().unop(UnaryOp::I32x4Splat);
-					b().local_set(result);
+					b.i32_const(0);
+					b.unop(UnaryOp::I32x4Splat);
+					b.local_set(result);
 
-					b().local_get(idx);
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
-					b().binop(BinaryOp::I32LtU);
-					b().if_else(
+					b.local_get(idx);
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+					b.binop(BinaryOp::I32LtU);
+					b.if_else(
 						None,
 						|then| {
 							// addr = ptr + index * 16
@@ -751,50 +765,48 @@ impl<'ir> WasmGenerator<'ir> {
 							then.i32_const(4);
 							then.binop(BinaryOp::I32Shl);
 							then.binop(BinaryOp::I32Add);
-							then.load(memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+							then.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
 							then.local_set(result);
 						},
 						|_else| {},
 					);
 
-					b().local_get(result);
-					push();
+					b.local_get(result);
+					push!();
 				},
 
 				BufferStoreAndStep => {
 					// Pop value (V128) and descriptor (V128)
-					let (value, desc) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
+					let value = stack.pop().unwrap();
+					let desc = stack.pop().unwrap();
 
 					// Store value at ptr + index * 16
 					let index = self.module().locals.add(ValType::I32);
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
-					b().local_set(index);
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b.local_set(index);
 
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
-					b().local_get(index);
-					b().i32_const(4);
-					b().binop(BinaryOp::I32Shl);
-					b().binop(BinaryOp::I32Add);
-					b().local_get(value);
-					b().store(memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
+					b.local_get(index);
+					b.i32_const(4);
+					b.binop(BinaryOp::I32Shl);
+					b.binop(BinaryOp::I32Add);
+					b.local_get(value);
+					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 
 					// Increment index
-					b().local_get(index);
-					b().i32_const(1);
-					b().binop(BinaryOp::I32Add);
-					b().local_set(index);
+					b.local_get(index);
+					b.i32_const(1);
+					b.binop(BinaryOp::I32Add);
+					b.local_set(index);
 
 					// Wrap: if index >= length, index = 0
-					b().local_get(index);
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
-					b().binop(BinaryOp::I32GeU);
-					b().if_else(
+					b.local_get(index);
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+					b.binop(BinaryOp::I32GeU);
+					b.if_else(
 						None,
 						|then| {
 							then.i32_const(0);
@@ -804,88 +816,188 @@ impl<'ir> WasmGenerator<'ir> {
 					);
 
 					// Update descriptor with new index
-					b().local_get(desc);
-					b().local_get(index);
-					b().binop(BinaryOp::I32x4ReplaceLane { idx: 0 });
-					push();
+					b.local_get(desc);
+					b.local_get(index);
+					b.binop(BinaryOp::I32x4ReplaceLane { idx: 0 });
+					push!();
 				},
 
 				BufferIndex => {
 					// Pop descriptor, push current index as f64x2
-					let desc = operand_stack.borrow_mut().pop().unwrap();
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64ConvertSI32);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					let desc = stack.pop().unwrap();
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b.unop(UnaryOp::F64ConvertSI32);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 
 				BufferLength => {
 					// Pop descriptor, push length as f64x2
-					let desc = operand_stack.borrow_mut().pop().unwrap();
-					b().local_get(desc);
-					b().unop(UnaryOp::I32x4ExtractLane { idx: 1 });
-					b().unop(UnaryOp::F64ConvertSI32);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					let desc = stack.pop().unwrap();
+					b.local_get(desc);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
+					b.unop(UnaryOp::F64ConvertSI32);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 
 				Random => {
 					// Pop top (seed a) and second (seed b)
-					let (top, second) = {
-						let mut stack = operand_stack.borrow_mut();
-						(stack.pop().unwrap(), stack.pop().unwrap())
-					};
+					let top = stack.pop().unwrap();
+					let second = stack.pop().unwrap();
 
 					// Extract lane 0 of second arg, reinterpret as i64 bits
 					let bits = self.module().locals.add(ValType::I64);
-					b().local_get(second);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::I64ReinterpretF64);
-					b().local_set(bits);
+					b.local_get(second);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::I64ReinterpretF64);
+					b.local_set(bits);
 
 					// Convert top arg lane 0 to i32 (cvtsd2si equivalent)
-					b().local_get(top);
-					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
-					b().unop(UnaryOp::F64Nearest);
-					b().unop(UnaryOp::I32TruncSSatF64);
+					b.local_get(top);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.unop(UnaryOp::F64Nearest);
+					b.unop(UnaryOp::I32TruncSSatF64);
 
 					// First folded multiply
-					b().call(self.folded_multiply_fn);
+					b.call(self.folded_multiply_fn);
 					// XOR with upper 32 bits of second arg
-					b().local_get(bits);
-					b().i64_const(32);
-					b().binop(BinaryOp::I64ShrU);
-					b().unop(UnaryOp::I32WrapI64);
-					b().binop(BinaryOp::I32Xor);
+					b.local_get(bits);
+					b.i64_const(32);
+					b.binop(BinaryOp::I64ShrU);
+					b.unop(UnaryOp::I32WrapI64);
+					b.binop(BinaryOp::I32Xor);
 
 					// Second folded multiply
-					b().call(self.folded_multiply_fn);
+					b.call(self.folded_multiply_fn);
 					// XOR with lower 32 bits of second arg
-					b().local_get(bits);
-					b().unop(UnaryOp::I32WrapI64);
-					b().binop(BinaryOp::I32Xor);
+					b.local_get(bits);
+					b.unop(UnaryOp::I32WrapI64);
+					b.binop(BinaryOp::I32Xor);
 
 					// Third folded multiply
-					b().call(self.folded_multiply_fn);
+					b.call(self.folded_multiply_fn);
 
 					// Convert signed i32 to f64, splat to V128
-					b().unop(UnaryOp::F64ConvertSI32);
-					b().unop(UnaryOp::F64x2Splat);
-					push();
+					b.unop(UnaryOp::F64ConvertSI32);
+					b.unop(UnaryOp::F64x2Splat);
+					push!();
 				},
 
-				_ => panic!("Unsupported instruction: {:?}", instr),
+				RepeatInit => {
+					// Pop limit, store in cell (CellInit pattern), push limit + counter=0
+					let limit_local = stack.pop().unwrap();
+
+					// CellInit: store limit at state_ptr, advance state_ptr
+					b.global_get(self.state_ptr);
+					b.global_get(self.state_ptr);
+					b.i32_const(16);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.state_ptr);
+					b.local_get(limit_local);
+					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+
+					// Push limit and counter(=0) onto operand stack
+					stack.push(limit_local);
+					let counter_local = self.module().locals.add(ValType::V128);
+					b.f64_const(0.0);
+					b.unop(UnaryOp::F64x2Splat);
+					b.local_set(counter_local);
+					stack.push(counter_local);
+
+					*pc += 1;
+					b.loop_(None, |loop_b| {
+						self.generate_function_for_procedure_inner(
+							code, pc, loop_b, stack, callees,
+						);
+					});
+
+					stack.pop(); // counter
+					stack.pop(); // limit
+					continue;
+				},
+
+				RepeatStart => {
+					// CellRead: read limit from state memory, advance state_ptr
+					let limit_local = self.module().locals.add(ValType::V128);
+					b.global_get(self.state_ptr);
+					b.global_get(self.state_ptr);
+					b.i32_const(16);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.state_ptr);
+					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
+					b.local_set(limit_local);
+
+					// Push limit and counter(=0) onto operand stack
+					stack.push(limit_local);
+					let counter_local = self.module().locals.add(ValType::V128);
+					b.f64_const(0.0);
+					b.unop(UnaryOp::F64x2Splat);
+					b.local_set(counter_local);
+					stack.push(counter_local);
+
+					*pc += 1;
+					b.loop_(None, |loop_b| {
+						self.generate_function_for_procedure_inner(
+							code, pc, loop_b, stack, callees,
+						);
+					});
+
+					stack.pop(); // counter
+					stack.pop(); // limit
+					continue;
+				},
+
+				RepeatEnd => {
+					let snapshot = stack_snapshot.clone();
+
+					// Pop counter and limit from operand stack
+					let counter = stack.pop().unwrap();
+					let _limit = stack.pop().unwrap();
+
+					// Reconcile: copy changed locals back to their snapshot positions
+					let snapshot_base_len = snapshot.len() - 2;
+					for i in 0..stack.len().min(snapshot_base_len) {
+						if stack[i] != snapshot[i] {
+							b.local_get(stack[i]);
+							b.local_set(snapshot[i]);
+						}
+					}
+
+					// Get the snapshot's counter and limit locals
+					let snapshot_counter = snapshot[snapshot.len() - 1];
+					let snapshot_limit = snapshot[snapshot.len() - 2];
+
+					// Increment counter: load, extract lane 0, add 1.0, splat, store
+					b.local_get(counter);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.f64_const(1.0);
+					b.binop(BinaryOp::F64Add);
+					b.unop(UnaryOp::F64x2Splat);
+					b.local_set(snapshot_counter);
+
+					// Compare counter < limit
+					b.local_get(snapshot_counter);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.local_get(snapshot_limit);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.binop(BinaryOp::F64Lt);
+
+					// Branch back to loop start if counter < limit
+					b.br_if(b.id());
+
+					// After loop: restore stack to snapshot minus counter and limit
+					*stack = stack_snapshot;
+
+					*pc += 1;
+					return;
+				},
+
+				_ => panic!("Unsupported instruction: {:?}", code[*pc]),
 			}
+			*pc += 1;
 		}
-
-		// Return values on stack
-		for local in operand_stack.borrow().iter() {
-			b().local_get(*local);
-		}
-
-		// Finish function
-		builder.finish(args, &mut self.module().funcs)
 	}
 
 	fn generate_initialize_function(&mut self) -> FunctionId {
@@ -929,7 +1041,6 @@ impl<'ir> WasmGenerator<'ir> {
 		let results = [];
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
-		let memory = self.memory;
 		let mut b = builder.func_body();
 
 		// address = PARAMETER_ADDRESS + index * 4
@@ -940,7 +1051,7 @@ impl<'ir> WasmGenerator<'ir> {
 		b.binop(BinaryOp::I32Add);
 		// store f32 value
 		b.local_get(args[1]);
-		b.store(memory, StoreKind::F32, MemArg { align: 4, offset: 0 });
+		b.store(self.memory, StoreKind::F32, MemArg { align: 4, offset: 0 });
 
 		builder.finish(args, &mut self.module().funcs)
 	}
