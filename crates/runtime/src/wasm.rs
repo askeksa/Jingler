@@ -10,6 +10,7 @@ use wasmtime::{Engine, Linker, Module, Store, TypedFunc};
 use crate::JinglerRuntime;
 use ::ir;
 
+const RANDOM_SCRAMBLE: i64 = 0x42118159;
 const STATE_ADDRESS: i32 = 0;
 
 pub struct WasmRuntime {
@@ -142,6 +143,8 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 
 	let math = MathImports { sin, cos, tan, exp2, log2, pow, atan2, sincos };
 
+	let folded_multiply = generate_folded_multiply(&mut module);
+
 	let mut generator = WasmGenerator {
 		program,
 		module: RefCell::new(module),
@@ -149,12 +152,38 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 		sample_rate,
 		state_ptr,
 		math,
+		folded_multiply,
 		function_id_map: HashMap::new(),
 	};
 
 	generator.generate()?;
 
 	Ok(generator.module().emit_wasm())
+}
+
+/// Build folded_multiply(val: i32) -> i32:
+///   product = (val as u64) * RANDOM_SCRAMBLE
+///   return (product as i32) ^ ((product >> 32) as i32)
+fn generate_folded_multiply(module: &mut walrus::Module) -> FunctionId {
+	let params = [ValType::I32];
+	let results = [ValType::I32];
+	let args: Vec<LocalId> = params.iter().map(|p| module.locals.add(*p)).collect();
+	let mut builder = FunctionBuilder::new(&mut module.types, &params, &results);
+	builder.name("folded_multiply".to_string());
+	let product = module.locals.add(ValType::I64);
+	let mut b = builder.func_body();
+	b.local_get(args[0]);
+	b.unop(UnaryOp::I64ExtendUI32);
+	b.i64_const(RANDOM_SCRAMBLE);
+	b.binop(BinaryOp::I64Mul);
+	b.local_tee(product);
+	b.unop(UnaryOp::I32WrapI64);
+	b.local_get(product);
+	b.i64_const(32);
+	b.binop(BinaryOp::I64ShrU);
+	b.unop(UnaryOp::I32WrapI64);
+	b.binop(BinaryOp::I32Xor);
+	builder.finish(args, &mut module.funcs)
 }
 
 struct MathImports {
@@ -175,6 +204,7 @@ struct WasmGenerator<'ir> {
 	sample_rate: GlobalId,
 	state_ptr: GlobalId,
 	math: MathImports,
+	folded_multiply: FunctionId,
 
 	function_id_map: HashMap<u16, FunctionId>,
 }
@@ -494,6 +524,51 @@ impl<'ir> WasmGenerator<'ir> {
 					b().local_get(state_addr);
 					pop();
 					b().store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
+				},
+
+				Random => {
+					// Pop top (seed a) and second (seed b)
+					let (top, second) = {
+						let mut stack = operand_stack.borrow_mut();
+						(stack.pop().unwrap(), stack.pop().unwrap())
+					};
+
+					// Extract lane 0 of second arg, reinterpret as i64 bits
+					let bits = self.module().locals.add(ValType::I64);
+					b().local_get(second);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().unop(UnaryOp::I64ReinterpretF64);
+					b().local_set(bits);
+
+					// Convert top arg lane 0 to i32 (cvtsd2si equivalent)
+					b().local_get(top);
+					b().unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b().unop(UnaryOp::F64Nearest);
+					b().unop(UnaryOp::I32TruncSSatF64);
+
+					// First folded multiply
+					b().call(self.folded_multiply);
+					// XOR with upper 32 bits of second arg
+					b().local_get(bits);
+					b().i64_const(32);
+					b().binop(BinaryOp::I64ShrU);
+					b().unop(UnaryOp::I32WrapI64);
+					b().binop(BinaryOp::I32Xor);
+
+					// Second folded multiply
+					b().call(self.folded_multiply);
+					// XOR with lower 32 bits of second arg
+					b().local_get(bits);
+					b().unop(UnaryOp::I32WrapI64);
+					b().binop(BinaryOp::I32Xor);
+
+					// Third folded multiply
+					b().call(self.folded_multiply);
+
+					// Convert signed i32 to f64, splat to V128
+					b().unop(UnaryOp::F64ConvertSI32);
+					b().unop(UnaryOp::F64x2Splat);
+					push();
 				},
 
 				_ => panic!("Unsupported instruction: {:?}", instr),
