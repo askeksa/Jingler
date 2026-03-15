@@ -11,7 +11,8 @@ use crate::JinglerRuntime;
 use ::ir;
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
-const STATE_ADDRESS: i32 = 0;
+const PARAMETER_ADDRESS: i32 = 0;
+const STATE_ADDRESS: i32 = 0x10000;
 const BUFFER_BASE_ADDRESS: i32 = 0x100000; // 1MB into Wasm memory
 const INITIAL_MEMORY_SIZE: u64 = BUFFER_BASE_ADDRESS as u64; // 1MB
 const MAX_MEMORY_SIZE: u64 = 0x40000000; // 1GB
@@ -33,6 +34,7 @@ struct WasmProgram {
 	note_on_func: TypedFunc<(i32, i32, i32), ()>,
 	note_off_func: TypedFunc<(i32, i32), ()>,
 	next_sample_func: TypedFunc<(), (f64, f64)>,
+	set_parameter_func: TypedFunc<(i32, f32), ()>,
 }
 
 impl WasmRuntime {
@@ -70,6 +72,7 @@ impl JinglerRuntime for WasmRuntime {
 		let note_on_func = instance.get_typed_func::<(i32, i32, i32), ()>(&mut self.store, "note_on")?;
 		let note_off_func = instance.get_typed_func::<(i32, i32), ()>(&mut self.store, "note_off")?;
 		let next_sample_func = instance.get_typed_func::<(), (f64, f64)>(&mut self.store, "next_sample")?;
+		let set_parameter_func = instance.get_typed_func::<(i32, f32), ()>(&mut self.store, "set_parameter")?;
 
 		self.program = Some(WasmProgram {
 			program: program.clone(),
@@ -79,6 +82,7 @@ impl JinglerRuntime for WasmRuntime {
 			note_on_func,
 			note_off_func,
 			next_sample_func,
+			set_parameter_func,
 		});
 
 		self.reset()
@@ -118,8 +122,14 @@ impl JinglerRuntime for WasmRuntime {
 		Ok(())
 	}
 
-	fn set_parameter(&mut self, _index: usize, _value: f32) -> Result<()> {
-		// TODO
+	fn set_parameter(&mut self, index: usize, value: f32) -> Result<()> {
+		if let Some(p) = &self.program {
+			if index < p.program.parameters.len() {
+				let param = &p.program.parameters[index];
+				let quant_value = param.min + value * (param.max - param.min);
+				p.set_parameter_func.call(&mut self.store, (index as i32, quant_value))?;
+			}
+		}
 		Ok(())
 	}
 }
@@ -307,6 +317,9 @@ impl<'ir> WasmGenerator<'ir> {
 		let next_sample_function_id = self.generate_next_sample_function();
 		self.module().exports.add("next_sample", next_sample_function_id);
 
+		let set_parameter_function_id = self.generate_set_parameter_function();
+		self.module().exports.add("set_parameter", set_parameter_function_id);
+
 		Ok(())
 	}
 
@@ -441,6 +454,12 @@ impl<'ir> WasmGenerator<'ir> {
 
 				Constant(value) => op(0, 1, &mut || {
 					b().f32_const(f32::from_bits(value));
+					b().unop(UnaryOp::F64PromoteF32);
+					b().unop(UnaryOp::F64x2Splat);
+				}),
+				Parameter(index) => op(0, 1, &mut || {
+					b().i32_const(PARAMETER_ADDRESS + (index as i32) * 4);
+					b().load(memory, LoadKind::F32, MemArg { align: 4, offset: 0 });
 					b().unop(UnaryOp::F64PromoteF32);
 					b().unop(UnaryOp::F64x2Splat);
 				}),
@@ -899,6 +918,29 @@ impl<'ir> WasmGenerator<'ir> {
 		let results = [];
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
+
+		builder.finish(args, &mut self.module().funcs)
+	}
+
+	fn generate_set_parameter_function(&mut self) -> FunctionId {
+		// set_parameter(index: i32, value: f32)
+		// Stores value at PARAMETER_ADDRESS + index * 4
+		let params = [ValType::I32, ValType::F32];
+		let results = [];
+		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
+		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
+		let memory = self.memory;
+		let mut b = builder.func_body();
+
+		// address = PARAMETER_ADDRESS + index * 4
+		b.local_get(args[0]);
+		b.i32_const(4);
+		b.binop(BinaryOp::I32Mul);
+		b.i32_const(PARAMETER_ADDRESS);
+		b.binop(BinaryOp::I32Add);
+		// store f32 value
+		b.local_get(args[1]);
+		b.store(memory, StoreKind::F32, MemArg { align: 4, offset: 0 });
 
 		builder.finish(args, &mut self.module().funcs)
 	}
