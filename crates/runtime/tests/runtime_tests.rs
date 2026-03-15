@@ -500,6 +500,85 @@ fn buffer_length_fn() {
 }
 
 // ============================================================
+// Buffer initialization loops
+// ============================================================
+
+#[test]
+fn buffer_init_length() {
+	let src = r#"
+		module gen() -> out: mono
+			out = 1.0
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 5 buffer gen()
+			out = length(buf)
+	"#;
+	let s = run1(src);
+	assert_mono(s, 5.0);
+}
+
+#[test]
+fn buffer_init_constant_body() {
+	let src = r#"
+		module gen() -> out: mono
+			out = 7.0
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 3 buffer gen()
+			out = buf[0] + buf[1] + buf[2]
+	"#;
+	let s = run1(src);
+	// All three elements should be 7.0
+	assert_mono(s, 21.0);
+}
+
+#[test]
+fn buffer_init_stateful_body() {
+	let src = r#"
+		module counter() -> out: mono
+			out = cell(out + 1.0, 0.0)
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 4 buffer counter()
+			out = buf[0] + buf[1] * 10 + buf[2] * 100 + buf[3] * 1000
+	"#;
+	let s = run1(src);
+	// counter produces 0, 1, 2, 3 on first sample
+	// 0 + 10 + 200 + 3000 = 3210
+	assert_mono(s, 3210.0);
+}
+
+#[test]
+fn buffer_init_with_static_arg() {
+	let src = r#"
+		module gen(base: static mono) -> out: mono
+			out = base * 2.0
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 3 buffer gen(5.0)
+			out = buf[0] + buf[1] + buf[2]
+	"#;
+	let s = run1(src);
+	// gen(5) always produces 10.0, so all three elements are 10.0
+	assert_mono(s, 30.0);
+}
+
+#[test]
+fn buffer_init_iterate_with_for_loop() {
+	let src = r#"
+		module gen() -> out: mono
+			out = cell(out + 1.0, 0.0)
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 5 buffer gen()
+			out = for i to 5 add buf[i]
+	"#;
+	let s = run1(src);
+	// buf = [0, 1, 2, 3, 4], sum = 10
+	assert_mono(s, 10.0);
+}
+
+// ============================================================
 // Conditionals
 // ============================================================
 
