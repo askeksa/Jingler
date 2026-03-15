@@ -134,7 +134,7 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledMember] = &[
 ];
 
 pub static PRECOMPILED_MODULES: &[PrecompiledMember] = &[
-	("$autokill_mono", N, sig!([mono, mono] [mono]), &[code![
+	("$autokill_mono", N, sig!([dynamic mono number, dynamic mono number] [dynamic mono number]), &[code![
 		Constant(0),
 		CellInit
 	], code![
@@ -151,7 +151,7 @@ pub static PRECOMPILED_MODULES: &[PrecompiledMember] = &[
 		Pop, // Pop threshold
 		Add // Add the output to the accumulator
 	]]),
-	("$autokill_stereo", N, sig!([stereo, stereo] [stereo]), &[code![
+	("$autokill_stereo", N, sig!([dynamic stereo number, dynamic stereo number] [dynamic stereo number]), &[code![
 		Constant(0),
 		CellInit
 	], code![
