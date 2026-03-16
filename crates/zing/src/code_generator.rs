@@ -407,8 +407,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					// Run autokill code
 					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][1], None)]);
 				}
-				proc_inputs = self.make_proc_type_list(inputs, None);
-				proc_outputs = self.make_proc_type_list(inputs, None);
+				proc_inputs = self.make_proc_type_list(&real_inputs, None);
+				proc_outputs = self.make_proc_type_list(&real_inputs, None);
 			},
 		}
 
