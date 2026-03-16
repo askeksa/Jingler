@@ -1240,3 +1240,394 @@ fn gmdls_all_sounds_start() {
 		assert_eq!(s[0], s[1], "gmdls({sound}, 0) should be mono (left == right)");
 	}
 }
+
+// ============================================================
+// Instruments: channel routing
+// ============================================================
+
+#[test]
+fn different_instruments_different_channels_note_on() {
+	// Two instruments on different channels. note_on on one channel
+	// should only activate that channel's instrument.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = 1.0
+
+		instrument boop() -> out: mono
+			out = 2.0
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 2::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Before any notes, both silent
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 0.0);
+
+	// note_on channel 0 → beep activates, boop stays silent
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 1.0, 0.0);
+
+	// note_on channel 1 → boop also activates
+	rt.note_on(1, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 1.0, 2.0);
+}
+
+#[test]
+fn different_instruments_different_channels_note_off() {
+	// note_off on one channel should only silence that channel's instrument.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = gate() ? 1.0 : 0.0
+
+		instrument boop() -> out: mono
+			out = gate() ? 2.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 2::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 1.0, 2.0);
+
+	// note_off channel 0 → beep silenced, boop still playing
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 2.0);
+
+	// note_off channel 1 → both silent
+	rt.note_off(1, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 0.0);
+}
+
+#[test]
+fn same_instrument_different_channels_different_processing() {
+	// Same instrument type on two channels, processed differently in main.
+	// Left channel gets the instrument output, right gets it doubled.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			a = 1::tone()
+			b = 2::tone()
+			out = [a, b * 2]
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Channel 0 plays note 60, channel 1 plays note 72
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// Left = key of ch0 = 60, Right = key of ch1 * 2 = 144
+	assert_sample(s, 60.0, 144.0);
+}
+
+#[test]
+fn different_instruments_same_channel_note_on() {
+	// Two instruments on the same MIDI channel.
+	// note_on should activate both.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = 1.0
+
+		instrument boop() -> out: mono
+			out = 2.0
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 1::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Before note_on, both silent
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 0.0);
+
+	// note_on channel 0 → both beep and boop activate
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 1.0, 2.0);
+}
+
+#[test]
+fn different_instruments_same_channel_note_off() {
+	// Two instruments on the same channel. note_off affects both.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = gate() ? 1.0 : 0.0
+
+		instrument boop() -> out: mono
+			out = gate() ? 2.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 1::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 1.0, 2.0);
+
+	// note_off on channel 0 silences both
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 0.0);
+}
+
+// ============================================================
+// Instruments: multiple simultaneous notes
+// ============================================================
+
+#[test]
+fn multiple_notes_different_instruments() {
+	// Different notes on different instruments play simultaneously.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = key()
+
+		instrument boop() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 2::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 60.0, 72.0);
+
+	// Add another note on channel 0 — both notes should sound
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// beep sums both notes: 60 + 48 = 108
+	assert_sample(s, 108.0, 72.0);
+}
+
+#[test]
+fn multiple_notes_same_instrument() {
+	// Multiple notes on the same instrument sum their outputs.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 60.0);
+
+	// Second note on same instrument
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// Both notes playing: 60 + 72 = 132
+	assert_mono(s, 132.0);
+
+	// Third note
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// All three: 60 + 72 + 48 = 180
+	assert_mono(s, 180.0);
+}
+
+// ============================================================
+// Instruments: note start/stop ordering
+// ============================================================
+
+#[test]
+fn notes_start_stop_same_order() {
+	// Start two notes, stop them in the same order.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? key() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Start note 60, then note 72
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 132.0); // 60 + 72
+
+	// Stop note 60 first (same order as started)
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 72.0); // only 72 remains
+
+	// Stop note 72
+	rt.note_off(0, 72).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn notes_start_stop_different_order() {
+	// Start two notes, stop them in the reverse order.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? key() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Start note 60, then note 72
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 132.0); // 60 + 72
+
+	// Stop note 72 first (reverse order)
+	rt.note_off(0, 72).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 60.0); // only 60 remains
+
+	// Stop note 60
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn notes_start_simultaneously_stop_one() {
+	// Two notes start, one stops while the other continues.
+	let src = r#"
+		instrument beep() -> out: mono
+			out = gate() ? key() : 0.0
+
+		instrument boop() -> out: mono
+			out = gate() ? key() : 0.0
+
+		global module main () -> (out: stereo)
+			out = [1::beep(), 2::boop()]
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Both instruments start at the same time
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 60.0, 72.0);
+
+	// Stop only channel 0
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_sample(s, 0.0, 72.0);
+}
+
+#[test]
+fn notes_interleaved_start_stop() {
+	// Interleaved pattern: start A, start B, stop A, start C, stop B, stop C
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? key() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Start A (note 60)
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 60.0);
+
+	// Start B (note 72)
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 132.0); // 60 + 72
+
+	// Stop A (note 60)
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 72.0);
+
+	// Start C (note 48)
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 120.0); // 72 + 48
+
+	// Stop B (note 72)
+	rt.note_off(0, 72).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 48.0);
+
+	// Stop C (note 48)
+	rt.note_off(0, 48).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+// ============================================================
+// Instruments: autokill
+// ============================================================
+
+#[test]
+fn autokill_silences_tiny_output() {
+	// An instrument that produces a very small constant output (below the
+	// autokill threshold of ~0.00006) should be killed within 10000 samples
+	// and start returning exactly 0.
+	let src = r#"
+		instrument quiet() -> out: mono
+			out = 0.00001
+
+		global module main () -> (out: stereo)
+			out = 1::quiet()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+
+	// Initially the instrument should produce output
+	let s = rt.next_sample().unwrap();
+	assert_approx(s[0], 0.00001);
+
+	// Run up to 10000 samples — autokill should trigger before that
+	for _ in 0..9999 {
+		rt.next_sample().unwrap();
+	}
+
+	// After 10000 total samples, the note should have been killed
+	let s = rt.next_sample().unwrap();
+	assert_eq!(s[0], 0.0, "autokill should have silenced the note");
+	assert_eq!(s[1], 0.0, "autokill should have silenced the note");
+}
+
+#[test]
+fn autokill_does_not_kill_loud_output() {
+	// An instrument that produces output above the autokill threshold
+	// should NOT be killed.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = 1.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+
+	// Run 10000 samples — should still be producing output
+	for _ in 0..10000 {
+		rt.next_sample().unwrap();
+	}
+
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 1.0);
+}
