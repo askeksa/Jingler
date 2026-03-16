@@ -17,10 +17,15 @@ const GMDLS_DATA: usize = 0x4462C;
 const GMDLS_COUNT: usize = 495;
 
 const PARAMETER_ADDRESS: i32 = 0;
+const NOTE_LISTS_ADDRESS: i32 = 0x1000;
+const NOTE_COMMANDS_ADDRESS: i32 = 0x2000;
 const STATE_ADDRESS: i32 = 0x10000;
 const BUFFER_BASE_ADDRESS: i32 = 0x100000; // 1MB into Wasm memory
 const INITIAL_MEMORY_SIZE: u64 = BUFFER_BASE_ADDRESS as u64; // 1MB
 const MAX_MEMORY_SIZE: u64 = 0x40000000; // 1GB
+
+/// Sentinel track value marking end of note commands
+const COMMAND_SENTINEL: i32 = 0x7FFFFFFF;
 
 pub struct WasmRuntime {
 	engine: Engine,
@@ -36,7 +41,6 @@ struct WasmRuntimeData {
 struct WasmProgram {
 	program: ir::Program,
 	sample_rate: f32,
-	module: Module,
 	initialize_func: TypedFunc<f32, ()>,
 	note_on_func: TypedFunc<(i32, i32, i32), ()>,
 	note_off_func: TypedFunc<(i32, i32), ()>,
@@ -89,7 +93,6 @@ impl JinglerRuntime for WasmRuntime {
 		self.program = Some(WasmProgram {
 			program: program.clone(),
 			sample_rate,
-			module,
 			initialize_func,
 			note_on_func,
 			note_off_func,
@@ -122,14 +125,22 @@ impl JinglerRuntime for WasmRuntime {
 
 	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
 		if let Some(program) = &self.program {
-			program.note_on_func.call(&mut self.store, (channel as i32, note as i32, velocity as i32))?;
+			for (track, track_channel) in program.program.track_order.iter().enumerate() {
+				if *track_channel == channel as usize {
+					program.note_on_func.call(&mut self.store, (track as i32, note as i32, velocity as i32))?;
+				}
+			}
 		}
 		Ok(())
 	}
 
 	fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
 		if let Some(program) = &self.program {
-			program.note_off_func.call(&mut self.store, (channel as i32, note as i32))?;
+			for (track, track_channel) in program.program.track_order.iter().enumerate() {
+				if *track_channel == channel as usize {
+					program.note_off_func.call(&mut self.store, (track as i32, note as i32))?;
+				}
+			}
 		}
 		Ok(())
 	}
@@ -153,6 +164,11 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(sample_rate)));
 	let state_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
 	let buffer_alloc_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(BUFFER_BASE_ADDRESS)));
+	let track_command_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(NOTE_COMMANDS_ADDRESS)));
+	let track_index = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
+	let note_alloc_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
+	let note_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
+	let prev_link_addr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
 
 	let f64_to_f64 = module.types.add(&[ValType::F64], &[ValType::F64]);
 	let f64_f64_to_f64 = module.types.add(&[ValType::F64, ValType::F64], &[ValType::F64]);
@@ -181,6 +197,11 @@ fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
 		sample_rate,
 		state_ptr,
 		buffer_alloc_ptr,
+		track_command_ptr,
+		track_index,
+		note_alloc_ptr,
+		note_ptr,
+		prev_link_addr,
 		math,
 		folded_multiply_fn,
 		buffer_alloc_fn,
@@ -307,6 +328,11 @@ struct WasmGenerator<'ir> {
 	sample_rate: GlobalId,
 	state_ptr: GlobalId,
 	buffer_alloc_ptr: GlobalId,
+	track_command_ptr: GlobalId,
+	track_index: GlobalId,
+	note_alloc_ptr: GlobalId,
+	note_ptr: GlobalId,
+	prev_link_addr: GlobalId,
 	math: MathImports,
 	folded_multiply_fn: FunctionId,
 	buffer_alloc_fn: FunctionId,
@@ -378,7 +404,6 @@ impl<'ir> WasmGenerator<'ir> {
 
 		let mut stack = args.clone();
 		let mut pc = 0;
-
 		self.generate_function_for_procedure_inner(
 			&procedure.code, &mut pc, &mut b, &mut stack, &callees,
 		);
@@ -1104,13 +1129,13 @@ impl<'ir> WasmGenerator<'ir> {
 				},
 
 				IfGreaterEq => {
-					// Compare: second-from-top >= top (both f64x2, compare lane 0)
-					let b_val = stack[stack.len() - 1]; // top (threshold)
-					let a_val = stack[stack.len() - 2]; // second (counter)
+					// Compare: top >= second-from-top (both f64x2, compare lane 0)
+					let b_val = stack[stack.len() - 1]; // top
+					let a_val = stack[stack.len() - 2]; // second
 
-					b.local_get(a_val);
-					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
 					b.local_get(b_val);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.local_get(a_val);
 					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
 					b.binop(BinaryOp::F64Ge);
 
@@ -1144,8 +1169,7 @@ impl<'ir> WasmGenerator<'ir> {
 
 					*stack = stack_cell.into_inner();
 					*pc = pc_cell.get();
-					// pc points at EndIf; the loop's *pc += 1 will advance past it
-					continue;
+					// pc points at EndIf; fall through to *pc += 1 to advance past it
 				},
 
 				Else => {
@@ -1158,7 +1182,300 @@ impl<'ir> WasmGenerator<'ir> {
 					return;
 				},
 
-				_ => panic!("Unsupported instruction: {:?}", code[*pc]),
+				PlayInstrument(static_proc_id, dynamic_proc_id) => {
+					let static_proc = &self.program.procedures[static_proc_id as usize];
+					let dynamic_proc = &self.program.procedures[dynamic_proc_id as usize];
+					let static_fn = callees[&static_proc_id];
+					let dynamic_fn = callees[&dynamic_proc_id];
+
+					let saved_state = self.module().locals.add(ValType::I32);
+					let current_track = self.module().locals.add(ValType::I32);
+					let cmd_ptr = self.module().locals.add(ValType::I32);
+					let cmd_type = self.module().locals.add(ValType::I32);
+					let cmd_key = self.module().locals.add(ValType::I32);
+					let cmd_velocity = self.module().locals.add(ValType::I32);
+					let note_addr = self.module().locals.add(ValType::I32);
+					let link_addr = self.module().locals.add(ValType::I32);
+
+					// Save state_ptr
+					b.global_get(self.state_ptr);
+					b.local_set(saved_state);
+
+					// current_track = track_index
+					b.global_get(self.track_index);
+					b.local_set(current_track);
+
+					// --- Phase 1: Process note commands for this track ---
+					b.block(None, |done_cmds| {
+						let done_cmds_id = done_cmds.id();
+						done_cmds.loop_(None, |cmd_loop| {
+							let cmd_loop_id = cmd_loop.id();
+
+							cmd_loop.global_get(self.track_command_ptr);
+							cmd_loop.local_set(cmd_ptr);
+
+							// Read command track; if != current_track, break
+							cmd_loop.local_get(cmd_ptr);
+							cmd_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+							cmd_loop.local_get(current_track);
+							cmd_loop.binop(BinaryOp::I32Ne);
+							cmd_loop.br_if(done_cmds_id);
+
+							// Read type, key, velocity
+							cmd_loop.local_get(cmd_ptr);
+							cmd_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+							cmd_loop.local_set(cmd_type);
+							cmd_loop.local_get(cmd_ptr);
+							cmd_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+							cmd_loop.local_set(cmd_key);
+							cmd_loop.local_get(cmd_ptr);
+							cmd_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
+							cmd_loop.local_set(cmd_velocity);
+
+							// Advance track_command_ptr
+							cmd_loop.local_get(cmd_ptr);
+							cmd_loop.i32_const(16);
+							cmd_loop.binop(BinaryOp::I32Add);
+							cmd_loop.global_set(self.track_command_ptr);
+
+							cmd_loop.local_get(cmd_type);
+							cmd_loop.if_else(
+								None,
+								|on_b| {
+									// --- ON command ---
+									on_b.global_get(self.note_alloc_ptr);
+									on_b.local_set(note_addr);
+
+									// Write header: next = old list head
+									on_b.local_get(note_addr);
+									on_b.i32_const(NOTE_LISTS_ADDRESS);
+									on_b.local_get(current_track);
+									on_b.i32_const(4);
+									on_b.binop(BinaryOp::I32Mul);
+									on_b.binop(BinaryOp::I32Add);
+									on_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+
+									// gate = 0x7FFFFFFF
+									on_b.local_get(note_addr);
+									on_b.i32_const(0x7FFFFFFF);
+									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+
+									// key
+									on_b.local_get(note_addr);
+									on_b.local_get(cmd_key);
+									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+
+									// velocity
+									on_b.local_get(note_addr);
+									on_b.local_get(cmd_velocity);
+									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
+
+									// Update list head
+									on_b.i32_const(NOTE_LISTS_ADDRESS);
+									on_b.local_get(current_track);
+									on_b.i32_const(4);
+									on_b.binop(BinaryOp::I32Mul);
+									on_b.binop(BinaryOp::I32Add);
+									on_b.local_get(note_addr);
+									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+
+									// state_ptr = note_addr + 16
+									on_b.local_get(note_addr);
+									on_b.i32_const(16);
+									on_b.binop(BinaryOp::I32Add);
+									on_b.global_set(self.state_ptr);
+
+									// Call static proc
+									let n_inputs = static_proc.inputs.len();
+									for i in (0..n_inputs).rev() {
+										let idx = stack.len() - n_inputs + i;
+										on_b.local_get(stack[idx]);
+									}
+									on_b.call(static_fn);
+									for i in (0..static_proc.outputs.len()).rev() {
+										let idx = stack.len() - static_proc.outputs.len() + i;
+										on_b.local_set(stack[idx]);
+									}
+
+									// note_alloc_ptr = state_ptr
+									on_b.global_get(self.state_ptr);
+									on_b.global_set(self.note_alloc_ptr);
+								},
+								|off_b| {
+									// --- OFF command ---
+									// Walk linked list, find note with matching key and gate > 0, set gate = 0
+									off_b.i32_const(NOTE_LISTS_ADDRESS);
+									off_b.local_get(current_track);
+									off_b.i32_const(4);
+									off_b.binop(BinaryOp::I32Mul);
+									off_b.binop(BinaryOp::I32Add);
+									off_b.local_set(link_addr);
+
+									off_b.block(None, |found_b| {
+										let found_id = found_b.id();
+										found_b.loop_(None, |search_b| {
+											let search_id = search_b.id();
+
+											search_b.local_get(link_addr);
+											search_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+											search_b.local_set(note_addr);
+
+											// if note_addr == 0, not found
+											search_b.local_get(note_addr);
+											search_b.i32_const(0);
+											search_b.binop(BinaryOp::I32Eq);
+											search_b.br_if(found_id);
+
+											// Check key match and gate > 0
+											search_b.local_get(note_addr);
+											search_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+											search_b.local_get(cmd_key);
+											search_b.binop(BinaryOp::I32Eq);
+											search_b.if_else(
+												None,
+												|match_b| {
+													match_b.local_get(note_addr);
+													match_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+													match_b.i32_const(0);
+													match_b.binop(BinaryOp::I32GtS);
+													match_b.if_else(
+														None,
+														|set_b| {
+															set_b.local_get(note_addr);
+															set_b.i32_const(0);
+															set_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+															set_b.br(found_id);
+														},
+														|_| {},
+													);
+												},
+												|_| {},
+											);
+
+											// Move to next note
+											search_b.local_get(note_addr);
+											search_b.local_set(link_addr);
+											search_b.br(search_id);
+										});
+									});
+								},
+							);
+
+							cmd_loop.br(cmd_loop_id);
+						});
+					});
+
+					// --- Phase 2: Process active notes ---
+					b.i32_const(NOTE_LISTS_ADDRESS);
+					b.local_get(current_track);
+					b.i32_const(4);
+					b.binop(BinaryOp::I32Mul);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.prev_link_addr);
+
+					b.block(None, |done_notes| {
+						let done_notes_id = done_notes.id();
+						done_notes.loop_(None, |note_loop| {
+							let note_loop_id = note_loop.id();
+
+							note_loop.global_get(self.prev_link_addr);
+							note_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+							note_loop.local_set(note_addr);
+
+							// if note_addr == 0, done
+							note_loop.local_get(note_addr);
+							note_loop.i32_const(0);
+							note_loop.binop(BinaryOp::I32Eq);
+							note_loop.br_if(done_notes_id);
+
+							// Set note_ptr for ReadNoteProperty and Kill
+							note_loop.local_get(note_addr);
+							note_loop.global_set(self.note_ptr);
+
+							// state_ptr = note_addr + 16
+							note_loop.local_get(note_addr);
+							note_loop.i32_const(16);
+							note_loop.binop(BinaryOp::I32Add);
+							note_loop.global_set(self.state_ptr);
+
+							// Call dynamic proc
+							let n_inputs = dynamic_proc.inputs.len();
+							for i in (0..n_inputs).rev() {
+								let idx = stack.len() - n_inputs + i;
+								note_loop.local_get(stack[idx]);
+							}
+							note_loop.call(dynamic_fn);
+							for i in (0..dynamic_proc.outputs.len()).rev() {
+								let idx = stack.len() - dynamic_proc.outputs.len() + i;
+								note_loop.local_set(stack[idx]);
+							}
+
+							// Decrement gate
+							note_loop.local_get(note_addr);
+							note_loop.local_get(note_addr);
+							note_loop.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+							note_loop.i32_const(1);
+							note_loop.binop(BinaryOp::I32Sub);
+							note_loop.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+
+							// Advance prev_link_addr
+							note_loop.local_get(note_addr);
+							note_loop.global_set(self.prev_link_addr);
+
+							note_loop.br(note_loop_id);
+						});
+					});
+
+					// Restore state, increment track_index
+					b.local_get(saved_state);
+					b.global_set(self.state_ptr);
+					b.global_get(self.track_index);
+					b.i32_const(1);
+					b.binop(BinaryOp::I32Add);
+					b.global_set(self.track_index);
+				},
+
+				Kill => {
+					// Remove current note from linked list
+					b.global_get(self.prev_link_addr);
+					b.global_get(self.note_ptr);
+					b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+					b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+				},
+
+				ReadNoteProperty(property) => {
+					match property {
+						ir::NoteProperty::Gate => {
+							// Must produce a bitmask (all-1s/all-0s) for use with And/AndNot/Or select pattern.
+							// Push 0.0, then gate value, then F64x2Gt to get proper bitmask.
+							b.f64_const(0.0);
+							b.unop(UnaryOp::F64x2Splat);
+							push!();
+							b.global_get(self.note_ptr);
+							b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+							b.unop(UnaryOp::F64ConvertSI32);
+							b.unop(UnaryOp::F64x2Splat);
+							push!();
+							// gate > 0 produces bitmask
+							op!(2, 1, b.binop(BinaryOp::F64x2Gt));
+						},
+						ir::NoteProperty::Key => {
+							b.global_get(self.note_ptr);
+							b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+							b.unop(UnaryOp::F64ConvertSI32);
+							b.unop(UnaryOp::F64x2Splat);
+							push!();
+						},
+						ir::NoteProperty::Velocity => {
+							b.global_get(self.note_ptr);
+							b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
+							b.unop(UnaryOp::F64ConvertSI32);
+							b.unop(UnaryOp::F64x2Splat);
+							push!();
+						},
+					}
+				},
 			}
 			*pc += 1;
 		}
@@ -1175,25 +1492,224 @@ impl<'ir> WasmGenerator<'ir> {
 		b.global_set(self.state_ptr);
 		b.i32_const(BUFFER_BASE_ADDRESS);
 		b.global_set(self.buffer_alloc_ptr);
+		b.i32_const(NOTE_COMMANDS_ADDRESS);
+		b.global_set(self.track_command_ptr);
+
+		// Clear note list heads
+		let num_tracks = self.program.track_order.len();
+		if num_tracks > 0 {
+			let ptr = self.module().locals.add(ValType::I32);
+			let end = NOTE_LISTS_ADDRESS + (num_tracks as i32) * 4;
+			b.i32_const(NOTE_LISTS_ADDRESS);
+			b.local_set(ptr);
+			b.loop_(None, |loop_b| {
+				let loop_id = loop_b.id();
+				loop_b.local_get(ptr);
+				loop_b.i32_const(0);
+				loop_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+				loop_b.local_get(ptr);
+				loop_b.i32_const(4);
+				loop_b.binop(BinaryOp::I32Add);
+				loop_b.local_set(ptr);
+				loop_b.local_get(ptr);
+				loop_b.i32_const(end);
+				loop_b.binop(BinaryOp::I32LtU);
+				loop_b.br_if(loop_id);
+			});
+		}
+
+		// Write command sentinel
+		b.global_get(self.track_command_ptr);
+		b.i32_const(COMMAND_SENTINEL);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+
 		b.call(self.get_function_id(self.program.main_static_proc_id as u16));
+
+		// Allocate state for notes where state allocation for main left off
+		b.global_get(self.state_ptr);
+		b.global_set(self.note_alloc_ptr);
 
 		builder.finish(args, &mut self.module().funcs)
 	}
 
 	fn generate_note_on_function(&mut self) -> FunctionId {
+		// note_on(track: i32, key: i32, velocity: i32)
+		// Writes an ON command (type=1) sorted by (track, type) via bubble insertion.
 		let params = [ValType::I32, ValType::I32, ValType::I32];
 		let results = [];
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
+		builder.name("note_on".to_string());
+		let insert_ptr = self.module().locals.add(ValType::I32);
+		let sort_key = self.module().locals.add(ValType::I32);
+		let prev_sort_key = self.module().locals.add(ValType::I32);
+		let mut b = builder.func_body();
+
+		let note_cmds_addr = NOTE_COMMANDS_ADDRESS;
+
+		b.global_get(self.track_command_ptr);
+		b.local_set(insert_ptr);
+
+		// sort_key = track * 2 + 1 (ON)
+		b.local_get(args[0]);
+		b.i32_const(2);
+		b.binop(BinaryOp::I32Mul);
+		b.i32_const(1);
+		b.binop(BinaryOp::I32Add);
+		b.local_set(sort_key);
+
+		b.block(None, |done| {
+			let done_id = done.id();
+			done.loop_(None, |loop_b| {
+				let loop_id = loop_b.id();
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(note_cmds_addr);
+				loop_b.binop(BinaryOp::I32LeS);
+				loop_b.br_if(done_id);
+
+				// prev_sort_key = prev_track * 2 + prev_type
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+				loop_b.i32_const(2);
+				loop_b.binop(BinaryOp::I32Mul);
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+				loop_b.binop(BinaryOp::I32Add);
+				loop_b.local_set(prev_sort_key);
+
+				loop_b.local_get(prev_sort_key);
+				loop_b.local_get(sort_key);
+				loop_b.binop(BinaryOp::I32LeS);
+				loop_b.br_if(done_id);
+
+				// Copy 16 bytes forward
+				loop_b.local_get(insert_ptr);
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::V128, MemArg { align: 4, offset: 0 });
+				loop_b.store(self.memory, StoreKind::V128, MemArg { align: 4, offset: 0 });
+
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.local_set(insert_ptr);
+				loop_b.br(loop_id);
+			});
+		});
+
+		// Write command: [track, 1, key, velocity]
+		b.local_get(insert_ptr);
+		b.local_get(args[0]);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+		b.local_get(insert_ptr);
+		b.i32_const(1);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+		b.local_get(insert_ptr);
+		b.local_get(args[1]);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+		b.local_get(insert_ptr);
+		b.local_get(args[2]);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
+
+		// track_command_ptr += 16
+		b.global_get(self.track_command_ptr);
+		b.i32_const(16);
+		b.binop(BinaryOp::I32Add);
+		b.global_set(self.track_command_ptr);
 
 		builder.finish(args, &mut self.module().funcs)
 	}
 
 	fn generate_note_off_function(&mut self) -> FunctionId {
+		// note_off(track: i32, key: i32)
+		// Writes an OFF command (type=0) sorted by (track, type) via bubble insertion.
 		let params = [ValType::I32, ValType::I32];
 		let results = [];
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
+		builder.name("note_off".to_string());
+		let insert_ptr = self.module().locals.add(ValType::I32);
+		let sort_key = self.module().locals.add(ValType::I32);
+		let prev_sort_key = self.module().locals.add(ValType::I32);
+		let mut b = builder.func_body();
+
+		let note_cmds_addr = NOTE_COMMANDS_ADDRESS;
+
+		b.global_get(self.track_command_ptr);
+		b.local_set(insert_ptr);
+
+		// sort_key = track * 2 (OFF = 0)
+		b.local_get(args[0]);
+		b.i32_const(2);
+		b.binop(BinaryOp::I32Mul);
+		b.local_set(sort_key);
+
+		b.block(None, |done| {
+			let done_id = done.id();
+			done.loop_(None, |loop_b| {
+				let loop_id = loop_b.id();
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(note_cmds_addr);
+				loop_b.binop(BinaryOp::I32LeS);
+				loop_b.br_if(done_id);
+
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+				loop_b.i32_const(2);
+				loop_b.binop(BinaryOp::I32Mul);
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+				loop_b.binop(BinaryOp::I32Add);
+				loop_b.local_set(prev_sort_key);
+
+				loop_b.local_get(prev_sort_key);
+				loop_b.local_get(sort_key);
+				loop_b.binop(BinaryOp::I32LeS);
+				loop_b.br_if(done_id);
+
+				loop_b.local_get(insert_ptr);
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.load(self.memory, LoadKind::V128, MemArg { align: 4, offset: 0 });
+				loop_b.store(self.memory, StoreKind::V128, MemArg { align: 4, offset: 0 });
+
+				loop_b.local_get(insert_ptr);
+				loop_b.i32_const(16);
+				loop_b.binop(BinaryOp::I32Sub);
+				loop_b.local_set(insert_ptr);
+				loop_b.br(loop_id);
+			});
+		});
+
+		// Write command: [track, 0, key, 0]
+		b.local_get(insert_ptr);
+		b.local_get(args[0]);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+		b.local_get(insert_ptr);
+		b.i32_const(0);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+		b.local_get(insert_ptr);
+		b.local_get(args[1]);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
+		b.local_get(insert_ptr);
+		b.i32_const(0);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
+
+		// track_command_ptr += 16
+		b.global_get(self.track_command_ptr);
+		b.i32_const(16);
+		b.binop(BinaryOp::I32Add);
+		b.global_set(self.track_command_ptr);
 
 		builder.finish(args, &mut self.module().funcs)
 	}
@@ -1227,14 +1743,28 @@ impl<'ir> WasmGenerator<'ir> {
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
 		let mut b = builder.func_body();
 
+		// Write sentinel at end of commands, then reset for reading
+		b.global_get(self.track_command_ptr);
+		b.i32_const(COMMAND_SENTINEL);
+		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+
 		b.i32_const(STATE_ADDRESS);
 		b.global_set(self.state_ptr);
+		b.i32_const(0);
+		b.global_set(self.track_index);
+		b.i32_const(NOTE_COMMANDS_ADDRESS);
+		b.global_set(self.track_command_ptr);
+
 		b.call(self.get_function_id(self.program.main_dynamic_proc_id as u16));
 		let result_local = self.module().locals.add(ValType::V128);
 		b.local_tee(result_local);
 		b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
 		b.local_get(result_local);
 		b.unop(UnaryOp::F64x2ExtractLane { idx: 1 });
+
+		// Reset track_command_ptr for next batch
+		b.i32_const(NOTE_COMMANDS_ADDRESS);
+		b.global_set(self.track_command_ptr);
 
 		builder.finish(args, &mut self.module().funcs)
 	}
