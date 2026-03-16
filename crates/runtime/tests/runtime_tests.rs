@@ -760,14 +760,19 @@ fn instrument_key_property() {
 		instrument tone() -> out: mono
 			out = key()
 
+		instrument static_tone() -> out: mono
+			temp: static = key()
+			out = temp
+
 		global module main () -> (out: stereo)
-			out = 1::tone()
+			out = [1::tone(), 2::static_tone()]
 	"#;
 	let mut rt = make_runtime(src);
 
 	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_approx(s[0], 60.0);
+	assert_sample(s, 60.0, 72.0);
 }
 
 #[test]
@@ -776,14 +781,19 @@ fn instrument_velocity_property() {
 		instrument tone() -> out: mono
 			out = velocity()
 
+		instrument static_tone() -> out: mono
+			temp: static = velocity()
+			out = temp
+
 		global module main () -> (out: stereo)
-			out = 1::tone()
+			out = [1::tone(), 2::static_tone()]
 	"#;
 	let mut rt = make_runtime(src);
 
 	rt.note_on(0, 60, 100).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_approx(s[0], 100.0);
+	assert_sample(s, 100.0, 127.0);
 }
 
 #[test]
@@ -792,18 +802,24 @@ fn instrument_gate_property() {
 		instrument tone() -> out: mono
 			out = gate() ? 1.0 : 0.0
 
+		instrument static_tone() -> out: mono
+			temp: static = gate()
+			out = temp ? 1.0 : 0.0
+
 		global module main () -> (out: stereo)
-			out = 1::tone()
+			out = [1::tone(), 2::static_tone()]
 	"#;
 	let mut rt = make_runtime(src);
 
 	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(1, 72, 127).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_approx(s[0], 1.0);
+	assert_sample(s, 1.0, 1.0);
 
 	rt.note_off(0, 60).unwrap();
+	rt.note_off(1, 72).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_approx(s[0], 0.0);
+	assert_sample(s, 0.0, 1.0);
 }
 
 // ============================================================

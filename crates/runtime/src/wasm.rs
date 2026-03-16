@@ -1280,6 +1280,10 @@ impl<'ir> WasmGenerator<'ir> {
 									on_b.local_get(note_addr);
 									on_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
 
+									// Set note_ptr for ReadNoteProperty and Kill
+									on_b.local_get(note_addr);
+									on_b.global_set(self.note_ptr);
+
 									// state_ptr = note_addr + 16
 									on_b.local_get(note_addr);
 									on_b.i32_const(16);
