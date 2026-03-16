@@ -18,7 +18,7 @@ pub trait JinglerRuntime: Send {
 }
 
 pub fn default_jingler_runtime() -> Result<Box<dyn JinglerRuntime>> {
-	match std::env::var("JINGLER_RUNTIME").unwrap_or_else(|_| "native".to_string()).as_str() {
+	match std::env::var("JINGLER_RUNTIME").unwrap_or_else(|_| "wasm".to_string()).as_str() {
 		"native" => NativeRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>),
 		"wasm" => WasmRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>),
 		_ => Err(anyhow::anyhow!("Invalid JINGLER_RUNTIME environment variable")),  
