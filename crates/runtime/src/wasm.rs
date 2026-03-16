@@ -1288,13 +1288,14 @@ impl<'ir> WasmGenerator<'ir> {
 
 									// Call static proc
 									let n_inputs = static_proc.inputs.len();
-									for i in (0..n_inputs).rev() {
+									for i in 0..n_inputs {
 										let idx = stack.len() - n_inputs + i;
 										on_b.local_get(stack[idx]);
 									}
 									on_b.call(static_fn);
-									for i in (0..static_proc.outputs.len()).rev() {
-										let idx = stack.len() - static_proc.outputs.len() + i;
+									let n_outputs = static_proc.outputs.len();
+									for i in (0..n_outputs).rev() {
+										let idx = stack.len() - n_outputs + i;
 										on_b.local_set(stack[idx]);
 									}
 
@@ -1401,13 +1402,14 @@ impl<'ir> WasmGenerator<'ir> {
 
 							// Call dynamic proc
 							let n_inputs = dynamic_proc.inputs.len();
-							for i in (0..n_inputs).rev() {
+							for i in 0..n_inputs {
 								let idx = stack.len() - n_inputs + i;
 								note_loop.local_get(stack[idx]);
 							}
 							note_loop.call(dynamic_fn);
-							for i in (0..dynamic_proc.outputs.len()).rev() {
-								let idx = stack.len() - dynamic_proc.outputs.len() + i;
+							let n_outputs = dynamic_proc.outputs.len();
+							for i in (0..n_outputs).rev() {
+								let idx = stack.len() - n_outputs + i;
 								note_loop.local_set(stack[idx]);
 							}
 
