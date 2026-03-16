@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -1101,6 +1101,61 @@ impl<'ir> WasmGenerator<'ir> {
 					b.unop(UnaryOp::F64ConvertSI32);
 					b.unop(UnaryOp::F64x2Splat);
 					push!();
+				},
+
+				IfGreaterEq => {
+					// Compare: second-from-top >= top (both f64x2, compare lane 0)
+					let b_val = stack[stack.len() - 1]; // top (threshold)
+					let a_val = stack[stack.len() - 2]; // second (counter)
+
+					b.local_get(a_val);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.local_get(b_val);
+					b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+					b.binop(BinaryOp::F64Ge);
+
+					*pc += 1;
+					let pc_cell = Cell::new(*pc);
+					let saved_stack = stack.clone();
+					let stack_cell = RefCell::new(stack.clone());
+
+					b.if_else(
+						None,
+						|then_b| {
+							let mut then_pc = pc_cell.get();
+							self.generate_function_for_procedure_inner(
+								code, &mut then_pc, then_b, &mut stack_cell.borrow_mut(), callees,
+							);
+							pc_cell.set(then_pc);
+						},
+						|else_b| {
+							// Reset stack to same input state for else-branch
+							*stack_cell.borrow_mut() = saved_stack;
+							let mut else_pc = pc_cell.get();
+							if let [Else, ..] = code[else_pc..] {
+								else_pc += 1;
+								self.generate_function_for_procedure_inner(
+									code, &mut else_pc, else_b, &mut stack_cell.borrow_mut(), callees,
+								);
+								pc_cell.set(else_pc);
+							}
+						},
+					);
+
+					*stack = stack_cell.into_inner();
+					*pc = pc_cell.get();
+					// pc points at EndIf; the loop's *pc += 1 will advance past it
+					continue;
+				},
+
+				Else => {
+					// Reached from recursive call inside then-branch of IfGreaterEq
+					return;
+				},
+
+				EndIf => {
+					// Reached from recursive call inside then or else branch
+					return;
 				},
 
 				_ => panic!("Unsupported instruction: {:?}", code[*pc]),
