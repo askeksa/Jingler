@@ -19,7 +19,7 @@ use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
 
-const DEFAULT_CONNECT_ADDR: &str = "localhost:26127";
+const DEFAULT_CONNECT_ADDR: &str = "127.0.0.1:26127";
 
 #[derive(Parser)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
@@ -108,6 +108,7 @@ fn send_program(program: &ir::Program, address: &str) -> Result<(), Box<dyn Erro
 	let len = data.len() as u32;
 	stream.write_all(&len.to_le_bytes())?;
 	stream.write_all(&data)?;
+	stream.flush()?;
 	println!("Sent program to {} ({} bytes)", address, data.len());
 	Ok(())
 }
