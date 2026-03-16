@@ -20,9 +20,9 @@ const PARAMETER_ADDRESS: i32 = 0;
 const NOTE_LISTS_ADDRESS: i32 = 0x1000;
 const NOTE_COMMANDS_ADDRESS: i32 = 0x2000;
 const STATE_ADDRESS: i32 = 0x10000;
-const BUFFER_BASE_ADDRESS: i32 = 0x100000; // 1MB into Wasm memory
-const INITIAL_MEMORY_SIZE: u64 = BUFFER_BASE_ADDRESS as u64; // 1MB
-const MAX_MEMORY_SIZE: u64 = 0x40000000; // 1GB
+const BUFFER_BASE_ADDRESS: i32 = 0x10000000; // 256MB into Wasm memory
+const INITIAL_MEMORY_SIZE: u64 = BUFFER_BASE_ADDRESS as u64; // 256MB
+const MAX_MEMORY_SIZE: u64 = 0x100000000; // 4GB
 
 /// Sentinel track value marking end of note commands
 const COMMAND_SENTINEL: i32 = 0x7FFFFFFF;
