@@ -1631,3 +1631,173 @@ fn autokill_does_not_kill_loud_output() {
 	let s = rt.next_sample().unwrap();
 	assert_mono(s, 1.0);
 }
+
+// ============================================================
+// Instruments: inputs
+// ============================================================
+
+#[test]
+fn instrument_static_input() {
+	// A static input is captured when the note is triggered.
+	let src = r#"
+		instrument tone(level: static mono) -> out: mono
+			out = level
+
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = 1::tone(t)
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Run a few samples so t advances
+	for _ in 0..5 {
+		rt.next_sample().unwrap();
+	}
+	// t is now 5 (cell returns value before update, so after 5 calls t=4 returned, t stored=5)
+	// Actually: cell(t+1, 0) returns 0,1,2,3,4 for first 5 calls.
+	// After 5 next_sample calls, t will return 5 on the next call.
+
+	// Trigger note — static input captures t at this moment
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// t is now 5, so the static input captured 5
+	let captured = s[0];
+	assert_approx(captured, 5.0);
+
+	// On subsequent samples, the static input stays at 5 even though t keeps changing
+	let s = rt.next_sample().unwrap();
+	assert_approx(s[0], captured);
+	let s = rt.next_sample().unwrap();
+	assert_approx(s[0], captured);
+}
+
+#[test]
+fn instrument_dynamic_input() {
+	// A dynamic input is re-read every sample.
+	let src = r#"
+		instrument tone(level: mono) -> out: mono
+			out = level
+
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = 1::tone(t)
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	let s1 = rt.next_sample().unwrap();
+	let s2 = rt.next_sample().unwrap();
+	let s3 = rt.next_sample().unwrap();
+	// t returns 0, 1, 2 on successive samples, and the dynamic input follows
+	assert_approx(s1[0], 0.0);
+	assert_approx(s2[0], 1.0);
+	assert_approx(s3[0], 2.0);
+}
+
+#[test]
+fn instrument_static_input_same_value_for_simultaneous_notes() {
+	// When two notes are triggered at the same time, both should
+	// capture the same value for a static input.
+	let src = r#"
+		instrument tone(level: static mono) -> out: mono
+			out = level * key()
+
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = 1::tone(t)
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Advance t
+	for _ in 0..3 {
+		rt.next_sample().unwrap();
+	}
+
+	// Trigger two notes simultaneously — both should capture the same t
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	// t is 3. Note 60 outputs 3*60=180, note 72 outputs 3*72=216.
+	// Sum = 396.
+	assert_mono(s, 3.0 * 60.0 + 3.0 * 72.0);
+}
+
+#[test]
+fn instrument_dynamic_input_same_value_for_simultaneous_notes() {
+	// When two notes play at the same time, both should see the same
+	// dynamic input value each sample.
+	let src = r#"
+		instrument tone(level: mono) -> out: mono
+			out = level * key()
+
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = 1::tone(t)
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_on(0, 72, 127).unwrap();
+
+	let s1 = rt.next_sample().unwrap();
+	let s2 = rt.next_sample().unwrap();
+	// Sample 1: t=0, sum = 0*60 + 0*72 = 0
+	assert_mono(s1, 0.0);
+	// Sample 2: t=1, sum = 1*60 + 1*72 = 132
+	assert_mono(s2, 132.0);
+}
+
+#[test]
+fn instrument_multiple_notes_sum_with_inputs() {
+	// Outputs from multiple notes are summed even when there are inputs.
+	let src = r#"
+		instrument tone(gain: mono) -> out: mono
+			out = gain
+
+		global module main () -> (out: stereo)
+			out = 1::tone(5)
+	"#;
+	let mut rt = make_runtime(src);
+
+	// One note: output = 5
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 5.0);
+
+	// Two notes: output = 5 + 5 = 10
+	rt.note_on(0, 72, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 10.0);
+
+	// Three notes: output = 5 + 5 + 5 = 15
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 15.0);
+}
+
+#[test]
+fn instrument_mixed_static_and_dynamic_inputs() {
+	// An instrument with both static and dynamic inputs.
+	// The static input is captured once, the dynamic input changes every sample.
+	let src = r#"
+		instrument tone(base: static mono, modulation: mono) -> out: mono
+			out = base + modulation
+
+		global module main () -> (out: stereo)
+			t = cell(t + 1, 0)
+			out = 1::tone(100, t)
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	// t: 0, 1, 2, ...
+	// base captured as 0 (t at moment of note_on processing)
+	let s1 = rt.next_sample().unwrap();
+	let base = s1[0]; // base + t where t=0 on first sample
+
+	let s2 = rt.next_sample().unwrap();
+	let s3 = rt.next_sample().unwrap();
+	// base stays the same, modulation increases by 1 each sample
+	assert_approx(s2[0], base + 1.0);
+	assert_approx(s3[0], base + 2.0);
+}
