@@ -80,9 +80,9 @@ struct JinglerPlugin {
 	/// Parameter metadata from the currently loaded program. Audio-thread only.
 	zing_params: Vec<ir::Parameter>,
 	runtime: Box<dyn JinglerRuntime>,
+	runtime_initialized: bool,
 	/// Stored so the program can be reloaded when the sample rate changes.
 	program: Option<ir::Program>,
-	program_active: bool,
 	/// Shared with the global listener thread; checked each audio callback.
 	pending_program: Arc<Mutex<Option<ir::Program>>>,
 	sample_rate: f32,
@@ -94,8 +94,8 @@ impl Default for JinglerPlugin {
 			params: Arc::new(JinglerParams::default()),
 			zing_params: vec![],
 			runtime: Box::new(DummyRuntime),
+			runtime_initialized: false,
 			program: None,
-			program_active: false,
 			pending_program: global_pending(),
 			sample_rate: 44100.0,
 		}
@@ -144,7 +144,9 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 					Err(e) => nih_error!("Jingler: deserialise error: {}", e),
 				}
 			}
-			Err(e) => nih_error!("Jingler: accept error: {}", e),
+			Err(e) => {
+				nih_error!("Jingler: accept error: {}", e);
+			},
 		}
 	}
 }
@@ -156,14 +158,13 @@ impl JinglerPlugin {
 		let Some(program) = &self.program else { return true; };
 		self.runtime.unload_program();
 		self.zing_params = program.parameters.clone();
-		self.program_active = match self.runtime.load_program(program, self.sample_rate) {
+		match self.runtime.load_program(program, self.sample_rate) {
 			Ok(_) => true,
 			Err(e) => {
 				nih_error!("Jingler: runtime error: {}", e);
 				false
 			}
-		};
-		self.program_active
+		}
 	}
 
 	fn param_values(&self) -> [f32; NUM_PARAMS] {
@@ -216,13 +217,17 @@ impl Plugin for JinglerPlugin {
 		buffer_config: &BufferConfig,
 		_context: &mut impl InitContext<Self>,
 	) -> bool {
+		nih_log!("Jingler: initializing");
 		self.sample_rate = buffer_config.sample_rate;
 
-		if let Ok(runtime) = default_jingler_runtime() {
-			self.runtime = runtime;
-		} else {
-			nih_error!("Jingler: failed to create runtime");
-			return false;
+		if !self.runtime_initialized {
+			if let Ok(runtime) = default_jingler_runtime() {
+				self.runtime = runtime;
+				self.runtime_initialized = true;
+			} else {
+				nih_error!("Jingler: failed to create runtime");
+				return false;
+			}
 		}
 
 		// Spawn the TCP listener thread exactly once for the whole process lifetime,
@@ -240,8 +245,8 @@ impl Plugin for JinglerPlugin {
 	}
 
 	fn deactivate(&mut self) {
+		nih_log!("Jingler: deactivating");
 		self.runtime.unload_program();
-		self.program_active = false;
 	}
 
 	fn process(
@@ -256,7 +261,6 @@ impl Plugin for JinglerPlugin {
 					Ok(result) => result,
 					Err(e) => {
 						nih_error!("Jingler: runtime error in {}: {}", $where, e);
-						self.program_active = false;
 						return ProcessStatus::Error(concat!("Runtime error in ", $where));
 					}
 				}
@@ -290,11 +294,6 @@ impl Plugin for JinglerPlugin {
 					Some(ref event) if event.timing() <= sample_id as u32 => {
 						match *event {
 							NoteEvent::NoteOn { channel, note, velocity, .. } => {
-								if !self.program_active {
-									if !self.load_program_if_present() {
-										return ProcessStatus::Error("Runtime error in load_program");
-									}
-								}
 								check!(self.runtime.note_on(channel, note, (velocity * 127.0) as u8), "note_on");
 							}
 							NoteEvent::NoteOff { channel, note, .. } => {
