@@ -213,7 +213,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	}
 
 	fn retrieve_width(&self, exp: &Expression) -> Option<Width> {
-		self.stored_widths.get(&(exp as *const Expression)).copied()
+		self.stored_widths.get(&&raw const *exp).copied()
 	}
 
 	fn unsupported(&mut self, loc: &dyn Location, what: &str) {
@@ -464,7 +464,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		scopes: &[Option<Scope>]
 	) {
 		for member in procs {
-			if self.live_precompiled.contains(&(member as *const PrecompiledMember)) {
+			if self.live_precompiled.contains(&&raw const *member) {
 				for &scope in scopes {
 					self.precompiled_proc_ids.entry(member).or_default().push(self.member_for_id.len() as u16);
 					let member_ref = MemberRef {
@@ -727,7 +727,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 										self.find_cells(arg);
 									}
 								}
-								let key = *member as *const PrecompiledMember;
+								let key = &raw const **member;
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs.to_vec(),
 									static_proc_id: self.precompiled_proc_ids[&key][0],
@@ -952,7 +952,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 										self.generate(arg);
 									}
 								}
-								let key = *member as *const PrecompiledMember;
+								let key = &raw const **member;
 								let proc_id = self.precompiled_proc_ids[&key][1];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
@@ -977,7 +977,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								for arg in args {
 									self.generate(arg);
 								}
-								let key = *member as *const PrecompiledMember;
+								let key = &raw const **member;
 								let proc_id = self.precompiled_proc_ids[&key][0];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},

@@ -443,7 +443,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn store_width(&mut self, exp: &Expression, width: Width) {
-		self.stored_widths.insert(exp as *const Expression, width);
+		self.stored_widths.insert(&raw const *exp, width);
 	}
 
 	fn infer_number(&mut self,
@@ -966,7 +966,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			exp: Box::new(node),
 			width,
 		};
-		let key = exp as *const Expression;
+		let key = &raw const *exp;
 		if let Some(width) = self.stored_widths.get(&key) {
 			if let Expression::Expand { exp: inner, .. } = exp {
 				self.store_width(inner, *width);

@@ -243,6 +243,6 @@ impl Names {
 			Some(Width::Stereo) => "$autokill_stereo",
 			_ => unreachable!("Missing instrument output width"),
 		};
-		self.lookup_precompiled(&autokill_name).unwrap() as *const PrecompiledMember
+		&raw const *self.lookup_precompiled(&autokill_name).unwrap()
 	}
 }
