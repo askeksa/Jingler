@@ -4,7 +4,6 @@ use strum_macros::FromRepr;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::mem::replace;
 
 use crate::program::{ProcedureKind, Program, Width};
 use crate::instructions::{Instruction, NoteProperty};
@@ -535,94 +534,6 @@ pub fn encode_bytecodes_source(
 		let scale = (param.max - param.min) * parameter_quantization;
 		let bias = param.min;
 		writeln!(out, "\tdd\t0x{:08X}, 0x{:08X}", scale.to_bits(), bias.to_bits())?;
-	}
-
-	Ok(())
-}
-
-pub fn encode_bytecodes_binary(program: &Program, sample_rate: f32) -> Result<(Vec<u8>, Vec<u32>, usize)> {
-	let (mut opcode_capacity, constant_set) = collect_capacities(program, sample_rate, false);
-	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
-	adjust_to_fixed_capacities(&mut opcode_capacity)?;
-	check_opcode_space(&opcode_capacity, &constants)?;
-
-	// Compute opcode base values
-	let mut opcode_base = opcode_capacity;
-	let mut base = 0x100;
-	for opcode in 0 .. EncodedBytecode::Implicit as usize {
-		base -= opcode_base[opcode];
-		opcode_base[opcode] = base;
-	}
-	opcode_base[EncodedBytecode::Implicit as usize] = 0x01;
-
-	// Perform the encoding
-	let encoded = RefCell::new(vec![]);
-	let mut encode_opcode = |opcode: EncodedBytecode, arg: u16| {
-		match opcode {
-			EncodedBytecode::ProcCall => {
-				let opcode = EncodedBytecode::ProcCallByteIndex;
-				encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
-				encoded.borrow_mut().push(arg as u8);
-			},
-			_ => {
-				encoded.borrow_mut().push(opcode_base[opcode as usize].wrapping_add(arg) as u8);
-			}
-		}
-	};
-	let mut encode_constant = |value: u32| {
-		let opcode = EncodedBytecode::ConstantByteIndex;
-		let arg = constant_map[&value];
-		encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
-		encoded.borrow_mut().push(arg as u8);
-	};
-	let mut encode_parameter = |index: u16| {
-		let opcode = EncodedBytecode::ConstantByteIndex;
-		let arg = parameter_offset as u16 + index;
-		encoded.borrow_mut().push(opcode_base[opcode as usize] as u8);
-		encoded.borrow_mut().push(arg as u8);
-	};
-	for procedure in &program.procedures {
-		encode_opcode(EncodedBytecode::Proc, 0);
-		for &inst in &procedure.code {
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, &mut encode_parameter);
-		}
-	}
-	encode_opcode(EncodedBytecode::Proc, 0);
-	encoded.borrow_mut().push(0); // Zero termination
-
-	Ok((encoded.into_inner(), constants, parameter_offset))
-}
-
-fn adjust_to_fixed_capacities(opcode_capacity: &mut Vec<u16>) -> Result<()> {
-	for capacity in opcode_capacity.iter_mut() {
-		if *capacity == 0 { *capacity = 1; }
-	}
-	opcode_capacity[EncodedBytecode::Constant as usize] = 0;
-	opcode_capacity[EncodedBytecode::ProcCall as usize] = 0;
-
-	let mut exceeded = BTreeMap::new();
-	let mut adjust = |opcode: EncodedBytecode, fixed_capacity: u16, name: &'static str| {
-		let capacity = replace(&mut opcode_capacity[opcode as usize], fixed_capacity);
-		if capacity > fixed_capacity {
-			exceeded.entry(name).and_modify(|existing: &mut (u16, u16)| {
-				existing.0 = existing.0.max(capacity)
-			}).or_insert((capacity, fixed_capacity));
-		}
-	};
-
-	adjust(EncodedBytecode::Fop, 15, "fop");
-	adjust(EncodedBytecode::ReadNoteProperty, 3, "note property");
-	adjust(EncodedBytecode::StackLoad, 75, "stack load");
-	adjust(EncodedBytecode::StackStore, 75, "stack store");
-	adjust(EncodedBytecode::Round, 4, "round");
-	adjust(EncodedBytecode::Compare, 7, "compare");
-
-	if !exceeded.is_empty() {
-		let mut errors = String::new();
-		for (name, (capacity, fixed_capacity)) in exceeded {
-			errors += &format!("\nExceeded {} capacity ({} > {}).", name, capacity, fixed_capacity);
-		}
-		return Err(anyhow!(errors));
 	}
 
 	Ok(())
