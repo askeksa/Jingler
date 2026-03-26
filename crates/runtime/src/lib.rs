@@ -4,11 +4,12 @@ use anyhow::Result;
 
 use crate::wasm::WasmRuntime;
 
-pub trait JinglerRuntime: Send {
-	fn load_program(&mut self, program: &ir::Program, sample_rate: f32) -> Result<()>;
-	fn unload_program(&mut self);
+pub trait JinglerRuntime: Send + Sync {
+	fn load_program(&self, program: &ir::Program) -> Result<Box<dyn JinglerRuntimeInstance>>;
+}
 
-	fn reset(&mut self) -> Result<()>;
+pub trait JinglerRuntimeInstance: Send {
+	fn initialize(&mut self, sample_rate: f32) -> Result<()>;
 	fn next_sample(&mut self) -> Result<[f64; 2]>;
 	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()>;
 	fn note_off(&mut self, channel: u8, note: u8) -> Result<()>;
@@ -17,34 +18,4 @@ pub trait JinglerRuntime: Send {
 
 pub fn default_jingler_runtime() -> Result<Box<dyn JinglerRuntime>> {
 	WasmRuntime::new().map(|r| Box::new(r) as Box<dyn JinglerRuntime>)
-}
-
-pub struct DummyRuntime;
-
-impl JinglerRuntime for DummyRuntime {
-	fn load_program(&mut self, _program: &ir::Program, _sample_rate: f32) -> Result<()> {
-		Ok(())
-	}
-
-	fn unload_program(&mut self) {}
-
-	fn reset(&mut self) -> Result<()> {
-		Ok(())
-	}
-
-	fn next_sample(&mut self) -> Result<[f64; 2]> {
-		Ok([0.0, 0.0])
-	}
-
-	fn note_on(&mut self, _channel: u8, _note: u8, _velocity: u8) -> Result<()> {
-		Ok(())
-	}
-
-	fn note_off(&mut self, _channel: u8, _note: u8) -> Result<()> {
-		Ok(())
-	}
-
-	fn set_parameter(&mut self, _index: usize, _value: f32) -> Result<()> {
-		Ok(())
-	}
 }

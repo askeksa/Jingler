@@ -7,7 +7,7 @@ use walrus::*;
 use walrus::ir::*;
 use wasmtime::{Caller, Engine, Linker, Module, Store, TypedFunc};
 
-use crate::JinglerRuntime;
+use crate::{JinglerRuntime, JinglerRuntimeInstance};
 use ::ir;
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
@@ -30,17 +30,16 @@ const COMMAND_SENTINEL: i32 = 0x7FFFFFFF;
 pub struct WasmRuntime {
 	engine: Engine,
 	linker: Linker<Arc<WasmRuntimeData>>,
-	store: Store<Arc<WasmRuntimeData>>,
-	program: Option<WasmProgram>,
+	gmdls_data: Arc<WasmRuntimeData>,
 }
 
 struct WasmRuntimeData {
 	gmdls_data: Vec<u8>,
 }
 
-struct WasmProgram {
+pub struct WasmRuntimeInstance {
+	store: Store<Arc<WasmRuntimeData>>,
 	program: ir::Program,
-	sample_rate: f32,
 	initialize_func: TypedFunc<f32, ()>,
 	note_on_func: TypedFunc<(i32, i32, i32), ()>,
 	note_off_func: TypedFunc<(i32, i32), ()>,
@@ -68,100 +67,83 @@ impl WasmRuntime {
 
 		let gmdls_data = load_gmdls();
 		let data = Arc::new(WasmRuntimeData { gmdls_data });
-		let store = Store::new(&engine, data.clone());
 
 		Ok(Self {
 			engine,
 			linker,
-			store,
-			program: None,
+			gmdls_data: data,
 		})
 	}
 }
 
 impl JinglerRuntime for WasmRuntime {
-	fn load_program(&mut self, program: &ir::Program, sample_rate: f32) -> Result<()> {
-		let wasm = compile_to_wasm(program, sample_rate)?;
+	fn load_program(&self, program: &ir::Program) -> Result<Box<dyn JinglerRuntimeInstance>> {
+		let wasm = compile_to_wasm(program)?;
 		let module = Module::from_binary(&self.engine, &wasm)?;
-		let instance = self.linker.instantiate(&mut self.store, &module)?;
-		let initialize_func = instance.get_typed_func::<f32, ()>(&mut self.store, "initialize")?;
-		let note_on_func = instance.get_typed_func::<(i32, i32, i32), ()>(&mut self.store, "note_on")?;
-		let note_off_func = instance.get_typed_func::<(i32, i32), ()>(&mut self.store, "note_off")?;
-		let next_sample_func = instance.get_typed_func::<(), (f64, f64)>(&mut self.store, "next_sample")?;
-		let set_parameter_func = instance.get_typed_func::<(i32, f32), ()>(&mut self.store, "set_parameter")?;
+		let mut store = Store::new(&self.engine, self.gmdls_data.clone());
+		let instance = self.linker.instantiate(&mut store, &module)?;
+		let initialize_func = instance.get_typed_func::<f32, ()>(&mut store, "initialize")?;
+		let note_on_func = instance.get_typed_func::<(i32, i32, i32), ()>(&mut store, "note_on")?;
+		let note_off_func = instance.get_typed_func::<(i32, i32), ()>(&mut store, "note_off")?;
+		let next_sample_func = instance.get_typed_func::<(), (f64, f64)>(&mut store, "next_sample")?;
+		let set_parameter_func = instance.get_typed_func::<(i32, f32), ()>(&mut store, "set_parameter")?;
 
-		self.program = Some(WasmProgram {
+		Ok(Box::new(WasmRuntimeInstance {
+			store,
 			program: program.clone(),
-			sample_rate,
 			initialize_func,
 			note_on_func,
 			note_off_func,
 			next_sample_func,
 			set_parameter_func,
-		});
-
-		self.reset()
+		}))
 	}
+}
 
-	fn unload_program(&mut self) {
-		self.program.take();
-	}
-
-	fn reset(&mut self) -> Result<()> {
-		if let Some(program) = &self.program {
-			program.initialize_func.call(&mut self.store, program.sample_rate)?;
-		}
+impl JinglerRuntimeInstance for WasmRuntimeInstance {
+	fn initialize(&mut self, sample_rate: f32) -> Result<()> {
+		self.initialize_func.call(&mut self.store, sample_rate)?;
 		Ok(())
 	}
 
 	fn next_sample(&mut self) -> Result<[f64; 2]> {
-		let (l, r) = if let Some(program) = &self.program {
-			program.next_sample_func.call(&mut self.store, ())?
-		} else {
-			(0.0, 0.0)
-		};
+		let (l, r) = self.next_sample_func.call(&mut self.store, ())?;
 		Ok([l, r])
 	}
 
 	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
-		if let Some(program) = &self.program {
-			for (track, track_channel) in program.program.track_order.iter().enumerate() {
-				if *track_channel == channel as usize {
-					program.note_on_func.call(&mut self.store, (track as i32, note as i32, velocity as i32))?;
-				}
+		for (track, track_channel) in self.program.track_order.iter().enumerate() {
+			if *track_channel == channel as usize {
+				self.note_on_func.call(&mut self.store, (track as i32, note as i32, velocity as i32))?;
 			}
 		}
 		Ok(())
 	}
 
 	fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
-		if let Some(program) = &self.program {
-			for (track, track_channel) in program.program.track_order.iter().enumerate() {
-				if *track_channel == channel as usize {
-					program.note_off_func.call(&mut self.store, (track as i32, note as i32))?;
-				}
+		for (track, track_channel) in self.program.track_order.iter().enumerate() {
+			if *track_channel == channel as usize {
+				self.note_off_func.call(&mut self.store, (track as i32, note as i32))?;
 			}
 		}
 		Ok(())
 	}
 
 	fn set_parameter(&mut self, index: usize, value: f32) -> Result<()> {
-		if let Some(p) = &self.program {
-			if index < p.program.parameters.len() {
-				let param = &p.program.parameters[index];
-				let quant_value = param.min + value * (param.max - param.min);
-				p.set_parameter_func.call(&mut self.store, (index as i32, quant_value))?;
-			}
+		if index < self.program.parameters.len() {
+			let param = &self.program.parameters[index];
+			let quant_value = param.min + value * (param.max - param.min);
+			self.set_parameter_func.call(&mut self.store, (index as i32, quant_value))?;
 		}
 		Ok(())
 	}
 }
 
-fn compile_to_wasm(program: &ir::Program, sample_rate: f32) -> Result<Vec<u8>> {
+fn compile_to_wasm(program: &ir::Program) -> Result<Vec<u8>> {
 	let config = ModuleConfig::new();
 	let mut module = walrus::Module::with_config(config);
 	let memory = module.memories.add_local(false, false, INITIAL_MEMORY_SIZE >> 16, Some(MAX_MEMORY_SIZE >> 16), None);
-	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(sample_rate)));
+	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(0.0)));
 	let state_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
 	let buffer_alloc_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(BUFFER_BASE_ADDRESS)));
 	let track_command_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(NOTE_COMMANDS_ADDRESS)));
@@ -1493,6 +1475,10 @@ impl<'ir> WasmGenerator<'ir> {
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
 		let mut b = builder.func_body();
+
+		// Store sample rate parameter into global
+		b.local_get(args[0]);
+		b.global_set(self.sample_rate);
 
 		b.i32_const(STATE_ADDRESS);
 		b.global_set(self.state_ptr);

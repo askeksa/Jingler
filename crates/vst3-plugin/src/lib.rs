@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
 use nih_plug::prelude::*;
-use runtime::{DummyRuntime, JinglerRuntime, default_jingler_runtime};
+use runtime::{JinglerRuntimeInstance, default_jingler_runtime};
 
 const NUM_PARAMS: usize = 15;
 const LISTEN_ADDR: &str = "0.0.0.0:26127";
@@ -16,13 +16,13 @@ const MAX_PROGRAM_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 //
 // The TCP listener is spawned exactly once per process (not per plugin instance),
 // so that re-instantiation by the DAW doesn't cause "address already in use" errors.
-// All instances share the same pending-program slot.
+// All instances share the same pending-instance slot.
 
-static PENDING_PROGRAM: OnceLock<Arc<Mutex<Option<ir::Program>>>> = OnceLock::new();
+static PENDING_INSTANCE: OnceLock<Arc<Mutex<Option<Box<dyn JinglerRuntimeInstance>>>>> = OnceLock::new();
 static LISTENER_INIT: Once = Once::new();
 
-fn global_pending() -> Arc<Mutex<Option<ir::Program>>> {
-	Arc::clone(PENDING_PROGRAM.get_or_init(|| Arc::new(Mutex::new(None))))
+fn global_pending() -> Arc<Mutex<Option<Box<dyn JinglerRuntimeInstance>>>> {
+	Arc::clone(PENDING_INSTANCE.get_or_init(|| Arc::new(Mutex::new(None))))
 }
 
 // ─── Parameters ──────────────────────────────────────────────────────────────
@@ -77,14 +77,9 @@ impl Default for JinglerParams {
 
 struct JinglerPlugin {
 	params: Arc<JinglerParams>,
-	/// Parameter metadata from the currently loaded program. Audio-thread only.
-	zing_params: Vec<ir::Parameter>,
-	runtime: Box<dyn JinglerRuntime>,
-	runtime_initialized: bool,
-	/// Stored so the program can be reloaded when the sample rate changes.
-	program: Option<ir::Program>,
+	runtime: Option<Box<dyn JinglerRuntimeInstance>>,
 	/// Shared with the global listener thread; checked each audio callback.
-	pending_program: Arc<Mutex<Option<ir::Program>>>,
+	pending_runtime: Arc<Mutex<Option<Box<dyn JinglerRuntimeInstance>>>>,
 	sample_rate: f32,
 }
 
@@ -92,11 +87,8 @@ impl Default for JinglerPlugin {
 	fn default() -> Self {
 		Self {
 			params: Arc::new(JinglerParams::default()),
-			zing_params: vec![],
-			runtime: Box::new(DummyRuntime),
-			runtime_initialized: false,
-			program: None,
-			pending_program: global_pending(),
+			runtime: None,
+			pending_runtime: global_pending(),
 			sample_rate: 44100.0,
 		}
 	}
@@ -104,7 +96,15 @@ impl Default for JinglerPlugin {
 
 // ─── Network listener thread ──────────────────────────────────────────────────
 
-fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
+fn listener_thread(pending: Arc<Mutex<Option<Box<dyn JinglerRuntimeInstance>>>>) {
+	let runtime = match default_jingler_runtime() {
+		Ok(r) => r,
+		Err(e) => {
+			nih_error!("Jingler: failed to create runtime: {}", e);
+			return;
+		}
+	};
+
 	let listener = match TcpListener::bind(LISTEN_ADDR) {
 		Ok(l) => l,
 		Err(e) => {
@@ -138,8 +138,13 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 
 				match bincode::deserialize::<ir::Program>(&data) {
 					Ok(program) => {
-						*pending.lock().unwrap() = Some(program);
-						nih_log!("Jingler: new program received ({} bytes)", len);
+						match runtime.load_program(&program) {
+							Ok(instance) => {
+								*pending.lock().unwrap() = Some(instance);
+								nih_log!("Jingler: new program received ({} bytes)", len);
+							}
+							Err(e) => nih_error!("Jingler: runtime error: {}", e),
+						}
 					}
 					Err(e) => nih_error!("Jingler: deserialise error: {}", e),
 				}
@@ -154,19 +159,6 @@ fn listener_thread(pending: Arc<Mutex<Option<ir::Program>>>) {
 // ─── Plugin implementation ────────────────────────────────────────────────────
 
 impl JinglerPlugin {
-	fn load_program_if_present(&mut self) -> bool {
-		let Some(program) = &self.program else { return true; };
-		self.runtime.unload_program();
-		self.zing_params = program.parameters.clone();
-		match self.runtime.load_program(program, self.sample_rate) {
-			Ok(_) => true,
-			Err(e) => {
-				nih_error!("Jingler: runtime error: {}", e);
-				false
-			}
-		}
-	}
-
 	fn param_values(&self) -> [f32; NUM_PARAMS] {
 		[
 			self.params.p00.value(),
@@ -220,16 +212,6 @@ impl Plugin for JinglerPlugin {
 		nih_log!("Jingler: initializing");
 		self.sample_rate = buffer_config.sample_rate;
 
-		if !self.runtime_initialized {
-			if let Ok(runtime) = default_jingler_runtime() {
-				self.runtime = runtime;
-				self.runtime_initialized = true;
-			} else {
-				nih_error!("Jingler: failed to create runtime");
-				return false;
-			}
-		}
-
 		// Spawn the TCP listener thread exactly once for the whole process lifetime,
 		// so DAW re-instantiation doesn't cause "address already in use" errors.
 		LISTENER_INIT.call_once(|| {
@@ -240,13 +222,19 @@ impl Plugin for JinglerPlugin {
 				.expect("failed to spawn Jingler listener thread");
 		});
 
-		// If a program was already loaded, reload it at the new sample rate.
-		return self.load_program_if_present();
+		// Re-initialize the current runtime instance at the new sample rate.
+		if let Some(runtime) = &mut self.runtime {
+			if let Err(e) = runtime.initialize(self.sample_rate) {
+				nih_error!("Jingler: runtime error: {}", e);
+				return false;
+			}
+		}
+
+		true
 	}
 
 	fn deactivate(&mut self) {
 		nih_log!("Jingler: deactivating");
-		self.runtime.unload_program();
 	}
 
 	fn process(
@@ -267,21 +255,31 @@ impl Plugin for JinglerPlugin {
 			};
 		}
 
-		// Hot-swap program if a new one arrived over the network.
+		// Get current parameter values.
+		let parameter_values = self.param_values();
+
+		// Hot-swap runtime instance if a new one arrived over the network.
 		// Use try_lock so the audio thread never blocks waiting for the listener.
-		let new_program = self.pending_program.try_lock().ok().and_then(|mut g| g.take());
-		if let Some(program) = new_program {
-			self.program = Some(program);
-			if !self.load_program_if_present() {
-				return ProcessStatus::Error("Runtime error in load_program");
-			}
+		let new_runtime = self.pending_runtime.try_lock().ok().and_then(|mut g| g.take());
+		if let Some(mut runtime) = new_runtime {
+			check!(runtime.initialize(self.sample_rate), "initialize");
+			self.runtime = Some(runtime);
 		}
+
+		let Some(runtime) = self.runtime.as_mut() else {
+			// No program loaded — output silence.
+			for channel_samples in buffer.iter_samples() {
+				for sample in channel_samples {
+					*sample = 0.0;
+				}
+			}
+			return ProcessStatus::Normal;
+		};
 
 		// Push normalised (0–1) parameter values to the runtime.
 		// The runtime scales them to the Zing parameter range internally.
-		let values = self.param_values();
-		for (i, &v) in values.iter().enumerate() {
-			check!(self.runtime.set_parameter(i, v), "set_parameter");
+		for (i, &v) in parameter_values.iter().enumerate() {
+			check!(runtime.set_parameter(i, v), "set_parameter");
 		}
 
 		// Process audio sample-by-sample, interleaving MIDI events at their
@@ -294,13 +292,13 @@ impl Plugin for JinglerPlugin {
 					Some(ref event) if event.timing() <= sample_id as u32 => {
 						match *event {
 							NoteEvent::NoteOn { channel, note, velocity, .. } => {
-								check!(self.runtime.note_on(channel, note, (velocity * 127.0) as u8), "note_on");
+								check!(runtime.note_on(channel, note, (velocity * 127.0) as u8), "note_on");
 							}
 							NoteEvent::NoteOff { channel, note, .. } => {
-								check!(self.runtime.note_off(channel, note), "note_off");
+								check!(runtime.note_off(channel, note), "note_off");
 							}
 							NoteEvent::Choke { channel, note, .. } => {
-								check!(self.runtime.note_off(channel, note), "note_off");
+								check!(runtime.note_off(channel, note), "note_off");
 							}
 							_ => {}
 						}
@@ -310,7 +308,7 @@ impl Plugin for JinglerPlugin {
 				}
 			}
 
-			let [left, right] = check!(self.runtime.next_sample(), "next_sample");
+			let [left, right] = check!(runtime.next_sample(), "next_sample");
 			let mut samples = channel_samples.into_iter();
 			if let Some(l) = samples.next() { *l = left as f32; }
 			if let Some(r) = samples.next() { *r = right as f32; }

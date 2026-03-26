@@ -1,4 +1,4 @@
-use runtime::{JinglerRuntime, default_jingler_runtime};
+use runtime::{JinglerRuntimeInstance, default_jingler_runtime};
 use zing::compiler::Compiler;
 
 const SAMPLE_RATE: f32 = 44100.0;
@@ -9,16 +9,17 @@ fn compile(src: &str) -> ir::Program {
 		.unwrap_or_else(|mut e| panic!("Compilation failed:\n{}", e.next().unwrap_or_default()))
 }
 
-fn make_runtime(src: &str) -> Box<dyn JinglerRuntime> {
+fn make_runtime(src: &str) -> Box<dyn JinglerRuntimeInstance> {
 	let program = compile(src);
-	let mut rt = default_jingler_runtime().unwrap();
-	rt.load_program(&program, SAMPLE_RATE).unwrap();
-	rt
+	let rt = default_jingler_runtime().unwrap();
+	let mut instance = rt.load_program(&program).unwrap();
+	instance.initialize(SAMPLE_RATE).unwrap();
+	instance
 }
 
 fn run(src: &str, n: usize) -> Vec<[f64; 2]> {
-	let mut rt = make_runtime(src);
-	(0..n).map(|_| rt.next_sample().unwrap()).collect()
+	let mut instance = make_runtime(src);
+	(0..n).map(|_| instance.next_sample().unwrap()).collect()
 }
 
 fn run1(src: &str) -> [f64; 2] {
@@ -1816,4 +1817,110 @@ fn instrument_mixed_static_and_dynamic_inputs() {
 	// base stays the same, modulation increases by 1 each sample
 	assert_approx(s2[0], base + 1.0);
 	assert_approx(s3[0], base + 2.0);
+}
+
+// ============================================================
+// Multiple instances and re-initialization
+// ============================================================
+
+#[test]
+fn multiple_instances_from_same_runtime() {
+	let program = compile("global module main () -> (out: stereo)  out = 1.0");
+	let rt = default_jingler_runtime().unwrap();
+
+	let mut inst1 = rt.load_program(&program).unwrap();
+	inst1.initialize(SAMPLE_RATE).unwrap();
+
+	let mut inst2 = rt.load_program(&program).unwrap();
+	inst2.initialize(SAMPLE_RATE).unwrap();
+
+	let s1 = inst1.next_sample().unwrap();
+	let s2 = inst2.next_sample().unwrap();
+	assert_mono(s1, 1.0);
+	assert_mono(s2, 1.0);
+}
+
+#[test]
+fn multiple_instances_independent_state() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = cell(out + 1, 0)
+	"#;
+	let program = compile(src);
+	let rt = default_jingler_runtime().unwrap();
+
+	let mut inst1 = rt.load_program(&program).unwrap();
+	inst1.initialize(SAMPLE_RATE).unwrap();
+
+	let mut inst2 = rt.load_program(&program).unwrap();
+	inst2.initialize(SAMPLE_RATE).unwrap();
+
+	// Advance inst1 by 3 samples
+	inst1.next_sample().unwrap();
+	inst1.next_sample().unwrap();
+	let s1 = inst1.next_sample().unwrap();
+	assert_mono(s1, 2.0);
+
+	// inst2 should still be at sample 0
+	let s2 = inst2.next_sample().unwrap();
+	assert_mono(s2, 0.0);
+}
+
+#[test]
+fn reinitialize_resets_state() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = cell(out + 1, 0)
+	"#;
+	let mut inst = make_runtime(src);
+
+	// Advance by 5 samples
+	for _ in 0..5 {
+		inst.next_sample().unwrap();
+	}
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 5.0);
+
+	// Re-initialize should reset state
+	inst.initialize(SAMPLE_RATE).unwrap();
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn reinitialize_kills_notes() {
+	let src = r#"
+		instrument tone(gain: mono) -> out: mono
+			out = gain
+
+		global module main () -> (out: stereo)
+			out = 1::tone(1)
+	"#;
+	let mut inst = make_runtime(src);
+
+	// Play instrument
+	inst.note_on(0, 60, 127).unwrap();
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 1.0);
+
+	// Re-initialize should kill notes
+	inst.initialize(SAMPLE_RATE).unwrap();
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn reinitialize_with_different_sample_rate() {
+	let src = "global module main () -> (out: stereo)  out = samplerate()";
+	let program = compile(src);
+	let rt = default_jingler_runtime().unwrap();
+	let mut inst = rt.load_program(&program).unwrap();
+
+	inst.initialize(44100.0).unwrap();
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 44100.0);
+
+	inst.initialize(48000.0).unwrap();
+	let s = inst.next_sample().unwrap();
+	assert_mono(s, 48000.0);
 }
