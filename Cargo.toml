@@ -2,8 +2,8 @@
 members = [
     "crates/convert",
     "crates/ir",
-    "crates/plugin",
     "crates/runtime",
+    "crates/vst3-plugin",
     "crates/zing",
     "crates/zing-cmd",
 ]
