@@ -6,7 +6,6 @@ members = [
     "crates/runtime",
     "crates/zing",
     "crates/zing-cmd",
-    "crates/zing-vst",
 ]
 resolver = "2"
 
