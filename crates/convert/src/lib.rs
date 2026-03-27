@@ -18,9 +18,8 @@ pub struct Note {
 	pub songpos: u32,
 	pub pat: u16,
 	pub patline: u16,
-	pub off: bool,
-	pub tone: Option<u16>,
 	pub instr: u16,
+	pub key: u16,
 	pub velocity: u16,
 }
 
@@ -83,7 +82,7 @@ impl Music {
 		// Keys
 		writeln!(w, "Keys:\n\tdd\t1")?;
 		self.notelist(w, track_order,
-			|_, n| vec![n.tone.unwrap() as u8],
+			|_, n| vec![n.key as u8],
 			vec![0x80], ".k_"
 		)?;
 		self.autolist(w, |_, p| vec![p.value as u8], vec![0x80])?;
@@ -91,7 +90,7 @@ impl Music {
 		// Lengths
 		writeln!(w, "Lengths:\n\tdd\tSAMPLES_PER_TICK")?;
 		self.notelist(w, track_order,
-			|_, n| encode_distance(n.length.unwrap()),
+			|_, n| encode_distance(n.length.unwrap_or(0x7E00)),
 			vec![0x80], ".l_"
 		)?;
 		self.autolist(w, |_, _| vec![], vec![0x80])?;
@@ -135,7 +134,7 @@ impl Music {
 				let mut last_songpos: Option<u32> = None;
 				let mut pat_data = Vec::new();
 				for n in &track.notes {
-					let trigger_new_line = if let Some(lp) = last_songpos { n.songpos != lp } else { !n.off };
+					let trigger_new_line = if let Some(lp) = last_songpos { n.songpos != lp } else { true };
 
 					if trigger_new_line {
 						Self::dataline(w, &pat_data)?;
@@ -144,10 +143,8 @@ impl Music {
 						last_songpos = Some(n.songpos);
 					}
 
-					if !n.off {
-						pat_data.extend(datafunc(prev_n, n));
-						prev_n = Some(n);
-					}
+					pat_data.extend(datafunc(prev_n, n));
+					prev_n = Some(n);
 				}
 				Self::dataline(w, &pat_data)?;
 			}

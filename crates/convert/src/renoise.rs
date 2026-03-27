@@ -12,7 +12,7 @@ use crate::*;
 fn test_convert_renoise() {
 	const SAMPLE_RATE: f32 = 44100.0;
 	const PARAMETER_QUANTIZATION_LEVELS: u16 = 16;
-    const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
+	const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
 
 	let xrns = std::fs::File::open("../../test/test.xrns").unwrap();
 	let mut archive = ZipArchive::new(xrns).unwrap();
@@ -241,17 +241,16 @@ fn make_tracks<'a>(xsong: &XmlNode<'a>, _ticklength: f32) -> Result<(Vec<Track>,
 
 			let mut col_notes = extract_track_notes(xsong, tr, column, &tname)?;
 			notes.append(&mut col_notes);
+		}
 
-			for note in &notes {
-				if !note.off && !track_instrs.contains(&note.instr) {
-					track_instrs.push(note.instr);
-				}
+		for note in &notes {
+			if !track_instrs.contains(&note.instr) {
+				track_instrs.push(note.instr);
 			}
 		}
 
 		for instr in track_instrs {
-			let mut instr_notes = filter_track_notes(&tname, &notes, instr);
-			compute_note_lengths(&mut instr_notes, &tname)?;
+			let mut instr_notes: Vec<Note> = notes.iter().filter(|n| n.instr == instr).cloned().collect();
 			instr_notes.sort_by_key(|n| n.line);
 
 			let labelname: String = tname.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
@@ -274,7 +273,7 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 
 	let xpatterns = xsong.child("PatternPool").child("Patterns").child("Pattern");
 
-	let mut notes = Vec::new();
+	let mut notes: Vec<Note> = Vec::new();
 	let mut pattern_top = 0;
 	let mut prev_instr: Option<u16> = None;
 
@@ -288,10 +287,8 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 		});
 
 		if muted {
-			notes.push(Note {
-				column: column as u16, line: pattern_top, length: None, songpos: posn as u32, pat: patn as u16, patline: 0,
-				off: true, tone: None, instr: 0, velocity: 127
-			});
+			// Terminate last note at top of pattern
+			notes.last_mut().map(|last| last.length.get_or_insert(pattern_top - last.line));
 		} else {
 			let tracks = xpat.child("Tracks").child("PatternTrack");
 			if tr < tracks.len() {
@@ -303,40 +300,10 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 						let xcols = xline.child("NoteColumns").child("NoteColumn");
 						if column < xcols.len() {
 							let xcol = xcols.at(column);
-							let note_str = xcol.child("Note").text();
 
-							if !note_str.is_empty() && note_str != "---" {
-								let instr_str = xcol.child("Instrument").text();
-								let mut instr = instr_str.clone();
-								if (instr == ".." || instr.is_empty()) && note_str != "OFF" {
-									if let Some(pi) = prev_instr {
-										instr = format!("{:02X}", pi);
-									} else {
-										return Err(ConvertError::Note { track: tname.to_string(), column: column as u16, pattern: patn as u16, line: index, message: "Unspecified instrument".into() });
-									}
-								}
-								let instr_val = if !instr.is_empty() && instr != ".." { u16::from_str_radix(&instr, 16).unwrap_or(0) } else { 0 };
-								if !instr.is_empty() && instr != ".." {
-									prev_instr = Some(instr_val);
-								}
-
-								// Parse velocity
-								let vol_str = xcol.child("Volume").text();
-								let velocity = if vol_str.is_empty() || vol_str == ".." { 127 } else { u16::from_str_radix(&vol_str, 16).unwrap_or(127) };
-								if velocity > 128 && note_str != "OFF" {
-									return Err(ConvertError::Note { track: tname.to_string(), column: column as u16, pattern: patn as u16, line: index, message: "Illegal velocity value".into() });
-								}
-
-								let mut note = parse_note_struct(tname, column, line, posn as u32, patn as u16, index, &note_str, instr_val, velocity);
-								if note.velocity == 0 {
-									note.off = true;
-								}
-								notes.push(note);
-							}
-
-							// Check columns
+							// Check illegal columns
 							let check = |x: &str, allow_zero: bool, msg: &str| -> Result<(), ConvertError> {
-								if !x.is_empty() && x != ".." && (!allow_zero || x != "00") {
+								if x != "" && x != ".." && (!allow_zero || x != "00") {
 									return Err(ConvertError::Note { track: tname.to_string(), column: column as u16, pattern: patn as u16, line: index, message: msg.to_string() });
 								}
 								Ok(())
@@ -347,6 +314,62 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 							for xeff in xline.child("EffectColumns").child("EffectColumn").iter() {
 								check(&xeff.child("Number").text(), true, "Effect column used")?;
 							}
+
+							// Skip if empty
+							let note_str = xcol.child("Note").text();
+							if note_str == "" || note_str == "---" { continue; }
+
+							// Terminate last note
+							notes.last_mut().map(|last| last.length.get_or_insert(line - last.line));
+
+							// Skip if OFF
+							if note_str == "OFF" { continue; }
+
+							// Parse instrument
+							let instr_str = xcol.child("Instrument").text();
+							let instr = if instr_str == "" || instr_str == ".." {
+								if let Some(prev_instr) = prev_instr {
+									prev_instr
+								} else {
+									return Err(ConvertError::Note { track: tname.to_string(), column: column as u16, pattern: patn as u16, line: index, message: "Unspecified instrument".into() });
+								}
+							} else {
+								u16::from_str_radix(&instr_str, 16).unwrap_or(0)
+							};
+							prev_instr = Some(instr);
+
+							// Parse key
+							let chars: Vec<char> = note_str.chars().collect();
+							let octave = chars[2].to_digit(10).unwrap_or(0) as u16;
+							let notebase = match chars[0] {
+								'C' => 0, 'D' => 2, 'E' => 4, 'F' => 5, 'G' => 7, 'A' => 9, 'B' => 11, _ => 0
+							};
+							let sharp = if chars[1] == '#' { 1 } else { 0 };
+							let key = octave * 12 + notebase + sharp;
+
+							// Parse velocity
+							let vol_str = xcol.child("Volume").text();
+							let velocity = if vol_str == "" || vol_str == ".." {
+								127
+							} else {
+								u16::from_str_radix(&vol_str, 16).unwrap_or(127)
+							};
+							if velocity > 127 {
+								return Err(ConvertError::Note { track: tname.to_string(), column: column as u16, pattern: patn as u16, line: index, message: "Illegal velocity value".into() });
+							}
+
+							let note = Note {
+								column: column as u16,
+								line,
+								length: None,
+								songpos: posn as u32,
+								pat: patn as u16,
+								patline: index,
+								instr,
+								key,
+								velocity
+							};
+							notes.push(note);
 						}
 					}
 				}
@@ -355,85 +378,7 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 		pattern_top += nlines;
 	}
 
-	// Add initial OFF and remove redundant OFFs
-	let mut notes2 = Vec::new();
-	let mut off = if !notes.is_empty() && notes[0].line == 0 { false } else {
-		notes2.push(Note { column: column as u16, line: 0, length: None, songpos: 0, pat: 0, patline: 0, off: true, tone: None, instr: 0, velocity: 127 });
-		true
-	};
-
-	for n in notes {
-		if n.off {
-			if !off {
-				notes2.push(n);
-				off = true;
-			}
-		} else {
-			notes2.push(n);
-			off = false;
-		}
-	}
-
-	if let Some(last) = notes2.last() {
-		if !last.off {
-			return Err(ConvertError::Note {
-				track: tname.to_string(), column: column as u16, pattern: last.pat, line: last.patline, message: "Note not terminated (insert OFF)".into()
-			});
-		}
-	}
-
-	Ok(notes2)
-}
-
-fn parse_note_struct(_tname: &str, column: usize, line: u32, songpos: u32, pat: u16, patline: u16, note_str: &str, instr: u16, velocity: u16) -> Note {
-	if note_str == "OFF" {
-		Note { column: column as u16, line, length: None, songpos, pat, patline, off: true, tone: None, instr: 0, velocity: 0 }
-	} else {
-		let chars: Vec<char> = note_str.chars().collect();
-		let octave = chars[2].to_digit(10).unwrap_or(0) as u16;
-		let notebase = match chars[0] {
-			'C' => 0, 'D' => 2, 'E' => 4, 'F' => 5, 'G' => 7, 'A' => 9, 'B' => 11, _ => 0
-		};
-		let sharp = if chars[1] == '#' { 1 } else { 0 };
-		let tone = octave * 12 + notebase + sharp;
-		Note { column: column as u16, line, length: None, songpos, pat, patline, off: false, tone: Some(tone), instr, velocity }
-	}
-}
-
-fn filter_track_notes(_tname: &str, notes: &[Note], instr: u16) -> Vec<Note> {
-	let mut notes2 = Vec::new();
-	let mut off = false;
-
-	for n in notes {
-		if n.off || n.instr != instr {
-			if !off {
-				notes2.push(Note {
-					column: n.column, line: n.line, length: None, songpos: n.songpos, pat: n.pat, patline: n.patline,
-					off: true, tone: None, instr: 0, velocity: 127
-				});
-				off = true;
-			}
-		} else {
-			notes2.push(n.clone());
-			off = false;
-		}
-	}
-	notes2
-}
-
-fn compute_note_lengths(notes: &mut [Note], tname: &str) -> Result<(), ConvertError> {
-	for i in 1..notes.len() {
-		let prev_line = notes[i-1].line;
-		let curr_line = notes[i].line;
-
-		if !notes[i-1].off {
-			if curr_line == prev_line {
-				return Err(ConvertError::Note { track: tname.to_string(), column: notes[i].column, pattern: notes[i].pat, line: notes[i].patline, message: "Zero length".into() });
-			}
-			notes[i-1].length = Some(curr_line - prev_line);
-		}
-	}
-	Ok(())
+	Ok(notes)
 }
 
 fn extract_automation<'a>(xsong: &XmlNode<'a>, id: u16, quantization_levels: u16) -> Vec<AutomationPoint> {
