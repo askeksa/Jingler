@@ -1,4 +1,5 @@
 pub mod renoise;
+pub mod xml;
 
 use std::io::Write;
 

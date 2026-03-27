@@ -7,6 +7,7 @@ use std::path::Path;
 use zip::{ZipArchive, result::ZipError};
 
 use crate::*;
+use crate::xml::{XmlDocument, XmlNode};
 
 #[test]
 fn test_convert_renoise() {
@@ -50,80 +51,15 @@ pub fn convert_renoise_song(song: &mut dyn Read,
 		parameter_count: u16) -> Result<Music, ConvertError> {
 	let mut content = String::new();
 	song.read_to_string(&mut content)?;
-	let doc = roxmltree::Document::parse(&content)
+	let doc = XmlDocument::parse(&content)
 		.map_err(|e| ConvertError::General { message: e.to_string() })?;
 
-	let x = XmlNode::wrap(doc.root());
-	let xsong = x.child("RenoiseSong");
+	let xsong = doc.root().child("RenoiseSong");
 
 	make_music(&xsong, parameter_count, parameter_quantization_levels)
 }
 
-// XML Wrapper
-
-struct XmlNode<'a> {
-	nodes: Vec<roxmltree::Node<'a, 'a>>,
-}
-
-impl<'a> XmlNode<'a> {
-	fn new(nodes: Vec<roxmltree::Node<'a, 'a>>) -> Self {
-		Self { nodes }
-	}
-
-	fn wrap(node: roxmltree::Node<'a, 'a>) -> Self {
-		Self::new(vec![node])
-	}
-
-	fn at(&self, index: usize) -> Self {
-		Self::wrap(self.nodes[index])
-	}
-
-	fn child(&self, name: &str) -> XmlNode<'a> {
-		let mut children = Vec::new();
-		for node in &self.nodes {
-			for child in node.children() {
-				if child.has_tag_name(name) {
-					children.push(child);
-				}
-			}
-		}
-		XmlNode::new(children)
-	}
-
-	fn attr(&self, name: &str) -> String {
-		let mut s = String::new();
-		for node in &self.nodes {
-			if let Some(val) = node.attribute(name) {
-				s.push_str(val);
-			}
-		}
-		s
-	}
-
-	fn text(&self) -> String {
-		let mut s = String::new();
-		for node in &self.nodes {
-			if let Some(text) = node.text() {
-				s.push_str(text);
-			}
-		}
-		s
-	}
-
-	fn is_empty(&self) -> bool {
-		self.nodes.is_empty()
-	}
-
-	fn len(&self) -> usize {
-		self.nodes.len()
-	}
-
-	fn iter(&self) -> impl Iterator<Item = XmlNode<'a>> + '_ {
-		self.nodes.iter().map(|n| XmlNode::wrap(*n))
-	}
-}
-
-fn make_music<'a>(xsong: &XmlNode<'a>, num_parameters: u16, quantization_levels: u16) -> Result<Music, ConvertError> {
+fn make_music(xsong: &XmlNode, num_parameters: u16, quantization_levels: u16) -> Result<Music, ConvertError> {
 	let xgsd = xsong.child("GlobalSongData");
 	let playback_version = xgsd.child("PlaybackEngineVersion").text();
 	let playback_version: i32 = if playback_version.is_empty() { 0 } else { playback_version.parse().unwrap_or(0) };
@@ -184,7 +120,7 @@ fn make_music<'a>(xsong: &XmlNode<'a>, num_parameters: u16, quantization_levels:
 	})
 }
 
-fn make_tracks<'a>(xsong: &XmlNode<'a>, _ticklength: f32) -> Result<(Vec<Track>, Vec<Instrument>), ConvertError> {
+fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Instrument>), ConvertError> {
 	let mut instruments = Vec::new();
 	for xinst in xsong.child("Instruments").child("Instrument").iter() {
 		let channel: u16 = xinst.child("PluginGenerator").child("Channel").text().parse().unwrap_or(0);
@@ -267,7 +203,7 @@ fn make_tracks<'a>(xsong: &XmlNode<'a>, _ticklength: f32) -> Result<(Vec<Track>,
 	Ok((tracks, instruments))
 }
 
-fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname: &str) -> Result<Vec<Note>, ConvertError> {
+fn extract_track_notes(xsong: &XmlNode, tr: usize, column: usize, tname: &str) -> Result<Vec<Note>, ConvertError> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 
@@ -381,7 +317,7 @@ fn extract_track_notes<'a>(xsong: &XmlNode<'a>, tr: usize, column: usize, tname:
 	Ok(notes)
 }
 
-fn extract_automation<'a>(xsong: &XmlNode<'a>, id: u16, quantization_levels: u16) -> Vec<AutomationPoint> {
+fn extract_automation(xsong: &XmlNode, id: u16, quantization_levels: u16) -> Vec<AutomationPoint> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 	let xpatterns = xsong.child("PatternPool").child("Patterns").child("Pattern");
