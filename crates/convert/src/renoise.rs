@@ -186,11 +186,10 @@ fn make_music<'a>(xsong: &XmlNode<'a>, num_parameters: u16, quantization_levels:
 
 fn make_tracks<'a>(xsong: &XmlNode<'a>, _ticklength: f32) -> Result<(Vec<Track>, Vec<Instrument>), ConvertError> {
 	let mut instruments = Vec::new();
-	for (i, xinst) in xsong.child("Instruments").child("Instrument").iter().enumerate() {
+	for xinst in xsong.child("Instruments").child("Instrument").iter() {
 		let channel: u16 = xinst.child("PluginGenerator").child("Channel").text().parse().unwrap_or(0);
 		let name = xinst.child("Name").text();
 		instruments.push(Instrument {
-			number: i as u16,
 			name,
 			channel,
 		});
@@ -258,7 +257,6 @@ fn make_tracks<'a>(xsong: &XmlNode<'a>, _ticklength: f32) -> Result<(Vec<Track>,
 			let labelname: String = tname.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
 
 			tracks.push(Track {
-				number: tr as u16,
 				name: tname.clone(),
 				instr,
 				notes: instr_notes,

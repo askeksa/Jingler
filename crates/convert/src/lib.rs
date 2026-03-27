@@ -6,7 +6,6 @@ use std::io::Write;
 
 #[derive(Clone, Debug)]
 pub struct Instrument {
-	pub number: u16,
 	pub name: String,
 	pub channel: u16,
 }
@@ -33,7 +32,6 @@ pub struct AutomationPoint {
 
 #[derive(Clone, Debug)]
 pub struct Track {
-	pub number: u16,
 	pub name: String,
 	pub instr: u16,
 	pub notes: Vec<Note>,
