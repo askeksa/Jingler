@@ -12,6 +12,7 @@ use crate::*;
 fn test_convert_renoise() {
 	const SAMPLE_RATE: f32 = 44100.0;
 	const PARAMETER_QUANTIZATION_LEVELS: u16 = 16;
+    const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
 
 	let xrns = std::fs::File::open("../../test/test.xrns").unwrap();
 	let mut archive = ZipArchive::new(xrns).unwrap();
@@ -19,13 +20,11 @@ fn test_convert_renoise() {
 
 	let music = convert_renoise_song(
 		&mut song,
-		SAMPLE_RATE,
-		PARAMETER_QUANTIZATION_LEVELS,
-		4, vec![0, 1, 8, 3, 9, 4, 2, 6, 7, 5]
+		PARAMETER_QUANTIZATION_LEVELS, 4, 
 	).unwrap();
 
 	let mut out = vec![];
-	music.export(&mut out).unwrap();
+	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER).unwrap();
 
 	let expected = std::fs::read_to_string("../../test/expected.asm").unwrap();
 	let actual = String::from_utf8(out).unwrap();
@@ -34,23 +33,21 @@ fn test_convert_renoise() {
 }
 
 pub fn convert_renoise_file(input: &impl AsRef<Path>,
-		sample_rate: f32, parameter_quantization_levels: u16,
-		parameter_count: u16, track_order: Vec<u16>) -> Result<Music, ConvertError> {
+		parameter_quantization_levels: u16,
+		parameter_count: u16) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
 	let mut song = archive.by_name("Song.xml")?;
 	convert_renoise_song(
 		&mut song,
-		sample_rate,
 		parameter_quantization_levels,
-		parameter_count,
-		track_order
+		parameter_count
 	)
 }
 
 pub fn convert_renoise_song(song: &mut dyn Read,
-		sample_rate: f32, parameter_quantization_levels: u16,
-		parameter_count: u16, track_order: Vec<u16>) -> Result<Music, ConvertError> {
+		parameter_quantization_levels: u16,
+		parameter_count: u16) -> Result<Music, ConvertError> {
 	let mut content = String::new();
 	song.read_to_string(&mut content)?;
 	let doc = roxmltree::Document::parse(&content)
@@ -59,7 +56,7 @@ pub fn convert_renoise_song(song: &mut dyn Read,
 	let x = XmlNode::wrap(doc.root());
 	let xsong = x.child("RenoiseSong");
 
-	make_music(&xsong, sample_rate, &track_order, parameter_count, parameter_quantization_levels)
+	make_music(&xsong, parameter_count, parameter_quantization_levels)
 }
 
 // XML Wrapper
@@ -126,7 +123,7 @@ impl<'a> XmlNode<'a> {
 	}
 }
 
-fn make_music<'a>(xsong: &XmlNode<'a>, sample_rate: f32, track_order: &[u16], num_parameters: u16, quantization_levels: u16) -> Result<Music, ConvertError> {
+fn make_music<'a>(xsong: &XmlNode<'a>, num_parameters: u16, quantization_levels: u16) -> Result<Music, ConvertError> {
 	let xgsd = xsong.child("GlobalSongData");
 	let playback_version = xgsd.child("PlaybackEngineVersion").text();
 	let playback_version: i32 = if playback_version.is_empty() { 0 } else { playback_version.parse().unwrap_or(0) };
@@ -177,23 +174,13 @@ fn make_music<'a>(xsong: &XmlNode<'a>, sample_rate: f32, track_order: &[u16], nu
 		}
 	}
 
-	let mut final_track_order = Vec::new();
-	for &idx in track_order {
-		if (idx as usize) < 16 {
-			final_track_order.push(channel_map[idx as usize]);
-		} else {
-			final_track_order.push(None);
-		}
-	}
-
 	Ok(Music {
-		sample_rate,
 		tracks,
 		instruments,
 		length,
 		ticklength,
 		autos,
-		track_order: final_track_order,
+		channel_map,
 	})
 }
 

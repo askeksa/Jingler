@@ -42,19 +42,17 @@ pub struct Track {
 
 #[derive(Clone, Debug)]
 pub struct Music {
-	pub sample_rate: f32,
 	pub tracks: Vec<Track>,
 	pub instruments: Vec<Instrument>,
 	pub length: u32,
 	pub ticklength: f32,
 	pub autos: Vec<Vec<AutomationPoint>>,
-	pub track_order: Vec<Option<usize>>, // Index into self.tracks
+	pub channel_map: Vec<Option<usize>>,
 }
 
 // Export logic
 impl Music {
-	pub fn export(&self, w: &mut dyn Write) -> std::io::Result<()> {
-		let sample_rate = self.sample_rate;
+	pub fn export(&self, w: &mut dyn Write, sample_rate: f32, track_order: &[u16]) -> std::io::Result<()> {
 		let spt = (self.ticklength * sample_rate).round() as u32;
 		let total_samples = (self.length as f32 * self.ticklength * sample_rate) as u64;
 
@@ -62,7 +60,7 @@ impl Music {
 
 		writeln!(w, "%define SAMPLE_RATE {:.0}", sample_rate)?;
 		writeln!(w)?;
-		writeln!(w, "%define NUM_TRACKS {}", self.track_order.len())?;
+		writeln!(w, "%define NUM_TRACKS {}", track_order.len())?;
 		writeln!(w)?;
 		writeln!(w, "%define MUSIC_LENGTH {}", self.length)?;
 		writeln!(w, "%define TOTAL_SAMPLES {}", roundup(total_samples))?;
@@ -78,7 +76,7 @@ impl Music {
 
 		// Velocities
 		writeln!(w, "Velocities:\n\tdd\t1")?;
-		self.notelist(w,
+		self.notelist(w, track_order,
 			|_, n| vec![n.velocity as u8],
 			vec![0x80], ".v_"
 		)?;
@@ -86,7 +84,7 @@ impl Music {
 
 		// Keys
 		writeln!(w, "Keys:\n\tdd\t1")?;
-		self.notelist(w,
+		self.notelist(w, track_order,
 			|_, n| vec![n.tone.unwrap() as u8],
 			vec![0x80], ".k_"
 		)?;
@@ -94,7 +92,7 @@ impl Music {
 
 		// Lengths
 		writeln!(w, "Lengths:\n\tdd\tSAMPLES_PER_TICK")?;
-		self.notelist(w,
+		self.notelist(w, track_order,
 			|_, n| encode_distance(n.length.unwrap()),
 			vec![0x80], ".l_"
 		)?;
@@ -102,7 +100,7 @@ impl Music {
 
 		// Distances
 		writeln!(w, "Distances:\n\tdd\tSAMPLES_PER_TICK")?;
-		self.notelist(w,
+		self.notelist(w, track_order,
 			|prev_n, n| {
 				let prev_line = prev_n.map(|pn| pn.line).unwrap_or(0);
 				encode_distance(n.line - prev_line)
@@ -126,12 +124,12 @@ impl Music {
 		Ok(())
 	}
 
-	fn notelist<F>(&self, w: &mut dyn Write, mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
+	fn notelist<F>(&self, w: &mut dyn Write, track_order: &[u16], mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
 	where F: FnMut(Option<&Note>, &Note) -> Vec<u8> {
 
-		for (i, track_opt) in self.track_order.iter().enumerate() {
-			if let Some(track_idx) = track_opt {
-				let track = &self.tracks[*track_idx];
+		for (i, &channel) in track_order.iter().enumerate() {
+			if channel < 16 && let Some(track_idx) = self.channel_map[channel as usize] {
+				let track = &self.tracks[track_idx as usize];
 				writeln!(w, "\t; {}", track.name)?;
 				writeln!(w, "{}{}_{}_{}:", prefix, i, track.labelname, track.instr)?;
 
