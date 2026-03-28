@@ -14,18 +14,16 @@ fn test_convert_renoise() {
 	const SAMPLE_RATE: f32 = 44100.0;
 	const PARAMETER_QUANTIZATION_LEVELS: u16 = 16;
 	const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
+	const NUM_PARAMETERS: usize = 4;
 
 	let xrns = std::fs::File::open("../../test/test.xrns").unwrap();
 	let mut archive = ZipArchive::new(xrns).unwrap();
 	let mut song = archive.by_name("Song.xml").unwrap();
 
-	let music = convert_renoise_song(
-		&mut song,
-		PARAMETER_QUANTIZATION_LEVELS, 4, 
-	).unwrap();
+	let music = convert_renoise_song(&mut song, PARAMETER_QUANTIZATION_LEVELS).unwrap();
 
 	let mut out = vec![];
-	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER).unwrap();
+	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER, NUM_PARAMETERS).unwrap();
 
 	let expected = std::fs::read_to_string("../../test/expected.asm").unwrap();
 	let actual = String::from_utf8(out).unwrap();
@@ -34,21 +32,15 @@ fn test_convert_renoise() {
 }
 
 pub fn convert_renoise_file(input: &impl AsRef<Path>,
-		parameter_quantization_levels: u16,
-		parameter_count: u16) -> Result<Music, ConvertError> {
+		parameter_quantization_levels: u16) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
 	let mut song = archive.by_name("Song.xml")?;
-	convert_renoise_song(
-		&mut song,
-		parameter_quantization_levels,
-		parameter_count
-	)
+	convert_renoise_song(&mut song, parameter_quantization_levels)
 }
 
 pub fn convert_renoise_song(song: &mut dyn Read,
-		parameter_quantization_levels: u16,
-		parameter_count: u16) -> Result<Music, ConvertError> {
+		parameter_quantization_levels: u16) -> Result<Music, ConvertError> {
 	let mut content = String::new();
 	song.read_to_string(&mut content)?;
 	let doc = XmlDocument::parse(&content)
@@ -56,10 +48,10 @@ pub fn convert_renoise_song(song: &mut dyn Read,
 
 	let xsong = doc.root().child("RenoiseSong");
 
-	make_music(&xsong, parameter_count, parameter_quantization_levels)
+	make_music(&xsong, parameter_quantization_levels)
 }
 
-fn make_music(xsong: &XmlNode, num_parameters: u16, quantization_levels: u16) -> Result<Music, ConvertError> {
+fn make_music(xsong: &XmlNode, quantization_levels: u16) -> Result<Music, ConvertError> {
 	let xgsd = xsong.child("GlobalSongData");
 	let playback_version = xgsd.child("PlaybackEngineVersion").text();
 	let playback_version: i32 = if playback_version.is_empty() { 0 } else { playback_version.parse().unwrap_or(0) };
@@ -78,10 +70,7 @@ fn make_music(xsong: &XmlNode, num_parameters: u16, quantization_levels: u16) ->
 
 	let (tracks, instruments) = make_tracks(xsong, ticklength)?;
 
-	let mut autos = Vec::new();
-	for i in 0..num_parameters {
-		autos.push(extract_automation(xsong, i + 1, quantization_levels));
-	}
+	let autos = extract_automation(xsong, quantization_levels);
 
 	let xpositions = xsong.child("PatternSequence").child("PatternSequence").child("Pattern");
 	let xpositions = if !xpositions.is_empty() { xpositions } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry").child("Pattern") };
@@ -317,12 +306,12 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, column: usize, tname: &str) -
 	Ok(notes)
 }
 
-fn extract_automation(xsong: &XmlNode, id: u16, quantization_levels: u16) -> Vec<AutomationPoint> {
+fn extract_automation(xsong: &XmlNode, quantization_levels: u16) -> Vec<Vec<AutomationPoint>> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 	let xpatterns = xsong.child("PatternPool").child("Patterns").child("Pattern");
 
-	let mut points: Vec<AutomationPoint> = Vec::new();
+	let mut parameter_points: Vec<Vec<AutomationPoint>> = Vec::new();
 	let mut line = 0;
 
 	let add = |pline: u32, pvalue: u16, points: &mut Vec<AutomationPoint>| {
@@ -343,26 +332,29 @@ fn extract_automation(xsong: &XmlNode, id: u16, quantization_levels: u16) -> Vec
 
 		for xtrack in xpat.child("Tracks").child("PatternTrack").iter() {
 			for xenvelope in xtrack.child("Automations").child("Envelopes").child("Envelope").iter() {
-				let param_idx: u16 = xenvelope.child("ParameterIndex").text().parse().unwrap_or(0);
-				if param_idx == id {
-					let length: f32 = xenvelope.child("Envelope").child("Length").text().parse().unwrap_or(1.0);
-					let mut first = true;
-					for xpoint in xenvelope.child("Envelope").child("Points").child("Point").iter() {
-						let text = xpoint.text(); // e.g., "0.5,0.1"
-						let parts: Vec<&str> = text.split(',').collect();
-						if parts.len() >= 2 {
-								let x: f32 = parts[0].parse().unwrap_or(0.0);
-								let y: f32 = parts[1].parse().unwrap_or(0.0);
+				let Ok(param_idx) = xenvelope.child("ParameterIndex").text().parse() else { continue; };
+				while parameter_points.len() < param_idx {
+					parameter_points.push(Vec::new());
+				}
+				let mut points = &mut parameter_points[param_idx - 1];
 
-								let pline = line + ((x * nlines as f32).round() / length as f32).floor() as u32;
-								let pvalue = (y * quantization_levels as f32).round() as u16;
+				let length: f32 = xenvelope.child("Envelope").child("Length").text().parse().unwrap_or(1.0);
+				let mut first = true;
+				for xpoint in xenvelope.child("Envelope").child("Points").child("Point").iter() {
+					let text = xpoint.text(); // e.g., "0.5,0.1"
+					let parts: Vec<&str> = text.split(',').collect();
+					if parts.len() >= 2 {
+						let x: f32 = parts[0].parse().unwrap_or(0.0);
+						let y: f32 = parts[1].parse().unwrap_or(0.0);
 
-								if first && pline > line {
-									add(line, pvalue, &mut points);
-								}
-								add(pline, pvalue, &mut points);
-								first = false;
+						let pline = line + ((x * nlines as f32).round() / length as f32).floor() as u32;
+						let pvalue = (y * quantization_levels as f32).round() as u16;
+
+						if first && pline > line {
+							add(line, pvalue, &mut points);
 						}
+						add(pline, pvalue, &mut points);
+						first = false;
 					}
 				}
 			}
@@ -370,12 +362,15 @@ fn extract_automation(xsong: &XmlNode, id: u16, quantization_levels: u16) -> Vec
 		line += nlines;
 
 		// flush
-		if !points.is_empty() && points.last().unwrap().line < line {
-			let val = points.last().unwrap().value;
-			add(line, val, &mut points);
+		for mut points in parameter_points.iter_mut() {
+			if !points.is_empty() && points.last().unwrap().line < line {
+				let val = points.last().unwrap().value;
+				add(line, val, &mut points);
+			}
 		}
 	}
-	points
+
+	parameter_points
 }
 
 fn is_active(xdevice: &XmlNode) -> bool {

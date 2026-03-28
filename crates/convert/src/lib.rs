@@ -50,7 +50,7 @@ pub struct Music {
 
 // Export logic
 impl Music {
-	pub fn export(&self, w: &mut dyn Write, sample_rate: f32, track_order: &[u16]) -> std::io::Result<()> {
+	pub fn export(&self, w: &mut dyn Write, sample_rate: f32, track_order: &[u16], num_parameters: usize) -> std::io::Result<()> {
 		let spt = (self.ticklength * sample_rate).round() as u32;
 		let total_samples = (self.length as f32 * self.ticklength * sample_rate) as u64;
 
@@ -78,7 +78,10 @@ impl Music {
 			|_, n| vec![n.velocity as u8],
 			vec![0x80], ".v_"
 		)?;
-		self.autolist(w, |_, _| vec![], vec![0x80])?;
+		self.autolist(w, num_parameters,
+			|_, _| vec![],
+			vec![0x80]
+		)?;
 
 		// Keys
 		writeln!(w, "Keys:\n\tdd\t1")?;
@@ -86,7 +89,10 @@ impl Music {
 			|_, n| vec![n.key as u8],
 			vec![0x80], ".k_"
 		)?;
-		self.autolist(w, |_, p| vec![p.value as u8], vec![0x80])?;
+		self.autolist(w, num_parameters,
+			|_, p| vec![p.value as u8],
+			vec![0x80]
+		)?;
 
 		// Lengths
 		writeln!(w, "Lengths:\n\tdd\tSAMPLES_PER_TICK")?;
@@ -94,7 +100,10 @@ impl Music {
 			|_, n| encode_distance(n.length.unwrap_or(0x7E00)),
 			vec![0x80], ".l_"
 		)?;
-		self.autolist(w, |_, _| vec![], vec![0x80])?;
+		self.autolist(w, num_parameters,
+			|_, _| vec![],
+			vec![0x80]
+		)?;
 
 		// Distances
 		writeln!(w, "Distances:\n\tdd\tSAMPLES_PER_TICK")?;
@@ -106,7 +115,7 @@ impl Music {
 			vec![0x80], ".d_"
 		)?;
 
-		self.real_autolist_distance(w)?;
+		self.real_autolist_distance(w, num_parameters)?;
 		Ok(())
 	}
 
@@ -155,9 +164,11 @@ impl Music {
 		Ok(())
 	}
 
-	fn autolist<F>(&self, w: &mut dyn Write, mut datafunc: F, trackterm: Vec<u8>) -> std::io::Result<()>
+	fn autolist<F>(&self, w: &mut dyn Write, num_parameters: usize, mut datafunc: F, trackterm: Vec<u8>) -> std::io::Result<()>
 	where F: FnMut(Option<&AutomationPoint>, &AutomationPoint) -> Vec<u8> {
-		for (i, points) in self.autos.iter().enumerate() {
+		let empty = vec![];
+		for i in 0..num_parameters {
+			let points = self.autos.get(i).unwrap_or(&empty);
 			writeln!(w, "\t; Parameter {}", i)?;
 			writeln!(w, ".p_{}:", i)?;
 
@@ -174,12 +185,12 @@ impl Music {
 		Ok(())
 	}
 
-	fn real_autolist_distance(&self, w: &mut dyn Write) -> std::io::Result<()> {
+	fn real_autolist_distance(&self, w: &mut dyn Write, num_parameters: usize) -> std::io::Result<()> {
 		let encode_distance = |dist: u32| -> Vec<u8> {
 			if dist < 128 { vec![dist as u8] } else { vec![255 - (dist >> 8) as u8, (dist & 255) as u8] }
 		};
 
-		self.autolist(w, |prev_p, p| {
+		self.autolist(w, num_parameters, |prev_p, p| {
 			let prev_line = prev_p.map(|pp| pp.line).unwrap_or(0);
 			encode_distance(p.line - prev_line)
 		}, vec![0x80])
