@@ -13,6 +13,7 @@ notify = "4.0.15"
 rodio = "0.20.1"
 bincode = "1.3"
 
+convert = { path = "../convert" }
 ir = { path = "../ir" }
 runtime = { path = "../runtime" }
 zing = { path = "../zing" }

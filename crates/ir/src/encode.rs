@@ -154,7 +154,7 @@ fn bytecode_name(opcode: EncodedBytecode, arg: u16) -> (&'static str, Option<u16
 		ReadNoteProperty => ("note_property", Some(arg)),
 		Constant => ("constant", Some(arg)),
 		ConstantByteIndex => ("constant_byte_index", Some(arg)),
-		ProcCallByteIndex => panic!("proc_call_byte_index not supported for source output"),
+		ProcCallByteIndex => ("proc_call_byte_index", Some(arg)),
 		StackLoad => ("stack_load", Some(arg)),
 		StackStore => ("stack_store", Some(arg)),
 		Label => ("label", None),

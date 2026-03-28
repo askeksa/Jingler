@@ -1,7 +1,24 @@
 pub mod renoise;
 pub mod xml;
 
+use anyhow::Result;
+
 use std::io::Write;
+
+use ir::encode::encode_bytecodes_source;
+
+pub fn convert_music_with_program(music: &Music,
+		program: &ir::Program, jingler_asm_path: &String,
+		sample_rate: f32, embed_constant_index: bool, quantization_levels: u16,
+		out: &mut impl std::io::Write) -> Result<()> {
+	let parameter_quantization = 1.0 / (quantization_levels as f32);
+
+	music.export(out, sample_rate, &program.track_order, program.parameters.len(), quantization_levels)?;
+	encode_bytecodes_source(program, jingler_asm_path, sample_rate, embed_constant_index, parameter_quantization, out)?;
+
+	Ok(())
+}
+
 
 // Data Structures
 
@@ -38,7 +55,7 @@ pub struct Track {
 	pub labelname: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Music {
 	pub tracks: Vec<Track>,
 	pub instruments: Vec<Instrument>,
@@ -50,8 +67,12 @@ pub struct Music {
 
 // Export logic
 impl Music {
+	pub fn empty() -> Self {
+		Self::default()
+	}
+
 	pub fn export(&self, w: &mut dyn Write,
-			sample_rate: f32, track_order: &[u16],
+			sample_rate: f32, track_order: &[usize],
 			num_parameters: usize, quantization_levels: u16) -> std::io::Result<()> {
 		let spt = (self.ticklength * sample_rate).round() as u32;
 		let total_samples = (self.length as f32 * self.ticklength * sample_rate) as u64;
@@ -62,13 +83,15 @@ impl Music {
 
 		writeln!(w, "%define SAMPLE_RATE {:.0}", sample_rate)?;
 		writeln!(w)?;
-		writeln!(w, "%define NUM_TRACKS {}", track_order.len())?;
-		writeln!(w)?;
 		writeln!(w, "%define MUSIC_LENGTH {}", self.length)?;
 		writeln!(w, "%define TOTAL_SAMPLES {}", roundup(total_samples))?;
 		writeln!(w)?;
 		writeln!(w, "%define SAMPLES_PER_TICK {}", spt)?;
 		writeln!(w, "%define TICKS_PER_SECOND {:.9}", sample_rate as f64 / spt as f64)?;
+		writeln!(w)?;
+		writeln!(w, "section musdat data align=1")?;
+		writeln!(w)?;
+		writeln!(w, "MusicData:")?;
 		writeln!(w)?;
 
 		// Helper closures
@@ -153,12 +176,12 @@ impl Music {
 		Ok(())
 	}
 
-	fn notelist<F>(&self, w: &mut dyn Write, track_order: &[u16], mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
+	fn notelist<F>(&self, w: &mut dyn Write, track_order: &[usize], mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
 	where F: FnMut(Option<&Note>, &Note) -> Vec<u8> {
 
 		for (i, &channel) in track_order.iter().enumerate() {
-			if channel < 16 && let Some(track_idx) = self.channel_map[channel as usize] {
-				let track = &self.tracks[track_idx as usize];
+			if channel < 16 && let Some(track_idx) = self.channel_map[channel] {
+				let track = &self.tracks[track_idx];
 				writeln!(w, "\t; {}", track.name)?;
 				writeln!(w, "{}{}_{}_{}:", prefix, i, track.labelname, track.instr)?;
 

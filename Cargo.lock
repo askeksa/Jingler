@@ -494,6 +494,8 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "convert"
 version = "0.5.0"
 dependencies = [
+ "anyhow",
+ "ir",
  "roxmltree",
  "zip",
 ]
@@ -3801,6 +3803,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap",
+ "convert",
  "hound",
  "ir",
  "notify",

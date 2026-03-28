@@ -1,5 +1,4 @@
-
-use ir::encode::encode_bytecodes_source;
+use convert::{Music, convert_music_with_program, renoise::convert_renoise_file};
 use runtime::default_jingler_runtime;
 use zing::compiler;
 
@@ -58,6 +57,10 @@ struct PlayOptions {
 	/// Address and port to connect to.
 	#[arg(short, long, value_name = "ADDRESS", default_value = DEFAULT_CONNECT_ADDR, help_heading = "Network output options")]
 	address: String,
+
+	/// Renoise file containing music to convert.
+	#[arg(short, long, value_name = "RENOISE_FILE", help_heading = "Source output options")]
+	xrns: Option<String>,
 
 	/// Path to jingler.asm file.
 	#[arg(short, long, value_name = "JINGLER_ASM", default_value = "jingler.asm", help_heading = "Source output options")]
@@ -123,12 +126,22 @@ fn play_file(options: &PlayOptions) {
 		Ok(s) => match compiler::Compiler::new(filename.to_string(), s).compile() {
 			Ok(program) => {
 				if let Some(filename) = &options.output {
+					let music = if let Some(xrns) = &options.xrns {
+						match convert_renoise_file(xrns) {
+							Ok(music) => music,
+							Err(e) => {
+								println!("Error converting Renoise file '{}': {}", xrns, e);
+								Music::empty()
+							}
+						}
+					} else {
+						Music::empty()
+					};
 					match File::create(filename) {
 						Ok(mut file) => {
-							let parameter_quantization = 1.0 / (options.quantization_levels as f32);
-							if let Err(e) = encode_bytecodes_source(
+							if let Err(e) = convert_music_with_program(&music,
 									&program, &options.jingler_asm_path,
-									options.sample_rate, !options.byte_index, parameter_quantization,
+									options.sample_rate, !options.byte_index, options.quantization_levels,
 									&mut file) {
 								println!("Error writing output file '{}': {}", filename, e);
 							}
@@ -137,13 +150,6 @@ fn play_file(options: &PlayOptions) {
 							println!("Error creating output file '{}': {}", filename, e);
 						},
 					}
-
-					println!("Parameters: {}", program.parameters.len());
-					print!("Track order:");
-					for channel in &program.track_order {
-						print!(" {}", channel);
-					}
-					println!();
 				}
 				if options.connect {
 					if let Err(e) = send_program(&program, &options.address) {

@@ -6,5 +6,8 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
-zip = "8.2.0"
+anyhow = "1.0"
 roxmltree = "0.19"
+zip = "8.2.0"
+
+ir = { path = "../ir" }
