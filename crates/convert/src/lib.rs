@@ -27,7 +27,7 @@ pub struct Note {
 #[derive(Clone, Debug)]
 pub struct AutomationPoint {
 	pub line: u32,
-	pub value: u16,
+	pub value: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -50,11 +50,15 @@ pub struct Music {
 
 // Export logic
 impl Music {
-	pub fn export(&self, w: &mut dyn Write, sample_rate: f32, track_order: &[u16], num_parameters: usize) -> std::io::Result<()> {
+	pub fn export(&self, w: &mut dyn Write,
+			sample_rate: f32, track_order: &[u16],
+			num_parameters: usize, quantization_levels: u16) -> std::io::Result<()> {
 		let spt = (self.ticklength * sample_rate).round() as u32;
 		let total_samples = (self.length as f32 * self.ticklength * sample_rate) as u64;
 
 		let roundup = |v: u64| (v & !0xFFFF) + 0x10000;
+
+		let quantized_parameters = self.quantize_parameters(num_parameters, quantization_levels);
 
 		writeln!(w, "%define SAMPLE_RATE {:.0}", sample_rate)?;
 		writeln!(w)?;
@@ -78,7 +82,7 @@ impl Music {
 			|_, n| vec![n.velocity as u8],
 			vec![0x80], ".v_"
 		)?;
-		self.autolist(w, num_parameters,
+		self.autolist(w, &quantized_parameters,
 			|_, _| vec![],
 			vec![0x80]
 		)?;
@@ -89,8 +93,8 @@ impl Music {
 			|_, n| vec![n.key as u8],
 			vec![0x80], ".k_"
 		)?;
-		self.autolist(w, num_parameters,
-			|_, p| vec![p.value as u8],
+		self.autolist(w, &quantized_parameters,
+			|_, p| vec![p.1],
 			vec![0x80]
 		)?;
 
@@ -100,7 +104,7 @@ impl Music {
 			|_, n| encode_distance(n.length.unwrap_or(0x7E00)),
 			vec![0x80], ".l_"
 		)?;
-		self.autolist(w, num_parameters,
+		self.autolist(w, &quantized_parameters,
 			|_, _| vec![],
 			vec![0x80]
 		)?;
@@ -115,8 +119,26 @@ impl Music {
 			vec![0x80], ".d_"
 		)?;
 
-		self.real_autolist_distance(w, num_parameters)?;
+		self.real_autolist_distance(w, &quantized_parameters)?;
 		Ok(())
+	}
+
+	fn quantize_parameters(&self, num_parameters: usize, quantization_levels: u16) -> Vec<Vec<(u32, u8)>> {
+		let empty = vec![];
+		let mut result = Vec::new();
+		for i in 0..num_parameters {
+			let points = self.autos.get(i).unwrap_or(&empty);
+			let mut quantized: Vec<(u32, u8)> = Vec::new();
+			for p in points {
+				let value = (p.value * quantization_levels as f32).round() as u8;
+				if let [.., (_, v1), (_, v2)] = &quantized[..] && *v1 == value && *v2 == value {
+					quantized.pop();
+				}
+				quantized.push((p.line, value));
+			}
+			result.push(quantized);
+		}
+		result
 	}
 
 	// Helper to format data lines
@@ -164,16 +186,14 @@ impl Music {
 		Ok(())
 	}
 
-	fn autolist<F>(&self, w: &mut dyn Write, num_parameters: usize, mut datafunc: F, trackterm: Vec<u8>) -> std::io::Result<()>
-	where F: FnMut(Option<&AutomationPoint>, &AutomationPoint) -> Vec<u8> {
-		let empty = vec![];
-		for i in 0..num_parameters {
-			let points = self.autos.get(i).unwrap_or(&empty);
+	fn autolist<F>(&self, w: &mut dyn Write, parameters: &Vec<Vec<(u32, u8)>>, mut datafunc: F, trackterm: Vec<u8>) -> std::io::Result<()>
+	where F: FnMut(Option<&(u32, u8)>, &(u32, u8)) -> Vec<u8> {
+		for (i, points) in parameters.iter().enumerate() {
 			writeln!(w, "\t; Parameter {}", i)?;
 			writeln!(w, ".p_{}:", i)?;
 
 			let mut data = Vec::new();
-			let mut prev_p: Option<&AutomationPoint> = None;
+			let mut prev_p: Option<&(u32, u8)> = None;
 			for p in points {
 				data.extend(datafunc(prev_p, p));
 				prev_p = Some(p);
@@ -185,14 +205,14 @@ impl Music {
 		Ok(())
 	}
 
-	fn real_autolist_distance(&self, w: &mut dyn Write, num_parameters: usize) -> std::io::Result<()> {
+	fn real_autolist_distance(&self, w: &mut dyn Write, parameters: &Vec<Vec<(u32, u8)>>) -> std::io::Result<()> {
 		let encode_distance = |dist: u32| -> Vec<u8> {
 			if dist < 128 { vec![dist as u8] } else { vec![255 - (dist >> 8) as u8, (dist & 255) as u8] }
 		};
 
-		self.autolist(w, num_parameters, |prev_p, p| {
-			let prev_line = prev_p.map(|pp| pp.line).unwrap_or(0);
-			encode_distance(p.line - prev_line)
+		self.autolist(w, parameters, |prev_p, p| {
+			let prev_line = prev_p.map(|pp| pp.0).unwrap_or(0);
+			encode_distance(p.0 - prev_line)
 		}, vec![0x80])
 	}
 }

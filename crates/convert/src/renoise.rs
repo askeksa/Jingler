@@ -20,10 +20,10 @@ fn test_convert_renoise() {
 	let mut archive = ZipArchive::new(xrns).unwrap();
 	let mut song = archive.by_name("Song.xml").unwrap();
 
-	let music = convert_renoise_song(&mut song, PARAMETER_QUANTIZATION_LEVELS).unwrap();
+	let music = convert_renoise_song(&mut song).unwrap();
 
 	let mut out = vec![];
-	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER, NUM_PARAMETERS).unwrap();
+	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER, NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
 
 	let expected = std::fs::read_to_string("../../test/expected.asm").unwrap();
 	let actual = String::from_utf8(out).unwrap();
@@ -31,16 +31,14 @@ fn test_convert_renoise() {
 	assert_eq!(expected, actual);
 }
 
-pub fn convert_renoise_file(input: &impl AsRef<Path>,
-		parameter_quantization_levels: u16) -> Result<Music, ConvertError> {
+pub fn convert_renoise_file(input: &impl AsRef<Path>) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
 	let mut song = archive.by_name("Song.xml")?;
-	convert_renoise_song(&mut song, parameter_quantization_levels)
+	convert_renoise_song(&mut song)
 }
 
-pub fn convert_renoise_song(song: &mut dyn Read,
-		parameter_quantization_levels: u16) -> Result<Music, ConvertError> {
+pub fn convert_renoise_song(song: &mut dyn Read) -> Result<Music, ConvertError> {
 	let mut content = String::new();
 	song.read_to_string(&mut content)?;
 	let doc = XmlDocument::parse(&content)
@@ -48,10 +46,10 @@ pub fn convert_renoise_song(song: &mut dyn Read,
 
 	let xsong = doc.root().child("RenoiseSong");
 
-	make_music(&xsong, parameter_quantization_levels)
+	make_music(&xsong)
 }
 
-fn make_music(xsong: &XmlNode, quantization_levels: u16) -> Result<Music, ConvertError> {
+fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 	let xgsd = xsong.child("GlobalSongData");
 	let playback_version = xgsd.child("PlaybackEngineVersion").text();
 	let playback_version: i32 = if playback_version.is_empty() { 0 } else { playback_version.parse().unwrap_or(0) };
@@ -70,7 +68,7 @@ fn make_music(xsong: &XmlNode, quantization_levels: u16) -> Result<Music, Conver
 
 	let (tracks, instruments) = make_tracks(xsong, ticklength)?;
 
-	let autos = extract_automation(xsong, quantization_levels);
+	let autos = extract_automation(xsong);
 
 	let xpositions = xsong.child("PatternSequence").child("PatternSequence").child("Pattern");
 	let xpositions = if !xpositions.is_empty() { xpositions } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry").child("Pattern") };
@@ -306,24 +304,13 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, column: usize, tname: &str) -
 	Ok(notes)
 }
 
-fn extract_automation(xsong: &XmlNode, quantization_levels: u16) -> Vec<Vec<AutomationPoint>> {
+fn extract_automation(xsong: &XmlNode) -> Vec<Vec<AutomationPoint>> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 	let xpatterns = xsong.child("PatternPool").child("Patterns").child("Pattern");
 
 	let mut parameter_points: Vec<Vec<AutomationPoint>> = Vec::new();
 	let mut line = 0;
-
-	let add = |pline: u32, pvalue: u16, points: &mut Vec<AutomationPoint>| {
-		if points.is_empty() || pline != points.last().unwrap().line || pvalue != points.last().unwrap().value {
-			if points.len() >= 2 && points[points.len()-2].value == pvalue && points.last().unwrap().value == pvalue {
-				let last = points.last_mut().unwrap();
-				last.line = pline;
-			} else {
-				points.push(AutomationPoint { line: pline, value: pvalue });
-			}
-		}
-	};
 
 	for xseq in xsequence.iter() {
 		let patn: usize = xseq.child("Pattern").text().parse().unwrap_or(0);
@@ -336,7 +323,7 @@ fn extract_automation(xsong: &XmlNode, quantization_levels: u16) -> Vec<Vec<Auto
 				while parameter_points.len() < param_idx {
 					parameter_points.push(Vec::new());
 				}
-				let mut points = &mut parameter_points[param_idx - 1];
+				let points = &mut parameter_points[param_idx - 1];
 
 				let length: f32 = xenvelope.child("Envelope").child("Length").text().parse().unwrap_or(1.0);
 				let mut first = true;
@@ -348,12 +335,12 @@ fn extract_automation(xsong: &XmlNode, quantization_levels: u16) -> Vec<Vec<Auto
 						let y: f32 = parts[1].parse().unwrap_or(0.0);
 
 						let pline = line + ((x * nlines as f32).round() / length as f32).floor() as u32;
-						let pvalue = (y * quantization_levels as f32).round() as u16;
+						let pvalue = y;
 
 						if first && pline > line {
-							add(line, pvalue, &mut points);
+							points.push(AutomationPoint { line, value: pvalue });
 						}
-						add(pline, pvalue, &mut points);
+						points.push(AutomationPoint { line: pline, value: pvalue });
 						first = false;
 					}
 				}
@@ -361,11 +348,10 @@ fn extract_automation(xsong: &XmlNode, quantization_levels: u16) -> Vec<Vec<Auto
 		}
 		line += nlines;
 
-		// flush
-		for mut points in parameter_points.iter_mut() {
-			if !points.is_empty() && points.last().unwrap().line < line {
-				let val = points.last().unwrap().value;
-				add(line, val, &mut points);
+		// Add final automation point for each parameter
+		for points in parameter_points.iter_mut() {
+			if let Some(last) = points.last() && last.line < line {
+				points.push(AutomationPoint { line, value: last.value });
 			}
 		}
 	}
