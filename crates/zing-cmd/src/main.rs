@@ -31,9 +31,13 @@ struct PlayOptions {
 	#[arg(short, long)]
 	resident: bool,
 
-	/// Dump generated code.
+	/// Print IR to stdout.
 	#[arg(short, long, help_heading = "Code output")]
-	dump: bool,
+	ir: bool,
+
+	/// Dump generated Wasm to file.
+	#[arg(short, long, value_name = "WASM_FILE", help_heading = "Code output")]
+	generated_wasm: Option<String>,
 
 	/// Send the program to a listening plugin.
 	#[arg(short, long, help_heading = "Code output")]
@@ -146,7 +150,7 @@ fn play_file(options: &PlayOptions) {
 						println!("Error sending program: {}", e);
 					}
 				}
-				if options.dump {
+				if options.ir {
 					for (p, proc) in program.procedures.iter().enumerate() {
 						println!("{:2}: {}", p, proc);
 						for (i, inst) in proc.code.iter().enumerate() {
@@ -155,13 +159,18 @@ fn play_file(options: &PlayOptions) {
 						println!();
 					}
 				}
-				if options.play || options.write_wav.is_some() {
+				if options.generated_wasm.is_some() || options.play || options.write_wav.is_some() {
 					let runtime = default_jingler_runtime().unwrap();
 					match runtime.load_program(&program) {
 						Err(e) => {
 							println!("Runtime error: {}", e);
 						}
 						Ok(mut instance) => {
+							if let Some(ref filename) = options.generated_wasm {
+								if let Err(e) = fs::write(filename, instance.dump()) {
+									println!("Error writing Wasm to '{}': {}", filename, e);
+								}
+							}
 							if let Err(e) = instance.initialize(options.sample_rate) {
 								println!("Runtime error: {}", e);
 							} else {

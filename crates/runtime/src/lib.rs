@@ -9,6 +9,7 @@ pub trait JinglerRuntime: Send + Sync {
 }
 
 pub trait JinglerRuntimeInstance: Send {
+	fn dump(&self) -> &[u8];
 	fn initialize(&mut self, sample_rate: f32) -> Result<()>;
 	fn next_sample(&mut self) -> Result<[f64; 2]>;
 	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()>;

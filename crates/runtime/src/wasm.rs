@@ -38,8 +38,9 @@ struct WasmRuntimeData {
 }
 
 pub struct WasmRuntimeInstance {
-	store: Store<Arc<WasmRuntimeData>>,
 	program: ir::Program,
+	wasm: Vec<u8>,
+	store: Store<Arc<WasmRuntimeData>>,
 	initialize_func: TypedFunc<f32, ()>,
 	note_on_func: TypedFunc<(i32, i32, i32), ()>,
 	note_off_func: TypedFunc<(i32, i32), ()>,
@@ -89,8 +90,9 @@ impl JinglerRuntime for WasmRuntime {
 		let set_parameter_func = instance.get_typed_func::<(i32, f32), ()>(&mut store, "set_parameter")?;
 
 		Ok(Box::new(WasmRuntimeInstance {
-			store,
 			program: program.clone(),
+			wasm,
+			store,
 			initialize_func,
 			note_on_func,
 			note_off_func,
@@ -101,6 +103,10 @@ impl JinglerRuntime for WasmRuntime {
 }
 
 impl JinglerRuntimeInstance for WasmRuntimeInstance {
+	fn dump(&self) -> &[u8] {
+		&self.wasm
+	}
+
 	fn initialize(&mut self, sample_rate: f32) -> Result<()> {
 		self.initialize_func.call(&mut self.store, sample_rate)?;
 		Ok(())
