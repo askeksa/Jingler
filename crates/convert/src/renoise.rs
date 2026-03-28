@@ -16,11 +16,7 @@ fn test_convert_renoise() {
 	const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
 	const NUM_PARAMETERS: usize = 4;
 
-	let xrns = std::fs::File::open("../../test/test.xrns").unwrap();
-	let mut archive = ZipArchive::new(xrns).unwrap();
-	let mut song = archive.by_name("Song.xml").unwrap();
-
-	let music = convert_renoise_song(&mut song).unwrap();
+	let music = convert_renoise_file("../../test/test.xrns").unwrap();
 
 	let mut out = vec![];
 	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER, NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
@@ -31,7 +27,7 @@ fn test_convert_renoise() {
 	assert_eq!(expected, actual);
 }
 
-pub fn convert_renoise_file(input: &impl AsRef<Path>) -> Result<Music, ConvertError> {
+pub fn convert_renoise_file(input: &(impl AsRef<Path> + ?Sized)) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
 	let mut song = archive.by_name("Song.xml")?;
