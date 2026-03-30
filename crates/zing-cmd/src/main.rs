@@ -5,16 +5,17 @@ use zing::compiler;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
+use std::io::Write;
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
-
-use std::io::Write;
 
 use chrono::Local;
 use clap::Parser;
 use hound::{SampleFormat, WavSpec, WavWriter};
-use notify::{DebouncedEvent, RecursiveMode, Watcher, watcher};
+use notify_debouncer_mini::notify::RecursiveMode;
+use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, Sink};
 
@@ -120,11 +121,17 @@ fn send_program(program: &ir::Program, address: &str) -> Result<(), Box<dyn Erro
 	Ok(())
 }
 
-fn play_file(options: &PlayOptions) {
+fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
+	let compile = |filename: &str, contents: String| {
+		let mut compiler = compiler::Compiler::new(filename.into(), contents);
+		let compile_result = compiler.compile();
+		let sources = compiler.sources();
+		(compile_result, sources)
+	};
 	let filename = &options.zing_file;
 	match fs::read_to_string(filename) {
-		Ok(s) => match compiler::Compiler::new(filename.to_string(), s).compile() {
-			Ok(program) => {
+		Ok(s) => match compile(filename, s) {
+			(Ok(program), sources) => {
 				if let Some(filename) = &options.output {
 					let music = if let Some(xrns) = &options.xrns {
 						match convert_renoise_file(xrns) {
@@ -202,35 +209,48 @@ fn play_file(options: &PlayOptions) {
 						}
 					}
 				}
+				sources
 			},
-			Err(errors) => for message in errors {
-				println!("{}", message);
+			(Err(errors), sources) => {
+				for message in errors {
+					println!("{}", message);
+				}
+				sources
 			}
 		},
 		Err(e) => {
 			println!("Error reading '{}': {}", filename, e);
+			vec![]
 		}
 	}
 }
 
 fn play_file_resident(options: &PlayOptions) -> Result<(), Box<dyn Error>> {
-	let filename = &options.zing_file;
-	let (tx, rx) = channel();
-	let mut watcher = watcher(tx, Duration::from_secs_f32(0.1))?;
-	watcher.watch(filename, RecursiveMode::NonRecursive)?;
+	let (tx, rx) = channel::<DebounceEventResult>();
+	let mut debouncer = new_debouncer(Duration::from_secs_f32(0.1), move |res| {
+		let _ = tx.send(res);
+	})?;
 
-	play_file(options);
+	let mut watched_files = play_file(options);
+	for file in &watched_files {
+		debouncer.watcher().watch(file, RecursiveMode::NonRecursive)?;
+	}
 
 	loop {
 		match rx.recv()? {
-			DebouncedEvent::Write(_) => {
-				println!("Reloading '{}' at {}", filename, Local::now().to_rfc2822());
-				play_file(options);
+			Ok(_events) => {
+				println!("Reloading '{}' at {}", options.zing_file, Local::now().to_rfc2822());
+				for file in &watched_files {
+					let _ = debouncer.watcher().unwatch(file);
+				}
+				watched_files = play_file(options);
+				for file in &watched_files {
+					let _ = debouncer.watcher().watch(file, RecursiveMode::NonRecursive);
+				}
 			},
-			DebouncedEvent::Error(e, _) => {
+			Err(e) => {
 				Err(e)?;
 			},
-			_ => {},
 		}
 	}
 }

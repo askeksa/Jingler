@@ -9,7 +9,7 @@ edition.workspace = true
 chrono = "0.4.11"
 clap = { version = "4.5.60", features = ["derive"] }
 hound = "3.4.0"
-notify = "4.0.15"
+notify-debouncer-mini = "0.7"
 rodio = "0.20.1"
 bincode = "1.3"
 

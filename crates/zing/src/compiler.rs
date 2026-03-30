@@ -17,14 +17,14 @@ lalrpop_mod!(pub zing); // Synthesized by LALRPOP
 
 /// A single source file.
 pub struct Source {
-	pub filename: String,
+	pub filename: PathBuf,
 	pub raw_input: String,
 	pub processed_input: Rc<str>, // Comments removed
 	pub start_offset: usize,
 }
 
 impl Source {
-	pub fn new(filename: String, raw_input: String, start_offset: usize) -> Source {
+	pub fn new(filename: PathBuf, raw_input: String, start_offset: usize) -> Source {
 		// Remove comments
 		let mut processed = String::with_capacity(raw_input.len());
 		for line in raw_input.lines() {
@@ -61,7 +61,7 @@ pub struct Message {
 	column: usize,
 	length: usize,
 	text: String,
-	filename: String,
+	filename: PathBuf,
 	source_line: String,
 	marker_max_length: usize,
 }
@@ -130,7 +130,7 @@ impl Iterator for CompileError {
 				"^".repeat(msg.marker_max_length) + "..."
 			};
 			format!("{}:{}:{}: {}: {}\n\n{}\n{}{}\n",
-				msg.filename, msg.line + 1, msg.column + 1,
+				msg.filename.display(), msg.line + 1, msg.column + 1,
 				msg.category.as_text(), msg.text,
 				line,
 				indent, marker)
@@ -221,10 +221,10 @@ impl Member {
 
 impl Compiler {
 	pub fn new(filename: String, raw_input: String) -> Compiler {
-		let main_source = Source::new(filename.clone(), raw_input, 0);
+		let main_source = Source::new(filename.into(), raw_input, 0);
 
 		let mut loaded_files = HashSet::new();
-		if let Ok(path) = fs::canonicalize(Path::new(&filename)) {
+		if let Ok(path) = fs::canonicalize(&main_source.filename) {
 			loaded_files.insert(path);
 		}
 
@@ -233,6 +233,10 @@ impl Compiler {
 			loaded_files,
 			messages: vec![],
 		}
+	}
+
+	pub fn sources(&self) -> Vec<PathBuf> {
+		self.sources.iter().map(|s| s.filename.clone()).collect()
 	}
 
 	pub fn compile(&mut self) -> Result<ir::Program, CompileError> {
@@ -290,7 +294,7 @@ impl Compiler {
 			// Add included file to sources
 			let start_offset = self.sources.last().map(|s| s.start_offset + s.processed_input.len()).unwrap_or(0);
 			let source = Source::new(
-				resolved_path.to_string_lossy().to_string(),
+				resolved_path,
 				raw_input,
 				start_offset,
 			);
