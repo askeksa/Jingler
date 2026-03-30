@@ -486,7 +486,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "convert"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "ir",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -2157,7 +2157,7 @@ checksum = "3cd14fd5e3b777a7422cca79358c57a8f6e3a703d9ac187448d0daf220c2407f"
 
 [[package]]
 name = "runtime"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "ir",
@@ -2757,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "vst3-plugin"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bincode",
  "ir",
@@ -3754,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "zing"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "ir",
  "lalrpop",
@@ -3763,7 +3763,7 @@ dependencies = [
 
 [[package]]
 name = "zing-cmd"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bincode",
  "chrono",
