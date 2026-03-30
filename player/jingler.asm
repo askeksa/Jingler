@@ -1,3 +1,12 @@
+; Set to 1 to generate code into statically allocated memory.
+; Only works when linking with Crinkler, since this memory is otherwise not executable.
+%ifndef JINGLER_CRINKLER
+	%define JINGLER_CRINKLER 0
+%endif
+
+; Graphics latency compensation (in samples) for synchronization.
+%define JINGLER_TIMER_OFFSET 2048
+
 
 ; Various helpers for writing code that assembles as both 32 and 64 bit
 %if __BITS__ == 32
@@ -22,9 +31,17 @@
 	%endmacro
 	%define rlabel(addr) addr
 
+	%define L(label) _%+label
+
 	extern __imp__OpenFile@12
 	extern __imp__ReadFile@20
 	extern __imp__CloseHandle@4
+	extern __imp__VirtualAlloc@16
+	extern __imp__VirtualFree@12
+	extern __imp__waveOutOpen@24
+	extern __imp__waveOutPrepareHeader@12
+	extern __imp__waveOutWrite@12
+	extern __imp__waveOutGetPosition@12
 %else
 	; Scale, data, space and instructions for 64-bit pointers
 	%define PSIZE 8
@@ -38,24 +55,41 @@
 	%endmacro
 	%define rlabel(addr) r8
 
+	%define L(label) label
+
 	extern __imp_OpenFile
 	extern __imp_ReadFile
 	extern __imp_CloseHandle
+	extern __imp_VirtualAlloc
+	extern __imp_VirtualFree
 %endif
 
-; Size of a proc_call instruction
-%define CALL_SIZE (_snip_proc_call.end - _snip_proc_call)
+; Public symbols
+global L(Jingler_GenerateMusic)
+global L(Jingler_Ready)
+global L(Jingler_StartMusic)
+global L(Jingler_GetPosition)
+global L(Jingler_MusicBuffer)
+global L(Jingler_TicksPerSecond)
+global L(Jingler_MusicLength)
 
+L(Jingler_Ready) equ NoteAllocPtr
+L(Jingler_MusicBuffer) equ MusicBuffer
 
-global JinglerUnpackNotes
-global JinglerGenerateCode
-global JinglerRunStaticCode
-global JinglerRenderSamples
-global JinglerResetState
-global JinglerNoteOn
-global JinglerNodeOff
+section tps rdata align=4
+L(Jingler_TicksPerSecond):
+	dd TICKS_PER_SECOND
+
+section muslen rdata align=4
+L(Jingler_MusicLength):
+	dd MUSIC_LENGTH
+
 
 OF_READ equ 0x00000000
+MEM_COMMIT equ 0x00001000
+MEM_RESERVE equ 0x00002000
+MEM_RELEASE equ 0x00008000
+PAGE_EXECUTE_READWRITE equ 0x40
 
 GMDLS_SIZE equ 0x348014
 GMDLS_ROUNDED_SIZE equ (GMDLS_SIZE + 0xFFFF) & ~0xFFFF
@@ -64,8 +98,7 @@ GMDLS_DATA equ 0x4462C
 GMDLS_COUNT equ 495
 
 MAX_STACK equ 0x1000
-STATE_SPACE equ 0x10000
-NOTE_SPACE equ 0x100000
+STATE_SPACE equ 0x100000
 BUFFER_SPACE equ 0x1000000
 MUSIC_SPACE equ 0x1000000
 MAX_TRACKS equ 0xFF
@@ -90,8 +123,11 @@ LOWEST_IMPLICIT_INSTRUCTION equ 0x14
 
 ; Constants for note_property instruction
 %define NOTE_LENGTH 0
-%define NOTE_TONE 1
+%define NOTE_KEY 1
 %define NOTE_VELOCITY 2
+
+; Size of a proc_call instruction
+%define CALL_SIZE (_snip_proc_call.end - _snip_proc_call)
 
 ;; Snip macros
 
@@ -187,11 +223,44 @@ section snipdead text align=1
 %endmacro
 
 
-section unpackn text align=1
+section jinglgen text align=1
 
-JinglerUnpackNotes:
-	; ESI/RSI = Notes
-	; ECX/RCX = Number of tracks
+_Jingler_GenerateMusic:
+
+LoadGmDlsFile:
+	mov			rdi, GmDls
+%if __BITS__ == 32
+	push		byte OF_READ
+	push		rdi
+	push		GmDlsName
+	call		[__imp__OpenFile@12]
+
+	push		byte 0
+	push		rdi
+	push		GMDLS_SIZE
+	push		rdi
+	push		eax
+	call		[__imp__ReadFile@20]
+%else
+	sub			rsp, byte 40 ; Shadow space + alignment
+
+	lea			rcx, [rel GmDlsName]
+	mov			rdx, rdi
+	mov			r8, OF_READ
+	call		[rel __imp_OpenFile]
+
+	mov			rcx, rax
+	mov			rdx, rdi
+	mov			r8, GMDLS_SIZE
+	mov			r9, rdi
+	mov			qword [rsp + 32], 0
+	call		[rel __imp_ReadFile]
+
+	add			rsp, byte 40
+%endif
+
+UnpackNotes:
+	mov			rsi, MusicData
 
 	mov			rdx, 3 ; Component
 .componentloop:
@@ -200,7 +269,7 @@ JinglerUnpackNotes:
 
 	mov			rdi, TrackStarts
 	mov			rbx, NoteHeaders
-	push		rcx
+	mov			ecx, NUM_TRACKS + NUM_PARAMETERS
 .trackloop:
 	mov			rax, rbx
 	stosp
@@ -225,15 +294,36 @@ JinglerUnpackNotes:
 	mov			dword [rbx], 0x80000000 ; Track terminator
 	add			rbx, byte 16
 	loop		.trackloop
-	pop			rcx
 
 	dec			rdx
 	jns			.componentloop
-	ret
 
-section generate text align=1
+%if JINGLER_CRINKLER
+GenerateCode:
+	mov			rdi, GeneratedCode
+%else
+AllocateCodeSpace:
+%if __BITS__ == 32
+	push		PAGE_EXECUTE_READWRITE
+	push		MEM_COMMIT | MEM_RESERVE
+	push		CODE_SPACE
+	push		0
+	call		[__imp__VirtualAlloc@16]
+%else
+	sub			rsp, byte 40 ; Shadow space + alignment
 
-JinglerGenerateCode:
+	mov			rcx, 0
+	mov			rdx, CODE_SPACE
+	mov			r8, MEM_COMMIT | MEM_RESERVE
+	mov			r9, PAGE_EXECUTE_READWRITE
+	call		[rel __imp_VirtualAlloc]
+
+	add			rsp, 40
+%endif
+	xchg		rdi, rax
+GenerateCode:
+%endif
+
 	; ESI/RSI = Bytecode
 	; EDI/RDI = Space for generated code
 
@@ -282,25 +372,19 @@ JinglerGenerateCode:
 	call		rbp
 	jmp			.mainloop
 .decode_done:
-	ret
 
-section rstatic text align=1
-
-JinglerRunStaticCode:
+RunStaticCode:
 	; ESI/RSI = Constant pool
 
 	ldmxcsr		[rel MXCSR]
 	runproc		MAIN_STATIC_PROC_ID
-	ret
 
-section render text align=1
+	rlea		NoteAllocPtr
+	mov			[rlabel(NoteAllocPtr)], rdi
 
-JinglerRenderSamples:
-	; EAX/RAX = Number of samples to render
+RenderSamples:
 	; ESI/RSI = Constant pool
 
-	ldmxcsr		[rel MXCSR]
-	push		rax
 	xor			rax, rax
 .sample:
 	push		rax
@@ -343,122 +427,9 @@ JinglerRenderSamples:
 	rlea		MusicBuffer
 	movq		[rlabel(MusicBuffer) + rax*8], xmm0
 
-	inc			rax
-	cmp			[rsp], rax
+	inc			eax
+	cmp			eax, TOTAL_SAMPLES
 	jne			.sample
-	pop			rax
-	ret
-
-section reset text align=1
-
-JinglerResetState:
-	; Empty note space
-	mov			rdi, NoteSpace
-	mov			[rel NoteAllocPtr], rdi
-
-	; Clear buffer space
-	mov			rdi, BufferSpace
-	mov			rcx, [rel BufferAllocPtr]
-	sub			rcx, rdi
-	shr			rcx, 4-2
-	mov			[rel BufferAllocPtr], rdi
-	xor			eax, eax
-	rep stosd
-
-	; Clear note headers
-	mov			rdi, NoteHeaders
-	mov			rcx, MAX_NOTE_COUNT*(16/4)
-	xor			eax, eax
-	rep stosd
-
-	; Clear note chains
-	mov			rdi, NoteChains
-	mov			rcx, MAX_TRACKS
-	xor			eax, eax
-	rep stosd
-
-	; Set up note header lists for tracks
-	mov			rdi, TrackStarts
-	mov			rax, NoteHeaders
-	mov			rcx, MAX_TRACKS
-.trackloop:
-	add			rax, MAX_NOTE_COUNT/(MAX_TRACKS+1)*16
-	mov			dword [rax], 0x80000000 ; Track terminator
-	stosp
-	loop		.trackloop
-	ret
-
-section noteon text align=1
-
-JinglerNoteOn:
-	; EAX/RAX = Track
-	; EBX = Sample offset
-	; ECX = Key
-	; EDX = Velocity
-
-	; Push note onto stack of notes to be triggered
-	rlea		TrackStarts
-	mov			rdi, [rlabel(TrackStarts) + rax*PSIZE]
-	sub			rdi, byte 16
-	mov			[rlabel(TrackStarts) + rax*PSIZE], rdi
-
-	jmp			.bubble
-.bubbleloop:
-	movapd		xmm0, [rdi + 16]
-	movapd		[rdi], xmm0
-	add			rdi, byte 16
-.bubble:
-	cmp			[rdi + 16], ebx
-	jbe			.bubbleloop
-
-	mov			[rdi], ebx
-	mov			dword [rdi + 4], 0x7FFFFFFF
-	mov			[rdi + 8], ecx
-	mov			[rdi + 12], edx
-	ret
-
-section noteoff text align=1
-
-JinglerNoteOff:
-	; EAX/RAX = Track
-	; EBX = Sample offset
-	; ECX = Key
-
-	; First look through notes that haven't been triggered yet
-	rlea		TrackStarts
-	mov			rdi, [rlabel(TrackStarts) + rax*PSIZE]
-	jmp			.prenote
-.prenoteloop:
-	add			rdi, byte 16
-.prenote:
-	cmp			[rdi], ebx
-	ja			.live
-	cmp			[rdi + 8], ecx
-	jne			.prenoteloop
-
-	sub			ebx, [rdi]
-	jmp			.write
-
-.live:
-	; Then look through live notes
-	rlea		NoteChains
-	lea			rdi, [rlabel(NoteChains) + rax*4]
-.noteloop:
-	mov			edi, [rdi]
-	test		edi, edi
-	jz			.done
-%if __BITS__ == 64
-	mov			r9, NoteSpaceBase
-	add			rdi, r9
-%endif
-	cmp			[rdi + 8], ecx
-	jne			.noteloop
-	cmp			dword [rdi + 4], 0x10000000
-	jl			.noteloop
-
-.write:
-	mov			[rdi + 4], ebx
-.done:
 	ret
 
 
@@ -956,9 +927,9 @@ section mxcsr data align=4
 MXCSR:
 	dd 0x9fc0
 
-section	notept data align=4
+section	notept bss align=PSIZE
 NoteAllocPtr:
-	dp NoteSpace
+	resp 1
 
 section	bufferpt data align=4
 BufferAllocPtr:
@@ -970,7 +941,7 @@ ParameterStates:
 	resd NUM_PARAMETERS
 %endif
 
-section tracks bss align=4
+section tracks bss align=PSIZE
 TrackStarts:
 .align16:
 	resp MAX_TRACKS
@@ -985,28 +956,24 @@ NoteHeaders:
 .align16:
 	reso MAX_NOTE_COUNT
 
-section procptrs bss align=4
+section procptrs bss align=PSIZE
 ProcPointers:
 .align16:
 	resp 256
 
-section ckcode bss align=1
+%if JINGLER_CRINKLER
+section code bss align=1
 GeneratedCode:
 .align16:
 	resb CODE_SPACE
+%endif
 
-section ckstate bss align=16
+section state bss align=16
+NoteSpaceBase:
 	reso MAX_STACK
 StateSpace:
 .align16:
 	reso STATE_SPACE
-
-section notesp bss align=16
-NoteSpaceBase:
-	reso 1
-NoteSpace:
-.align16:
-	reso NOTE_SPACE
 
 section buffersp bss align=16
 BufferSpace:
@@ -1026,3 +993,75 @@ GmDls:
 section gmdlsnam rdata align=1
 GmDlsName:
 	db "drivers/gm.dls",0
+
+
+; Playback
+
+%if __BITS__ == 32
+
+section startsnd text align=1
+L(Jingler_StartMusic):
+	; Start music
+	push	byte 0
+	push	byte 0
+	push	byte 0
+	push	WaveFormat
+	push	byte -1
+	push	WaveOutHandle
+	call	[__imp__waveOutOpen@24]
+
+	push	byte 32					; sizeof(WAVEHDR)
+	push	WaveHdr
+	push	dword [WaveOutHandle]
+	call	[__imp__waveOutPrepareHeader@12]
+
+	push	byte 32					; sizeof(WAVEHDR)
+	push	WaveHdr
+	push	dword [WaveOutHandle]
+	call	[__imp__waveOutWrite@12]
+	ret
+
+section getpos text align=1
+L(Jingler_GetPosition):
+	push	byte 32					; sizeof(MMTIME)
+	push	WaveTime
+	push	dword [WaveOutHandle]
+	call	[__imp__waveOutGetPosition@12]
+
+	fild	dword [WaveTime+4]
+%if JINGLER_TIMER_OFFSET>0
+	fiadd	dword [c_timeoffset]
+%endif
+	fidiv	dword [c_ticklength]
+	ret
+
+section	WaveForm rdata align=1
+WaveFormat:
+	dw	3,2
+	dd	SAMPLE_RATE
+	dd	SAMPLE_RATE*8
+	dw	8,32,0
+
+section WaveHdr data align=4
+WaveHdr:
+	dd	MusicBuffer
+	dd	(TOTAL_SAMPLES*8)
+	dd	0,0,0,0,0,0
+
+section wavehand bss align=4
+WaveOutHandle:
+	resd 1
+
+section WaveTime data align=4
+WaveTime:
+	dd	4,0,0,0,0,0,0,0
+
+section offset rdata align=4
+c_timeoffset:
+	dd JINGLER_TIMER_OFFSET*8
+
+section tempo rdata align=4
+c_ticklength:
+	dd SAMPLES_PER_TICK*8
+
+%endif
