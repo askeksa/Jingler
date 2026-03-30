@@ -2,10 +2,10 @@
 **/*.wav
 **/test_output.txt
 convert/__pycache__
-runtime/*.obj
-runtime/*.exe
-runtime/*.html
-runtime/reuse.txt
+player/*.obj
+player/*.exe
+player/*.html
+player/reuse.txt
 test/actual.asm
 target*
 /.*
