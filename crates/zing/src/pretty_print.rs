@@ -37,7 +37,7 @@ impl Display for Member {
 		write!(f, "{}", self.name)?;
 		fmt_parenthesized_list(f, &self.inputs.items)?;
 		write!(f, " -> ")?;
-		fmt_parenthesized_list(f, &self.outputs.items)?;
+		fmt_lazy_parenthesized_list(f, &self.outputs.items)?;
 		write!(f, "\n")?;
 		for statement in &self.body {
 			write!(f, "    {}\n", statement)?;
@@ -73,8 +73,8 @@ impl Display for Statement {
 		use Statement::*;
 		match self {
 			Assign { node, exp } => {
-				fmt_parenthesized_list(f, &node.items)?;
-				write!(f, " = {};", exp)?;
+				fmt_list(f, &node.items)?;
+				write!(f, " = {}", exp)?;
 			},
 		}
 		Ok(())
@@ -356,14 +356,28 @@ impl Display for Id {
 	}
 }
 
-fn fmt_parenthesized_list<T: Display>(f: &mut Formatter, list: &[T]) -> Result<(), Error> {
-	write!(f, "(")?;
+fn fmt_list<T: Display>(f: &mut Formatter, list: &[T]) -> Result<(), Error> {
 	let mut first = true;
 	for element in list {
 		if !first { write!(f, ", ")? }
 		element.fmt(f)?;
 		first = false;
 	}
+	Ok(())
+}
+
+fn fmt_parenthesized_list<T: Display>(f: &mut Formatter, list: &[T]) -> Result<(), Error> {
+	write!(f, "(")?;
+	fmt_list(f, list)?;
 	write!(f, ")")?;
+	Ok(())
+}
+
+fn fmt_lazy_parenthesized_list<T: Display>(f: &mut Formatter, list: &[T]) -> Result<(), Error> {
+	if let [single] = list {
+		single.fmt(f)?;
+	} else {
+		fmt_parenthesized_list(f, list)?;
+	}
 	Ok(())
 }
