@@ -31,28 +31,32 @@ struct PlayOptions {
 	#[arg(short, long)]
 	resident: bool,
 
-	/// Print IR to stdout.
+	/// Pretty-print program to stdout.
 	#[arg(short, long, help_heading = "Code output")]
-	ir: bool,
+	pretty_print: bool,
 
-	/// Dump generated Wasm to file.
-	#[arg(short, long, value_name = "WASM_FILE", help_heading = "Code output")]
-	generated_wasm: Option<String>,
+	/// Print IR to stdout.
+	#[arg(short = 'i', long, help_heading = "Code output")]
+	print_ir: bool,
+
+	/// Write generated Wasm to file.
+	#[arg(short = 'g', long, value_name = "WASM_FILE", help_heading = "Code output")]
+	write_wasm: Option<String>,
 
 	/// Send the program to a listening plugin.
 	#[arg(short, long, help_heading = "Code output")]
 	connect: bool,
 
-	/// Output source file for music.
-	#[arg(short, long, value_name = "OUTPUT_FILE", help_heading = "Code output")]
-	output: Option<String>,
+	/// Write asm source file for music playback.
+	#[arg(short = 'o', long, value_name = "OUTPUT_FILE", help_heading = "Code output")]
+	write_source: Option<String>,
 
 	/// Play audio.
-	#[arg(short, long, help_heading = "Audio output")]
+	#[arg(short = 'y', long, help_heading = "Audio output")]
 	play: bool,
 
 	/// Write WAV file.
-	#[arg(short, long, value_name = "WAV_FILE", help_heading = "Audio output")]
+	#[arg(short = 'w', long, value_name = "WAV_FILE", help_heading = "Audio output")]
 	write_wav: Option<String>,
 
 	/// Address and port to connect to.
@@ -126,13 +130,17 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 		let mut compiler = compiler::Compiler::new(filename.into(), contents);
 		let compile_result = compiler.compile();
 		let sources = compiler.sources();
-		(compile_result, sources)
+		let ast = compiler.ast().cloned();
+		(compile_result, sources, ast)
 	};
 	let filename = &options.zing_file;
 	match fs::read_to_string(filename) {
 		Ok(s) => match compile(filename, s) {
-			(Ok(program), sources) => {
-				if let Some(filename) = &options.output {
+			(Ok(program), sources, ast) => {
+				if options.pretty_print && let Some(ast) = ast {
+					println!("{}", ast);
+				}
+				if let Some(filename) = &options.write_source {
 					let music = if let Some(xrns) = &options.xrns {
 						match convert_renoise_file(xrns) {
 							Ok(music) => music,
@@ -163,7 +171,7 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 						println!("Error sending program: {}", e);
 					}
 				}
-				if options.ir {
+				if options.print_ir {
 					for (p, proc) in program.procedures.iter().enumerate() {
 						println!("{:2}: {}", p, proc);
 						for (i, inst) in proc.code.iter().enumerate() {
@@ -172,14 +180,14 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 						println!();
 					}
 				}
-				if options.generated_wasm.is_some() || options.play || options.write_wav.is_some() {
+				if options.write_wasm.is_some() || options.play || options.write_wav.is_some() {
 					let runtime = default_jingler_runtime().unwrap();
 					match runtime.load_program(&program) {
 						Err(e) => {
 							println!("Runtime error: {}", e);
 						}
 						Ok(mut instance) => {
-							if let Some(ref filename) = options.generated_wasm {
+							if let Some(ref filename) = options.write_wasm {
 								if let Err(e) = fs::write(filename, instance.dump()) {
 									println!("Error writing Wasm to '{}': {}", filename, e);
 								}
@@ -211,7 +219,7 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 				}
 				sources
 			},
-			(Err(errors), sources) => {
+			(Err(errors), sources, _) => {
 				for message in errors {
 					println!("{}", message);
 				}

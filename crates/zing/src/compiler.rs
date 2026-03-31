@@ -51,6 +51,7 @@ pub struct Compiler {
 	sources: Vec<Source>,
 	loaded_files: HashSet<PathBuf>,
 	messages: Vec<Message>,
+	ast: Option<Program>,
 }
 
 /// A diagnostic message.
@@ -232,11 +233,16 @@ impl Compiler {
 			sources: vec![main_source],
 			loaded_files,
 			messages: vec![],
+			ast: None,
 		}
 	}
 
 	pub fn sources(&self) -> Vec<PathBuf> {
 		self.sources.iter().map(|s| s.filename.clone()).collect()
+	}
+
+	pub fn ast(&self) -> Option<&Program> {
+		self.ast.as_ref()
 	}
 
 	pub fn compile(&mut self) -> Result<ir::Program, CompileError> {
@@ -256,6 +262,8 @@ impl Compiler {
 				default: p.default.unwrap_or(p.min) as f32,
 			}
 		}).collect();
+
+		self.ast = Some(program);
 
 		Ok(ir::Program {
 			parameters,
