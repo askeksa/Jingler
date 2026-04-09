@@ -8,7 +8,7 @@ edition.workspace = true
 [dependencies]
 anyhow = "1.0"
 walrus = "0.25.2"
-wasmtime = "42.0.1"
+wasmtime = "42.0.2"
 
 ir = { path = "../ir" }
 
