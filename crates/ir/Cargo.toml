@@ -8,4 +8,4 @@ edition.workspace = true
 [dependencies]
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
-strum_macros = "0.24"
+strum_macros = "0.28"

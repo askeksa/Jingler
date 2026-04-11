@@ -10,11 +10,11 @@ build = "build.rs" # LALRPOP preprocessing
 ir = { path = "../ir" }
 
 [dependencies.lalrpop-util]
-version = "0.22.2"
+version = "0.23"
 features = ["lexer"]
 
 [build-dependencies.lalrpop]
-version = "0.22.2"
+version = "0.23"
 features = ["lexer"]
 
 [lib]
