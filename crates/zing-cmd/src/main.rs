@@ -7,6 +7,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::net::TcpStream;
+use std::num::NonZero;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
@@ -16,8 +17,9 @@ use clap::Parser;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use notify_debouncer_mini::notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+
 use rodio::buffer::SamplesBuffer;
-use rodio::{OutputStream, Sink};
+use rodio::{DeviceSinkBuilder, Player};
 
 const DEFAULT_CONNECT_ADDR: &str = "127.0.0.1:26127";
 
@@ -104,13 +106,17 @@ fn write_wav(filename: &str, sample_rate: f32, data: &[f32]) -> Result<(), hound
 }
 
 fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
-	let (_stream, stream_handle) = OutputStream::try_default()
+	let mut device_sink = DeviceSinkBuilder::open_default_sink()
 		.map_err(|e| format!("Could not open default device: {e}"))?;
-	let sink = Sink::try_new(&stream_handle)
-		.map_err(|e| format!("Could not create audio sink: {e}"))?;
-	let buffer = SamplesBuffer::new(2, sample_rate as u32, data);
-	sink.append(buffer);
-	sink.sleep_until_end();
+	device_sink.log_on_drop(false);
+	let player = Player::connect_new(&device_sink.mixer());
+	let buffer = SamplesBuffer::new(
+		NonZero::new(2u16).unwrap(),
+		NonZero::new(sample_rate as u32).unwrap(),
+		data,
+	);
+	player.append(buffer);
+	player.sleep_until_end();
 	Ok(())
 }
 
