@@ -1,11 +1,13 @@
 **/.DS_Store
 **/*.wav
 **/test_output.txt
-convert/__pycache__
 player/*.obj
 player/*.exe
 player/*.html
+player/music.asm
 player/reuse.txt
 test/actual.asm
+out
+supply-chain
 target*
 /.*
