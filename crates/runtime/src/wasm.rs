@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use walrus::*;
 use walrus::ir::*;
-use wasmtime::{Caller, Engine, Linker, Module, Store, TypedFunc};
+use wasmtime::{Caller, Config, Engine, Linker, Module, Store, TypedFunc};
 
 use crate::{JinglerRuntime, JinglerRuntimeInstance};
 use ::ir;
@@ -50,7 +50,11 @@ pub struct WasmRuntimeInstance {
 
 impl WasmRuntime {
 	pub fn new() -> Result<Self> {
-		let engine = Engine::default();
+		let mut config = Config::new();
+		if cfg!(target_os = "windows") {
+			config.profiler(wasmtime::ProfilingStrategy::VTune);
+		}
+		let engine = Engine::new(&config)?;
 		let mut linker = Linker::new(&engine);
 
 		linker.func_wrap("math", "atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })?;

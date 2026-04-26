@@ -14,3 +14,6 @@ version = "0.5.1"
 authors = ["Aske Simon Christensen <askesc@gmail.com>"]
 license = "MPL-2.0"
 edition = "2024"
+
+[profile.release]
+debug = true
