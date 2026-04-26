@@ -1,5 +1,5 @@
 use convert::{Music, convert_music_with_program, renoise::convert_renoise_file};
-use runtime::default_jingler_runtime;
+use runtime::{JinglerRuntimeInstance, default_jingler_runtime};
 use zing::compiler;
 
 use std::error::Error;
@@ -26,8 +26,12 @@ const DEFAULT_CONNECT_ADDR: &str = "127.0.0.1:26127";
 #[derive(Parser)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct PlayOptions {
-	/// Zing file to play.
+	/// Zing file to convert/play.
 	zing_file: String,
+
+	/// Renoise file containing music to convert/play.
+	#[arg(short, long, value_name = "RENOISE_FILE", help_heading = "Input options")]
+	xrns: Option<String>,
 
 	/// Stay resident and reload file when it changes.
 	#[arg(short, long)]
@@ -64,10 +68,6 @@ struct PlayOptions {
 	/// Address and port to connect to.
 	#[arg(short, long, value_name = "ADDRESS", default_value = DEFAULT_CONNECT_ADDR, help_heading = "Network output options")]
 	address: String,
-
-	/// Renoise file containing music to convert.
-	#[arg(short, long, value_name = "RENOISE_FILE", help_heading = "Source output options")]
-	xrns: Option<String>,
 
 	/// Path to jingler.asm file.
 	#[arg(short, long, value_name = "JINGLER_ASM", default_value = "jingler.asm", help_heading = "Source output options")]
@@ -131,6 +131,117 @@ fn send_program(program: &ir::Program, address: &str) -> Result<(), Box<dyn Erro
 	Ok(())
 }
 
+enum MusicEvent {
+	NoteOn { channel: u8, key: u8, velocity: u8 },
+	NoteOff { channel: u8, key: u8 },
+}
+
+struct ParameterCurve {
+	index: usize,
+	points: Vec<(usize, f32)>, // (sample position, value), sorted by sample position
+}
+
+fn build_music_events(music: &Music, sample_rate: f32) -> Vec<(usize, MusicEvent)> {
+	let sps = music.ticklength * sample_rate; // samples per tick/line
+	let mut events: Vec<(usize, MusicEvent)> = Vec::new();
+
+	for track in &music.tracks {
+		let channel = music.instruments.get(track.instr as usize)
+			.map(|inst| inst.channel as u8)
+			.unwrap_or(0);
+
+		for note in &track.notes {
+			let on_sample = (note.line as f32 * sps) as usize;
+			events.push((on_sample, MusicEvent::NoteOn {
+				channel,
+				key: note.key as u8,
+				velocity: note.velocity as u8,
+			}));
+
+			let length = note.length.unwrap_or(0x7E00);
+			let off_sample = ((note.line + length) as f32 * sps) as usize;
+			events.push((off_sample, MusicEvent::NoteOff {
+				channel,
+				key: note.key as u8,
+			}));
+		}
+	}
+
+	// Within the same sample: note-offs before note-ons
+	events.sort_by_key(|(sample, event)| {
+		let priority = match event {
+			MusicEvent::NoteOff { .. } => 0,
+			MusicEvent::NoteOn { .. } => 1,
+		};
+		(*sample, priority)
+	});
+
+	events
+}
+
+fn build_parameter_curves(music: &Music, sample_rate: f32) -> Vec<ParameterCurve> {
+	let sps = music.ticklength * sample_rate;
+	music.autos.iter().enumerate()
+		.filter(|(_, points)| !points.is_empty())
+		.map(|(param_idx, points)| ParameterCurve {
+			index: param_idx,
+			points: points.iter()
+				.map(|p| ((p.line as f32 * sps) as usize, p.value))
+				.collect(),
+		})
+		.collect()
+}
+
+fn interpolate_curve(points: &[(usize, f32)], sample: usize, cursor: &mut usize) -> f32 {
+	if sample <= points[0].0 { return points[0].1; }
+	while *cursor + 1 < points.len() && points[*cursor + 1].0 <= sample {
+		*cursor += 1;
+	}
+	if *cursor + 1 >= points.len() { return points[*cursor].1; }
+	let (s0, v0) = points[*cursor];
+	let (s1, v1) = points[*cursor + 1];
+	let t = (sample - s0) as f32 / (s1 - s0) as f32;
+	v0 + t * (v1 - v0)
+}
+
+fn compute_audio(
+	instance: &mut dyn JinglerRuntimeInstance,
+	sample_rate: f32,
+	n_samples: usize,
+	events: &[(usize, MusicEvent)],
+	curves: &[ParameterCurve],
+) -> Result<Vec<f32>, Box<dyn Error>> {
+	instance.initialize(sample_rate)?;
+
+	let mut output = Vec::with_capacity(n_samples * 2);
+	let mut event_idx = 0;
+	let mut cursors = vec![0usize; curves.len()];
+
+	for sample in 0..n_samples {
+		// Set each automated parameter to its linearly interpolated value
+		for (i, curve) in curves.iter().enumerate() {
+			instance.set_parameter(curve.index, interpolate_curve(&curve.points, sample, &mut cursors[i]))?;
+		}
+		// Dispatch note events (note-offs before note-ons within same sample)
+		while event_idx < events.len() && events[event_idx].0 == sample {
+			match &events[event_idx].1 {
+				MusicEvent::NoteOn { channel, key, velocity } => {
+					instance.note_on(*channel, *key, *velocity)?;
+				}
+				MusicEvent::NoteOff { channel, key } => {
+					instance.note_off(*channel, *key)?;
+				}
+			}
+			event_idx += 1;
+		}
+		let s = instance.next_sample()?;
+		output.push(s[0] as f32);
+		output.push(s[1] as f32);
+	}
+
+	Ok(output)
+}
+
 fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 	let compile = |filename: &str, contents: String| {
 		let mut compiler = compiler::Compiler::new(filename.into(), contents);
@@ -146,21 +257,26 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 				if options.pretty_print && let Some(ast) = ast {
 					println!("{}", ast);
 				}
-				if let Some(filename) = &options.write_source {
-					let music = if let Some(xrns) = &options.xrns {
-						match convert_renoise_file(xrns) {
-							Ok(music) => music,
-							Err(e) => {
-								println!("Error converting Renoise file '{}': {}", xrns, e);
-								Music::empty()
-							}
+
+				// Load music from xrns once; used for both write_source and audio output
+				let music = if let Some(xrns) = &options.xrns {
+					match convert_renoise_file(xrns) {
+						Ok(music) => Some(music),
+						Err(e) => {
+							println!("Error converting Renoise file '{}': {}", xrns, e);
+							None
 						}
-					} else {
-						Music::empty()
-					};
+					}
+				} else {
+					None
+				};
+
+				if let Some(filename) = &options.write_source {
+					let empty = Music::empty();
+					let music_ref = music.as_ref().unwrap_or(&empty);
 					match File::create(filename) {
 						Ok(mut file) => {
-							if let Err(e) = convert_music_with_program(&music,
+							if let Err(e) = convert_music_with_program(music_ref,
 									&program, &options.jingler_asm_path,
 									options.sample_rate, !options.byte_index, options.quantization_levels,
 									&mut file) {
@@ -198,25 +314,31 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 									println!("Error writing Wasm to '{}': {}", filename, e);
 								}
 							}
-							if let Err(e) = instance.initialize(options.sample_rate) {
-								println!("Runtime error: {}", e);
-							} else {
-								let n_samples = (options.duration * options.sample_rate) as usize;
-								let output = (0..n_samples)
-									.map(|_| instance.next_sample().unwrap())
-									.flatten()
-									.map(|s| s as f32)
-									.collect::<Vec<f32>>();
+							if options.play || options.write_wav.is_some() {
+								let (n_samples, events, curves) = if let Some(ref music) = music {
+									let n_samples = (music.length as f32 * music.ticklength * options.sample_rate) as usize;
+									let events = build_music_events(music, options.sample_rate);
+									let curves = build_parameter_curves(music, options.sample_rate);
+									(n_samples, events, curves)
+								} else {
+									((options.duration * options.sample_rate) as usize, vec![], vec![])
+								};
 
-								if let Some(ref wav_filename) = options.write_wav {
-									if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
-										println!("Error writing wav file '{}': {}", wav_filename, e);
+								match compute_audio(&mut *instance, options.sample_rate, n_samples, &events, &curves) {
+									Ok(output) => {
+										if let Some(ref wav_filename) = options.write_wav {
+											if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
+												println!("Error writing wav file '{}': {}", wav_filename, e);
+											}
+										}
+										if options.play {
+											if let Err(e) = play_sound(options.sample_rate, &output) {
+												println!("Error playing sound: {}", e);
+											}
+										}
 									}
-								}
-
-								if options.play {
-									if let Err(e) = play_sound(options.sample_rate, &output) {
-										println!("Error playing sound: {}", e);
+									Err(e) => {
+										println!("Runtime error: {}", e);
 									}
 								}
 							}
