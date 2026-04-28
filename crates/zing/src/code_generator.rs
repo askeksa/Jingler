@@ -344,24 +344,25 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		let proc_outputs;
 		match kind {
 			MemberKind::Module => {
-				if scope == Some(Scope::Static) {
-					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Static };
-					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
-					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
-					self.initialize_stack(inputs, Some(Scope::Static), false);
-					self.find_cells_in_body(body)?;
-					self.mark_implicit_cells_from_outputs(outputs);
-					self.initialize_stack(inputs, Some(Scope::Static), false);
-					self.generate_static_body(body)?;
-					self.adjust_stack(&[], self.stack_height);
-				} else {
+				if scope == Some(Scope::Dynamic) {
 					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Dynamic };
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
 					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
+					self.initialize_stack(inputs, Some(Scope::Static), false);
+					self.find_cells_in_body(body)?;
+					self.mark_implicit_cells_from_outputs(outputs);
+					self.populate_name_in_cell();
 					self.initialize_stack(inputs, Some(Scope::Dynamic), false);
 					self.generate_dynamic_body(body)?;
 					let stack_adjust = self.stack_adjust_from_outputs(outputs);
 					self.adjust_stack(&stack_adjust[..], self.stack_height);
+				} else {
+					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Static };
+					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
+					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
+					self.initialize_stack(inputs, Some(Scope::Static), false);
+					self.generate_static_body(body)?;
+					self.adjust_stack(&[], self.stack_height);
 				}
 			},
 			MemberKind::Function => {
@@ -385,19 +386,12 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					item_type: type_spec!(dynamic stereo number),
 				});
 				let autokill_key = self.names.autokill_key(member);
-				if scope == Some(Scope::Static) {
-					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
+				if scope == Some(Scope::Dynamic) {
+					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Dynamic };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
 					self.find_cells_in_body(body)?;
 					self.mark_implicit_cells_from_outputs(outputs);
-					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
-					self.generate_static_body(body)?;
-					// Init autokill
-					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][0], None)]);
-					// Leave only the inputs (including the accumulator) on the stack.
-					self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
-				} else {
-					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Dynamic };
+					self.populate_name_in_cell();
 					self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
 					self.generate_dynamic_body(body)?;
 					// Leave the inputs (including the accumulator) and the output on the stack.
@@ -405,7 +399,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					stack_adjust.push(self.stack_index[&outputs.items[0].name.text]);
 					self.adjust_stack(&stack_adjust, self.stack_height);
 					// Run autokill code
+					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][0], None)]);
+				} else {
+					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
+					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
+					self.generate_static_body(body)?;
+					// Init autokill
 					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][1], None)]);
+					// Leave only the inputs (including the accumulator) on the stack.
+					self.adjust_stack(&[], self.stack_height - real_inputs.items.len());
 				}
 				proc_inputs = self.make_proc_type_list(&real_inputs, None);
 				proc_outputs = self.make_proc_type_list(&real_inputs, None);
@@ -450,8 +452,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						push_id(&mut self.function_proc_id, None);
 					},
 					MemberKind::Module | MemberKind::Instrument => {
-						push_id(&mut self.static_proc_id, Some(Scope::Static));
 						push_id(&mut self.dynamic_proc_id, Some(Scope::Dynamic));
+						push_id(&mut self.static_proc_id, Some(Scope::Static));
 					},
 				};
 			}
@@ -483,7 +485,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		// main, instruments, modules (except main), functions.
 		self.assign_ids(program, &|_, name| name == "main");
 		self.assign_ids(program, &|kind, _| kind == MemberKind::Instrument);
-		self.assign_precompiled_ids(PRECOMPILED_MODULES, MemberKind::Module, &[Some(Scope::Static), Some(Scope::Dynamic)]);
+		self.assign_precompiled_ids(PRECOMPILED_MODULES, MemberKind::Module, &[Some(Scope::Dynamic), Some(Scope::Static)]);
 		self.assign_ids(program, &|kind, name| kind == MemberKind::Module && name != "main");
 		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, MemberKind::Function, &[None]);
 		self.assign_ids(program, &|kind, _| kind == MemberKind::Function);
@@ -495,12 +497,9 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.generate_code_for_statement(statement)?;
 			}
 		}
-		for (cell_index, stack_index) in self.stack_index_in_cell.clone().iter().enumerate() {
+		for stack_index in self.stack_index_in_cell.clone() {
 			let offset = self.stack_height - stack_index - 1;
 			self.emit(code![StackLoad(offset as u16), CellInit]);
-			if let Some((name, _)) = self.stack_index.iter().find(|(_, i)| *i == stack_index) {
-				self.name_in_cell.insert(cell_index, name.clone());
-			}
 		}
 		self.generate_static_module_calls(&self.module_call.clone());
 		Ok(())
@@ -645,6 +644,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
+	fn populate_name_in_cell(&mut self) {
+		self.name_in_cell.clear();
+		for (cell_index, stack_idx) in self.stack_index_in_cell.iter().enumerate() {
+			if let Some((name, _)) = self.stack_index.iter().find(|(_, i)| *i == stack_idx) {
+				self.name_in_cell.insert(cell_index, name.clone());
+			}
+		}
+	}
+
 	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern) {
 		for item in &outputs.items {
 			self.mark_implicit_cell(&item.name);
@@ -730,7 +738,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								let key = &raw const **member;
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs.to_vec(),
-									static_proc_id: self.precompiled_proc_ids[&key][0],
+									static_proc_id: self.precompiled_proc_ids[&key][1],
 									generic_width: self.retrieve_width(exp),
 									args,
 								});
@@ -953,7 +961,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									}
 								}
 								let key = &raw const **member;
-								let proc_id = self.precompiled_proc_ids[&key][1];
+								let proc_id = self.precompiled_proc_ids[&key][0];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Module, Declaration { member_index }) => {
