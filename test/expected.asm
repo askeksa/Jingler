@@ -1,12 +1,14 @@
 %define SAMPLE_RATE 44100
 
-%define NUM_TRACKS 10
-
 %define MUSIC_LENGTH 3264
 %define TOTAL_SAMPLES 7471104
 
 %define SAMPLES_PER_TICK 2281
 %define TICKS_PER_SECOND 19.333625603
+
+section musdat data align=1
+
+MusicData:
 
 Velocities:
 	dd	1

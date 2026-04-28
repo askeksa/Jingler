@@ -13,7 +13,7 @@ use crate::xml::{XmlDocument, XmlNode};
 fn test_convert_renoise() {
 	const SAMPLE_RATE: f32 = 44100.0;
 	const PARAMETER_QUANTIZATION_LEVELS: u16 = 16;
-	const TRACK_ORDER: [u16; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
+	const TRACK_ORDER: [usize; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
 	const NUM_PARAMETERS: usize = 4;
 
 	let music = convert_renoise_file("../../test/test.xrns").unwrap();
