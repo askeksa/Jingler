@@ -42,6 +42,9 @@ enum StateKind { Cell, Delay }
 
 #[derive(Clone)]
 enum ModuleCall<'ast> {
+	ImplicitCell {
+		stack_index: usize,
+	},
 	Init {
 		kind: StateKind,
 		value: &'ast Expression,
@@ -142,10 +145,9 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	next_stack_index: usize,
 	/// Stack index of variable
 	stack_index: HashMap<String, usize>,
-	/// Stack index of static variable in implicit cell
-	stack_index_in_cell: Vec<usize>,
-	// Variable names of implicit cells
-	name_in_cell: HashMap<usize, String>,
+	/// Static-phase stack position of every static-scope name (input or assignment LHS),
+	/// populated at the start of each dynamic body to detect implicit-cell references.
+	static_var_position: HashMap<String, usize>,
 	// Nesting depth of repetitions
 	repetition_depth: usize,
 	// Module calls in execution order
@@ -203,8 +205,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 
 			next_stack_index: 0,
 			stack_index: HashMap::new(),
-			stack_index_in_cell: vec![],
-			name_in_cell: HashMap::new(),
+			static_var_position: HashMap::new(),
 			repetition_depth: 0,
 			module_call: vec![],
 			track_order: vec![vec![]; member_count],
@@ -273,6 +274,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		let mut track_order = vec![];
 		self.compute_track_order_inner(main_index, &vec![], &mut track_order);
 		track_order
+	}
+
+	fn convert_midi_channel(&self, current_member_index: usize, channel: &MidiChannel) -> MidiChannelArg {
+		match channel {
+			&MidiChannel::Value { channel } => MidiChannelArg::Value { channel },
+			MidiChannel::Named { name } => MidiChannelArg::Input {
+				index: self.names.lookup_midi_input(current_member_index, &name.text).unwrap()
+			},
+		}
 	}
 
 	fn resolve_midi_channel_arg(&self, channel: &MidiChannelArg, inputs: &Vec<MidiChannelArg>) -> usize {
@@ -348,12 +358,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					proc_kind = ir::ProcedureKind::Module { scope: ir::Scope::Dynamic };
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Dynamic));
 					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Dynamic));
-					self.initialize_stack(inputs, Some(Scope::Static), false);
-					self.find_cells_in_body(body)?;
-					self.mark_implicit_cells_from_outputs(outputs);
-					self.populate_name_in_cell();
 					self.initialize_stack(inputs, Some(Scope::Dynamic), false);
-					self.generate_dynamic_body(body)?;
+					self.generate_dynamic_body(inputs, body, outputs, false)?;
 					let stack_adjust = self.stack_adjust_from_outputs(outputs);
 					self.adjust_stack(&stack_adjust[..], self.stack_height);
 				} else {
@@ -388,12 +394,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				let autokill_key = self.names.autokill_key(member);
 				if scope == Some(Scope::Dynamic) {
 					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Dynamic };
-					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
-					self.find_cells_in_body(body)?;
-					self.mark_implicit_cells_from_outputs(outputs);
-					self.populate_name_in_cell();
 					self.initialize_stack(&real_inputs, Some(Scope::Dynamic), true);
-					self.generate_dynamic_body(body)?;
+					self.generate_dynamic_body(&real_inputs, body, outputs, true)?;
 					// Leave the inputs (including the accumulator) and the output on the stack.
 					let mut stack_adjust: Vec<usize> = (0..(inputs.items.len() + 1)).collect();
 					stack_adjust.push(self.stack_index[&outputs.items[0].name.text]);
@@ -497,10 +499,6 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.generate_code_for_statement(statement)?;
 			}
 		}
-		for stack_index in self.stack_index_in_cell.clone() {
-			let offset = self.stack_height - stack_index - 1;
-			self.emit(code![StackLoad(offset as u16), CellInit]);
-		}
 		self.generate_static_module_calls(&self.module_call.clone());
 		Ok(())
 	}
@@ -508,6 +506,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	fn generate_static_module_calls(&mut self, module_call: &Vec<ModuleCall<'ast>>) {
 		for call in module_call {
 			match call {
+				&ModuleCall::ImplicitCell { stack_index } => {
+					let offset = self.stack_height - stack_index - 1;
+					self.emit(code![StackLoad(offset as u16), CellInit]);
+				},
 				&ModuleCall::Init { kind, value, width } => {
 					self.generate(value);
 					match kind {
@@ -540,11 +542,47 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
-	fn generate_dynamic_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
-		for cell_index in 0 .. self.stack_index_in_cell.len() {
-			if let Some(name) = self.name_in_cell.get(&cell_index) {
-				self.stack_index.entry(name.to_string()).or_insert(self.stack_height);
+	fn generate_dynamic_body(&mut self,
+		inputs: &Pattern,
+		body: &'ast Vec<Statement>,
+		outputs: &'ast Pattern,
+		all_scopes: bool,
+	) -> Result<(), CompileError> {
+		self.module_call.clear();
+		self.static_var_position.clear();
+		debug_assert!(self.update_stack.is_empty());
+
+		// Compute static-phase positions for static-scope inputs and static-scope
+		// assignment LHSs in source order. Used during the dynamic walk to detect
+		// implicit-cell references.
+		let mut pos = 0usize;
+		for item in &inputs.items {
+			if item.item_type.scope == Some(Scope::Static) {
+				if item.name.text != "_" {
+					self.static_var_position.insert(item.name.text.clone(), pos);
+				}
+				pos += 1;
+			} else if all_scopes {
+				pos += 1;
 			}
+		}
+		for Statement::Assign { node, .. } in body {
+			let stmt_scope = node.items.first().and_then(|item| item.item_type.scope);
+			if stmt_scope == Some(Scope::Static) {
+				for item in &node.items {
+					if item.name.text != "_" {
+						self.static_var_position.insert(item.name.text.clone(), pos);
+					}
+					pos += 1;
+				}
+			}
+		}
+
+		let hoisted = self.scan_dynamic_for_hoist(body, outputs);
+
+		for (name, static_pos) in &hoisted {
+			self.module_call.push(ModuleCall::ImplicitCell { stack_index: *static_pos });
+			self.stack_index.insert(name.clone(), self.stack_height);
 			self.emit(code![CellRead]);
 		}
 
@@ -556,6 +594,142 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 		self.generate_dynamic_body_flush_update_stack(0);
 		Ok(())
+	}
+
+	fn scan_dynamic_for_hoist(&self,
+		body: &'ast Vec<Statement>,
+		outputs: &'ast Pattern,
+	) -> Vec<(String, usize)> {
+		let mut counts: HashMap<String, usize> = HashMap::new();
+		let mut in_loop: HashSet<String> = HashSet::new();
+		let mut order: Vec<String> = vec![];
+		for Statement::Assign { node, exp } in body {
+			if node.items.iter().any(|item| item.item_type.scope == Some(Scope::Dynamic)) {
+				self.scan_exp(exp, &mut counts, &mut in_loop, &mut order, 0);
+			}
+		}
+
+		let mut hoisted: Vec<(String, usize)> = order.iter()
+			.filter(|n| counts[*n] > 1 || in_loop.contains(*n))
+			.map(|n| (n.clone(), self.static_var_position[n]))
+			.collect();
+
+		for item in &outputs.items {
+			if let Some(&pos) = self.static_var_position.get(&item.name.text) {
+				if !hoisted.iter().any(|(n, _)| n == &item.name.text) {
+					hoisted.push((item.name.text.clone(), pos));
+				}
+			}
+		}
+		hoisted
+	}
+
+	fn scan_exp(&self,
+		exp: &'ast Expression,
+		counts: &mut HashMap<String, usize>,
+		in_loop: &mut HashSet<String>,
+		order: &mut Vec<String>,
+		loop_depth: usize,
+	) {
+		use Expression::*;
+		match exp {
+			Number { .. } | Bool { .. } | TupleIndex { .. } => {},
+			Variable { name } => {
+				if self.static_var_position.contains_key(&name.text) {
+					let count = counts.entry(name.text.clone()).or_insert(0);
+					if *count == 0 {
+						order.push(name.text.clone());
+					}
+					*count += 1;
+					if loop_depth > 0 {
+						in_loop.insert(name.text.clone());
+					}
+				}
+			},
+			UnOp { exp, .. } => self.scan_exp(exp, counts, in_loop, order, loop_depth),
+			BinOp { left, right, .. } => {
+				self.scan_exp(left, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, counts, in_loop, order, loop_depth);
+			},
+			Conditional { condition, then, otherwise } => {
+				self.scan_exp(condition, counts, in_loop, order, loop_depth);
+				self.scan_exp(then, counts, in_loop, order, loop_depth);
+				self.scan_exp(otherwise, counts, in_loop, order, loop_depth);
+			},
+			Call { name, args, .. } => {
+				match self.names.lookup_member(&name.text) {
+					Some(MemberRef { kind, definition, .. }) => {
+						use MemberKind::*;
+						use MemberDefinition::*;
+						match (kind, definition) {
+							(Module, BuiltIn { .. }) => {
+								match name.text.as_str() {
+									"cell" => {
+										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
+									},
+									"delay" => {
+										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
+									},
+									"dyndelay" => {
+										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
+										self.scan_exp(&args[1], counts, in_loop, order, loop_depth);
+									},
+									_ => panic!("Unknown built-in module"),
+								}
+							},
+							(Module, Precompiled { member }) => {
+								let inputs = member.inputs();
+								for (arg, input_type) in args.iter().zip(inputs) {
+									if input_type.scope == Some(Scope::Dynamic) {
+										self.scan_exp(arg, counts, in_loop, order, loop_depth);
+									}
+								}
+							},
+							(Module, Declaration { member_index }) => {
+								let inputs = &self.signatures[*member_index].inputs;
+								for (arg, input_type) in args.iter().zip(inputs) {
+									if input_type.scope == Some(Scope::Dynamic) {
+										self.scan_exp(arg, counts, in_loop, order, loop_depth);
+									}
+								}
+							},
+							(Function, _) | (Instrument, _) => {
+								for arg in args {
+									self.scan_exp(arg, counts, in_loop, order, loop_depth);
+								}
+							},
+						}
+					},
+					None => panic!("Member not found"),
+				}
+			},
+			Tuple { elements, .. } => {
+				for el in elements {
+					self.scan_exp(el, counts, in_loop, order, loop_depth);
+				}
+			},
+			Merge { left, right, .. } => {
+				self.scan_exp(left, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, counts, in_loop, order, loop_depth);
+			},
+			BufferIndex { exp, index, .. } => {
+				self.scan_exp(exp, counts, in_loop, order, loop_depth);
+				self.scan_exp(index, counts, in_loop, order, loop_depth);
+			},
+			For { body, .. } => {
+				self.scan_exp(body, counts, in_loop, order, loop_depth + 1);
+			},
+			BufferInit { .. } => {
+				// Buffer-init body is evaluated in the static phase only; the dynamic
+				// phase just CellReads its precomputed value.
+			},
+			BufferLiteral { elements, .. } => {
+				for el in elements {
+					self.scan_exp(el, counts, in_loop, order, loop_depth);
+				}
+			},
+			Expand { exp, .. } => self.scan_exp(exp, counts, in_loop, order, loop_depth),
+		}
 	}
 
 	fn generate_dynamic_body_flush_update_stack(&mut self, height: usize) {
@@ -614,218 +788,6 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			.filter(|item_type| scope.is_none() || item_type.scope == scope)
 			.map(|item_type| item_type.to_ir())
 			.collect()
-	}
-
-	fn find_cells_in_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
-		self.stack_index_in_cell.clear();
-		self.module_call.clear();
-		debug_assert!(self.update_stack.is_empty());
-
-		for Statement::Assign { node, .. } in body {
-			self.add_stack_indices(node, Some(Scope::Static), false, false);
-		}
-
-		for Statement::Assign { node, exp } in body {
-			if node.items.iter().any(|item| item.item_type.scope == Some(Scope::Dynamic)) {
-				self.find_cells(exp);
-			}
-		}
-		self.find_cells_in_body_flush_update_stack(0);
-
-		self.compiler.check_errors()
-	}
-
-	fn find_cells_in_body_flush_update_stack(&mut self, height: usize) {
-		while self.update_stack.len() > height {
-			let (_kind, exp) = self.update_stack.pop().unwrap();
-			let base_height = self.update_stack.len();
-			self.find_cells(exp);
-			self.find_cells_in_body_flush_update_stack(base_height);
-		}
-	}
-
-	fn populate_name_in_cell(&mut self) {
-		self.name_in_cell.clear();
-		for (cell_index, stack_idx) in self.stack_index_in_cell.iter().enumerate() {
-			if let Some((name, _)) = self.stack_index.iter().find(|(_, i)| *i == stack_idx) {
-				self.name_in_cell.insert(cell_index, name.clone());
-			}
-		}
-	}
-
-	fn mark_implicit_cells_from_outputs(&mut self, outputs: &'ast Pattern) {
-		for item in &outputs.items {
-			self.mark_implicit_cell(&item.name);
-		}
-	}
-
-	fn mark_implicit_cell(&mut self, name: &'ast Id) {
-		if let Some(index) = self.stack_index.get(&name.text) {
-			// Static variable
-			if let None = self.stack_index_in_cell.iter().find(|&i| i == index) {
-				self.stack_index_in_cell.push(*index);
-			}
-		}
-	}
-
-	fn find_cells(&mut self, exp: &'ast Expression) {
-		use Expression::*;
-		match exp {
-			Number { .. } => {},
-			Bool { .. } => {},
-			Variable { name } => {
-				self.mark_implicit_cell(name);
-			},
-			UnOp { exp, .. } => {
-				self.find_cells(exp);
-			},
-			BinOp { left, right, .. } => {
-				self.find_cells(right);
-				self.find_cells(left);
-			},
-			Conditional { condition, then, otherwise } => {
-				self.find_cells(condition);
-				self.find_cells(then);
-				self.find_cells(otherwise);
-			},
-			Call { channels, name, args, .. } => {
-				match self.names.lookup_member(&name.text) {
-					Some(MemberRef { kind, definition, .. }) => {
-						let current_member_index = self.current_member_index;
-						let convert_midi_channel = |channel: &MidiChannel| -> MidiChannelArg {
-							match channel {
-								&MidiChannel::Value { channel } => MidiChannelArg::Value {
-									channel
-								},
-								MidiChannel::Named { name } => MidiChannelArg::Input {
-									index: self.names.lookup_midi_input(current_member_index, &name.text).unwrap()
-								},
-							}
-						};
-
-						use MemberKind::*;
-						use MemberDefinition::*;
-						match (kind, definition) {
-							(Module, BuiltIn { .. }) => {
-								if self.repetition_depth > 0 {
-									self.unsupported(exp, "Built-in module in repetition body");
-								}
-								let width = self.retrieve_width(exp).unwrap();
-								match name.text.as_str() {
-									"cell" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], width });
-										self.update_stack.push((StateKind::Cell, &args[0]));
-									},
-									"delay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[1], width });
-										self.update_stack.push((StateKind::Delay, &args[0]));
-									},
-									"dyndelay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[2], width });
-										self.find_cells(&args[1]);
-										self.update_stack.push((StateKind::Delay, &args[0]));
-									},
-									_ => panic!("Unknown built-in module"),
-								}
-							},
-							(Module, Precompiled { member }) => {
-								let inputs = member.inputs();
-								for (arg, input_type) in args.iter().zip(inputs) {
-									if input_type.scope == Some(Scope::Dynamic) {
-										self.find_cells(arg);
-									}
-								}
-								let key = &raw const **member;
-								self.module_call.push(ModuleCall::Call {
-									inputs: inputs.to_vec(),
-									static_proc_id: self.precompiled_proc_ids[&key][1],
-									generic_width: self.retrieve_width(exp),
-									args,
-								});
-							},
-							(Module, Declaration { member_index }) => {
-								let member_index = *member_index;
-								let FullSignature { context, inputs, .. } = &self.signatures[member_index];
-								let context = *context;
-								let inputs = inputs.clone();
-								for (arg, input_type) in args.iter().zip(&inputs) {
-									if input_type.scope == Some(Scope::Dynamic) {
-										self.find_cells(arg);
-									}
-								}
-								self.module_call.push(ModuleCall::Call {
-									inputs: inputs,
-									static_proc_id: self.static_proc_id[member_index],
-									generic_width: self.retrieve_width(exp),
-									args,
-								});
-								if context == Context::Global {
-									let args = channels.iter().map(convert_midi_channel).collect();
-									let node = TrackOrderNode::Module { member_index, args };
-									self.track_order[self.current_member_index].push(node);
-								}
-							},
-							(Function, _) => {
-								for arg in args {
-									self.find_cells(arg);
-								}
-							},
-							(Instrument, Declaration { .. }) => {
-								let channel = convert_midi_channel(&channels[0]);
-								let node = TrackOrderNode::Instrument { channel };
-								self.track_order[current_member_index].push(node);
-								for arg in args {
-									self.find_cells(arg);
-								}
-							},
-							(Instrument, _) => panic!("Built-in instrument"),
-						}
-					},
-					None => panic!("Member not found"),
-				}
-			},
-			Tuple { elements, ..} => {
-				for element in elements {
-					self.find_cells(element);
-				}
-			},
-			Merge { left, right, .. } => {
-				self.find_cells(right);
-				self.find_cells(left);
-			},
-			TupleIndex { .. } => {
-				self.unsupported(exp, "tuple indexing");
-			},
-			BufferIndex { exp, index, .. } => {
-				self.find_cells(exp);
-				self.find_cells(index);
-			},
-			For { name, count, body, .. } => {
-				let module_call_temp = replace(&mut self.module_call, vec![]);
-				self.repetition_depth += 1;
-				self.find_cells(body);
-				self.repetition_depth -= 1;
-				let module_call = ModuleCall::For {
-					name, count, nested_calls: replace(&mut self.module_call, module_call_temp)
-				};
-				self.module_call.push(module_call);
-			},
-			BufferInit { width, .. } => {
-				self.module_call.push(ModuleCall::Init {
-					kind: StateKind::Cell,
-					value: exp,
-					width: width.unwrap(),
-				});
-			},
-			BufferLiteral { elements, .. } => {
-				for element in elements {
-					self.find_cells(element);
-				}
-			},
-			Expand { exp, .. } => {
-				self.find_cells(exp);
-			}
-		}
 	}
 
 	fn stack_adjust_from_outputs(&mut self, outputs: &'ast Pattern) -> Vec<usize> {
@@ -890,22 +852,28 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						self.emit(code![StackLoad(offset as u16)]);
 					},
 					None => {
-						match self.names.lookup_variable(self.current_member_index, &name.text) {
-							Some(VariableRef::Parameter { index }) => {
-								self.emit(code![Parameter(*index as u16)]);
-							},
-							Some(VariableRef::Node { .. }) => {
-								self.compiler.report_error(name, "Reference to a later variable is only allowed in a cell or delay.");
-								// Dummy push to keep stack height consistent
-								self.emit(code![Constant(0)]);
-							},
-							Some(VariableRef::For { variable_pos }) => {
-								self.compiler.report_error(name, "An iteration variable can only be used inside its repetition.");
-								self.compiler.report_context(variable_pos, format!("Iteration variable '{}' defined here.", name));
-								// Dummy push to keep stack height consistent
-								self.emit(code![Constant(0)]);
-							},
-							_ => unreachable!("Variable not found"),
+						if let Some(&static_pos) = self.static_var_position.get(&name.text) {
+							// Inline (single-use, non-loop, non-output) implicit cell.
+							self.module_call.push(ModuleCall::ImplicitCell { stack_index: static_pos });
+							self.emit(code![CellRead]);
+						} else {
+							match self.names.lookup_variable(self.current_member_index, &name.text) {
+								Some(VariableRef::Parameter { index }) => {
+									self.emit(code![Parameter(*index as u16)]);
+								},
+								Some(VariableRef::Node { .. }) => {
+									self.compiler.report_error(name, "Reference to a later variable is only allowed in a cell or delay.");
+									// Dummy push to keep stack height consistent
+									self.emit(code![Constant(0)]);
+								},
+								Some(VariableRef::For { variable_pos }) => {
+									self.compiler.report_error(name, "An iteration variable can only be used inside its repetition.");
+									self.compiler.report_context(variable_pos, format!("Iteration variable '{}' defined here.", name));
+									// Dummy push to keep stack height consistent
+									self.emit(code![Constant(0)]);
+								},
+								_ => unreachable!("Variable not found"),
+							}
 						}
 					},
 				};
@@ -928,23 +896,30 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.generate(otherwise);
 				self.emit(code![StackLoad(2), AndNot, Or, PopNext]);
 			},
-			Call { name, args, .. } => {
+			Call { channels, name, args, .. } => {
 				match self.names.lookup_member(&name.text) {
 					Some(MemberRef { kind, definition, .. }) => {
 						use MemberKind::*;
 						use MemberDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
+								if self.repetition_depth > 0 {
+									self.unsupported(exp, "Built-in module in repetition body");
+								}
+								let width = self.retrieve_width(exp).unwrap();
 								match name.text.as_str() {
 									"cell" => {
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], width });
 										self.emit(code![CellPush]);
 										self.update_stack.push((StateKind::Cell, &args[0]));
 									},
 									"delay" => {
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[1], width });
 										self.emit(code![CellPush, BufferLoad]);
 										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									"dyndelay" => {
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[2], width });
 										self.emit(code![CellPush]);
 										self.generate(&args[1]);
 										self.emit(code![BufferLoadWithOffset]);
@@ -961,16 +936,37 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									}
 								}
 								let key = &raw const **member;
+								self.module_call.push(ModuleCall::Call {
+									inputs: inputs.to_vec(),
+									static_proc_id: self.precompiled_proc_ids[&key][1],
+									generic_width: self.retrieve_width(exp),
+									args,
+								});
 								let proc_id = self.precompiled_proc_ids[&key][0];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Module, Declaration { member_index }) => {
-								let FullSignature { inputs, .. } = &self.signatures[*member_index];
+								let current_member_index = self.current_member_index;
+								let FullSignature { context, inputs, .. } = &self.signatures[*member_index];
+								let context = *context;
 								let inputs = inputs.clone();
 								for (arg, input_type) in args.iter().zip(&inputs) {
 									if input_type.scope == Some(Scope::Dynamic) {
 										self.generate(arg);
 									}
+								}
+								self.module_call.push(ModuleCall::Call {
+									inputs: inputs,
+									static_proc_id: self.static_proc_id[*member_index],
+									generic_width: self.retrieve_width(exp),
+									args,
+								});
+								if context == Context::Global {
+									let resolved_args: Vec<MidiChannelArg> = channels.iter()
+										.map(|channel| self.convert_midi_channel(current_member_index, channel))
+										.collect();
+									let node = TrackOrderNode::Module { member_index: *member_index, args: resolved_args };
+									self.track_order[current_member_index].push(node);
 								}
 								let proc_id = self.dynamic_proc_id[*member_index];
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
@@ -997,12 +993,16 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
 							},
 							(Instrument, Declaration { member_index }) => {
+								let current_member_index = self.current_member_index;
 								let static_proc_id = self.static_proc_id[*member_index];
 								let dynamic_proc_id = self.dynamic_proc_id[*member_index];
 
 								let FullSignature { inputs, outputs, .. } = &self.signatures[*member_index];
 								let width = outputs.first().unwrap().width.unwrap();
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
+								let channel = self.convert_midi_channel(current_member_index, &channels[0]);
+								let node = TrackOrderNode::Instrument { channel };
+								self.track_order[current_member_index].push(node);
 								for arg in args {
 									self.generate(arg);
 								}
@@ -1036,7 +1036,9 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.generate(index);
 				self.emit(code![BufferLoadIndexed]);
 			},
-			For { name, body, combinator, .. } => {
+			For { name, count, body, combinator, .. } => {
+				let module_call_temp = replace(&mut self.module_call, vec![]);
+				self.repetition_depth += 1;
 				let combinator = self.names.lookup_combinator(&combinator.text).unwrap();
 				self.emit(code![Constant(combinator.neutral.to_bits())]); // accumulator
 				self.expand(self.retrieve_width(exp).unwrap());
@@ -1049,8 +1051,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.emit(combinator.code);
 				self.emit(code![StackStore(2)]); // accumulator
 				self.emit(code![RepeatEnd]);
+				self.repetition_depth -= 1;
+				let nested_calls = replace(&mut self.module_call, module_call_temp);
+				self.module_call.push(ModuleCall::For { name, count, nested_calls });
 			},
-			BufferInit { length, body, .. } => {
+			BufferInit { width, length, body, .. } => {
 				match self.current_scope {
 					Some(Scope::Static) => {
 						let Expression::Call { ref name, ref args, .. } = **body else {
@@ -1090,6 +1095,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					},
 					Some(Scope::Dynamic) => {
 						// Already evaluated and stored in a cell
+						self.module_call.push(ModuleCall::Init {
+							kind: StateKind::Cell,
+							value: exp,
+							width: width.unwrap(),
+						});
 						self.emit(code![CellRead]);
 					},
 					None => panic!("Buffer initialization in a function"),
