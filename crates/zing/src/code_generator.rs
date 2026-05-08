@@ -40,6 +40,7 @@ fn statement_scope(statement: &Statement) -> Option<Scope> {
 #[derive(Clone, Copy)]
 enum StateKind { Cell, Delay }
 
+
 #[derive(Clone)]
 enum ModuleCall<'ast> {
 	ImplicitCell {
@@ -148,6 +149,11 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	/// Static-phase stack position of every static-scope name (input or assignment LHS),
 	/// populated at the start of each dynamic body to detect implicit-cell references.
 	static_var_position: HashMap<String, usize>,
+	/// For each variable currently slated for inline expansion, the RHS
+	/// expression to generate at its (single) use site. Populated at the
+	/// start of each body before code generation; consulted in
+	/// `generate(Variable)` and cleared (per entry) on use.
+	inline_exp: HashMap<String, &'ast Expression>,
 	// Nesting depth of repetitions
 	repetition_depth: usize,
 	// Module calls in execution order
@@ -206,6 +212,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			next_stack_index: 0,
 			stack_index: HashMap::new(),
 			static_var_position: HashMap::new(),
+			inline_exp: HashMap::new(),
 			repetition_depth: 0,
 			module_call: vec![],
 			track_order: vec![vec![]; member_count],
@@ -367,7 +374,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					proc_inputs = self.make_proc_type_list(inputs, Some(Scope::Static));
 					proc_outputs = self.make_proc_type_list(outputs, Some(Scope::Static));
 					self.initialize_stack(inputs, Some(Scope::Static), false);
-					self.generate_static_body(body)?;
+					self.generate_static_body(body, outputs)?;
 					self.adjust_stack(&[], self.stack_height);
 				}
 			},
@@ -376,6 +383,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				proc_inputs = self.make_proc_type_list(inputs, None);
 				proc_outputs = self.make_proc_type_list(outputs, None);
 				self.initialize_stack(inputs, None, false);
+				let forbidden: HashSet<String> = outputs.items.iter()
+					.map(|i| i.name.text.clone()).collect();
+				self.inline_exp = self.compute_inline_exp(
+					body,
+					None,
+					&forbidden,
+				);
 				for statement in body {
 					self.generate_code_for_statement(statement)?;
 				}
@@ -405,7 +419,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				} else {
 					proc_kind = ir::ProcedureKind::Instrument { scope: ir::Scope::Static };
 					self.initialize_stack(&real_inputs, Some(Scope::Static), true);
-					self.generate_static_body(body)?;
+					self.generate_static_body(body, outputs)?;
 					// Init autokill
 					self.emit(code![Call(self.precompiled_proc_ids[&autokill_key][1], None)]);
 					// Leave only the inputs (including the accumulator) on the stack.
@@ -493,7 +507,115 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.assign_ids(program, &|kind, _| kind == MemberKind::Function);
 	}
 
-	fn generate_static_body(&mut self, body: &'ast Vec<Statement>) -> Result<(), CompileError> {
+	fn inlineable_item<'a>(&self, node: &'a Pattern) -> Option<&'a PatternItem> {
+		if let [item] = node.items.as_slice() && item.name.text != "_" {
+			Some(item)
+		} else {
+			None
+		}
+	}
+
+	/// Find all single-LHS assignments whose item scope matches `scope`.
+	/// Returns `(name, &exp)` pairs in source order.
+	fn collect_inline_candidates(&self,
+		body: &'ast Vec<Statement>,
+		scope: Option<Scope>,
+	) -> Vec<(String, &'ast Expression)> {
+		let mut out = vec![];
+		for Statement::Assign { node, exp } in body {
+			if let Some(item) = self.inlineable_item(node) {
+				if item.item_type.scope == scope {
+					out.push((item.name.text.clone(), exp));
+				}
+			}
+		}
+		out
+	}
+
+	/// Walk all statements whose first-LHS scope matches `scope`
+	/// and accumulate variable-reference counts and loop-nesting info
+	/// for `tracked` names.
+	fn count_uses(&self,
+		body: &'ast Vec<Statement>,
+		tracked: &HashSet<String>,
+		scope: Option<Scope>,
+	) -> (HashMap<String, usize>, HashSet<String>) {
+		let mut counts = HashMap::new();
+		let mut in_loop = HashSet::new();
+		let mut order = vec![];
+		for Statement::Assign { node, exp } in body {
+			let stmt_scope = node.items.first().and_then(|i| i.item_type.scope);
+			if stmt_scope == scope {
+				self.scan_exp(exp, tracked, scope, &mut counts, &mut in_loop, &mut order, 0);
+			}
+		}
+		(counts, in_loop)
+	}
+
+	/// Build the `inline_exp` map for a single body. A candidate
+	/// (single-LHS, non-`_` assignment matching `scope`) is
+	/// inlineable when its name is referenced exactly once in scanned
+	/// statements, the use is not inside a `For`, and the name is not in
+	/// `forbidden`.
+	fn compute_inline_exp(&self,
+		body: &'ast Vec<Statement>,
+		scope: Option<Scope>,
+		forbidden: &HashSet<String>,
+	) -> HashMap<String, &'ast Expression> {
+		let candidates = self.collect_inline_candidates(body, scope);
+		let candidate_names: HashSet<String> = candidates.iter()
+			.filter(|(n, _)| !forbidden.contains(n))
+			.map(|(n, _)| n.clone())
+			.collect();
+		let (counts, in_loop) = self.count_uses(body, &candidate_names, scope);
+
+		let mut out = HashMap::new();
+		for (name, exp) in candidates {
+			if forbidden.contains(&name) { continue; }
+			if counts.get(&name).copied() == Some(1) && !in_loop.contains(&name) {
+				out.insert(name, exp);
+			}
+		}
+		out
+	}
+
+	/// Names of static-scope LHSs that the static body could inline. Used
+	/// in two places: to populate `inline_exp` when generating the static
+	/// body, and to skip pos increments when building
+	/// `static_var_position` for the dynamic body so the runtime stack
+	/// layout stays aligned with the recorded positions.
+	fn compute_static_inlineable(&self,
+		body: &'ast Vec<Statement>,
+		outputs: &'ast Pattern,
+	) -> HashMap<String, &'ast Expression> {
+		// Collect static-scope single-LHS candidate names.
+		let static_candidates: Vec<String> = self.collect_inline_candidates(body, Some(Scope::Static))
+			.into_iter().map(|(n, _)| n).collect();
+		let static_lhs_set: HashSet<String> = static_candidates.iter().cloned().collect();
+
+		// A static var that is referenced from the dynamic body needs its
+		// stack slot for the implicit-cell init, so it cannot be inlined
+		// here.
+		let (dyn_counts, _) = self.count_uses(body, &static_lhs_set, Some(Scope::Dynamic));
+		let mut forbidden: HashSet<String> = dyn_counts.into_keys().collect();
+		// Outputs are returned to the caller via a stack slot — they
+		// can't be inlined either.
+		for item in &outputs.items {
+			forbidden.insert(item.name.text.clone());
+		}
+
+		self.compute_inline_exp(
+			body,
+			Some(Scope::Static),
+			&forbidden,
+		)
+	}
+
+	fn generate_static_body(&mut self,
+		body: &'ast Vec<Statement>,
+		outputs: &'ast Pattern,
+	) -> Result<(), CompileError> {
+		self.inline_exp = self.compute_static_inlineable(body, outputs);
 		for statement in body {
 			if statement_scope(statement) == Some(Scope::Static) {
 				self.generate_code_for_statement(statement)?;
@@ -552,6 +674,16 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.static_var_position.clear();
 		debug_assert!(self.update_stack.is_empty());
 
+		// Recompute the static-side inlineable set. Static-inlineable
+		// assignments are skipped at runtime in the static procedure (no
+		// stack slot pushed), so their positions in the static stack
+		// layout vanish and subsequent static-scope LHSs shift down by
+		// one. We must mirror that skip here so `static_var_position`
+		// stays aligned with what `generate_static_module_calls` sees at
+		// runtime.
+		let static_inlineable: HashSet<String> = self.compute_static_inlineable(body, outputs)
+			.into_keys().collect();
+
 		// Compute static-phase positions for static-scope inputs and static-scope
 		// assignment LHSs in source order. Used during the dynamic walk to detect
 		// implicit-cell references.
@@ -569,14 +701,29 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		for Statement::Assign { node, .. } in body {
 			let stmt_scope = node.items.first().and_then(|item| item.item_type.scope);
 			if stmt_scope == Some(Scope::Static) {
-				for item in &node.items {
-					if item.name.text != "_" {
-						self.static_var_position.insert(item.name.text.clone(), pos);
+				if self.inlineable_item(node)
+					.filter(|item| static_inlineable.contains(&item.name.text))
+					.is_none()
+				{
+					for item in &node.items {
+						if item.name.text != "_" {
+							self.static_var_position.insert(item.name.text.clone(), pos);
+						}
+						pos += 1;
 					}
-					pos += 1;
 				}
 			}
 		}
+
+		// Inlineable dynamic-scope assignments. Populated for use by
+		// `generate(Variable)` while emitting the dynamic body.
+		let forbidden_dyn: HashSet<String> = outputs.items.iter()
+			.map(|i| i.name.text.clone()).collect();
+		self.inline_exp = self.compute_inline_exp(
+			body,
+			Some(Scope::Dynamic),
+			&forbidden_dyn,
+		);
 
 		let hoisted = self.scan_dynamic_for_hoist(body, outputs);
 
@@ -600,12 +747,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		body: &'ast Vec<Statement>,
 		outputs: &'ast Pattern,
 	) -> Vec<(String, usize)> {
+		let tracked: HashSet<String> = self.static_var_position.keys().cloned().collect();
 		let mut counts: HashMap<String, usize> = HashMap::new();
 		let mut in_loop: HashSet<String> = HashSet::new();
 		let mut order: Vec<String> = vec![];
 		for Statement::Assign { node, exp } in body {
 			if node.items.iter().any(|item| item.item_type.scope == Some(Scope::Dynamic)) {
-				self.scan_exp(exp, &mut counts, &mut in_loop, &mut order, 0);
+				self.scan_exp(exp, &tracked, Some(Scope::Dynamic), &mut counts, &mut in_loop, &mut order, 0);
 			}
 		}
 
@@ -626,6 +774,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 
 	fn scan_exp(&self,
 		exp: &'ast Expression,
+		tracked: &HashSet<String>,
+		phase: Option<Scope>,
 		counts: &mut HashMap<String, usize>,
 		in_loop: &mut HashSet<String>,
 		order: &mut Vec<String>,
@@ -635,7 +785,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		match exp {
 			Number { .. } | Bool { .. } | TupleIndex { .. } => {},
 			Variable { name } => {
-				if self.static_var_position.contains_key(&name.text) {
+				if tracked.contains(&name.text) {
 					let count = counts.entry(name.text.clone()).or_insert(0);
 					if *count == 0 {
 						order.push(name.text.clone());
@@ -646,15 +796,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					}
 				}
 			},
-			UnOp { exp, .. } => self.scan_exp(exp, counts, in_loop, order, loop_depth),
+			UnOp { exp, .. } => self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth),
 			BinOp { left, right, .. } => {
-				self.scan_exp(left, counts, in_loop, order, loop_depth);
-				self.scan_exp(right, counts, in_loop, order, loop_depth);
+				self.scan_exp(left, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, tracked, phase, counts, in_loop, order, loop_depth);
 			},
 			Conditional { condition, then, otherwise } => {
-				self.scan_exp(condition, counts, in_loop, order, loop_depth);
-				self.scan_exp(then, counts, in_loop, order, loop_depth);
-				self.scan_exp(otherwise, counts, in_loop, order, loop_depth);
+				self.scan_exp(condition, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(then, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(otherwise, tracked, phase, counts, in_loop, order, loop_depth);
 			},
 			Call { name, args, .. } => {
 				match self.names.lookup_member(&name.text) {
@@ -663,39 +813,45 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						use MemberDefinition::*;
 						match (kind, definition) {
 							(Module, BuiltIn { .. }) => {
-								match name.text.as_str() {
-									"cell" => {
-										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
-									},
-									"delay" => {
-										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
-									},
-									"dyndelay" => {
-										self.scan_exp(&args[0], counts, in_loop, order, loop_depth);
-										self.scan_exp(&args[1], counts, in_loop, order, loop_depth);
-									},
+								// `cell`/`delay` update arg is dynamic; their initial value
+								// arg is static. `dyndelay` has dynamic update + dynamic
+								// offset, with a static initial value.
+								let (dyn_args, static_args): (&[usize], &[usize]) = match name.text.as_str() {
+									"cell"     => (&[0],    &[1]),
+									"delay"    => (&[0],    &[1]),
+									"dyndelay" => (&[0, 1], &[2]),
 									_ => panic!("Unknown built-in module"),
+								};
+								let visit: &[usize] = match phase {
+									Some(Scope::Dynamic) => dyn_args,
+									Some(Scope::Static)  => static_args,
+									None => &[0, 1, 2],
+								};
+								for &i in visit {
+									if i < args.len() {
+										self.scan_exp(&args[i], tracked, phase, counts, in_loop, order, loop_depth);
+									}
 								}
 							},
 							(Module, Precompiled { member }) => {
 								let inputs = member.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
-									if input_type.scope == Some(Scope::Dynamic) {
-										self.scan_exp(arg, counts, in_loop, order, loop_depth);
+									if phase.map_or(true, |s| input_type.scope == Some(s)) {
+										self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
 									}
 								}
 							},
 							(Module, Declaration { member_index }) => {
 								let inputs = &self.signatures[*member_index].inputs;
 								for (arg, input_type) in args.iter().zip(inputs) {
-									if input_type.scope == Some(Scope::Dynamic) {
-										self.scan_exp(arg, counts, in_loop, order, loop_depth);
+									if phase.map_or(true, |s| input_type.scope == Some(s)) {
+										self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
 									}
 								}
 							},
 							(Function, _) | (Instrument, _) => {
 								for arg in args {
-									self.scan_exp(arg, counts, in_loop, order, loop_depth);
+									self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
 								}
 							},
 						}
@@ -705,30 +861,45 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			},
 			Tuple { elements, .. } => {
 				for el in elements {
-					self.scan_exp(el, counts, in_loop, order, loop_depth);
+					self.scan_exp(el, tracked, phase, counts, in_loop, order, loop_depth);
 				}
 			},
 			Merge { left, right, .. } => {
-				self.scan_exp(left, counts, in_loop, order, loop_depth);
-				self.scan_exp(right, counts, in_loop, order, loop_depth);
+				self.scan_exp(left, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, tracked, phase, counts, in_loop, order, loop_depth);
 			},
 			BufferIndex { exp, index, .. } => {
-				self.scan_exp(exp, counts, in_loop, order, loop_depth);
-				self.scan_exp(index, counts, in_loop, order, loop_depth);
+				self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(index, tracked, phase, counts, in_loop, order, loop_depth);
 			},
-			For { body, .. } => {
-				self.scan_exp(body, counts, in_loop, order, loop_depth + 1);
+			For { count, body, .. } => {
+				// The loop counter is evaluated once before the loop, in the static
+				// phase (it lives in the surrounding `ModuleCall::For`). The body
+				// is evaluated N times in the current phase.
+				if phase != Some(Scope::Dynamic) {
+					self.scan_exp(count, tracked, phase, counts, in_loop, order, loop_depth);
+				}
+				self.scan_exp(body, tracked, phase, counts, in_loop, order, loop_depth + 1);
 			},
-			BufferInit { .. } => {
-				// Buffer-init body is evaluated in the static phase only; the dynamic
-				// phase just CellReads its precomputed value.
+			BufferInit { length, body, .. } => {
+				// In the dynamic phase, BufferInit just CellReads its precomputed
+				// value. In the static phase, `length` and the inner-call args are
+				// evaluated.
+				if phase != Some(Scope::Dynamic) {
+					self.scan_exp(length, tracked, phase, counts, in_loop, order, loop_depth);
+					if let Expression::Call { args, .. } = &**body {
+						for arg in args {
+							self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
+						}
+					}
+				}
 			},
 			BufferLiteral { elements, .. } => {
 				for el in elements {
-					self.scan_exp(el, counts, in_loop, order, loop_depth);
+					self.scan_exp(el, tracked, phase, counts, in_loop, order, loop_depth);
 				}
 			},
-			Expand { exp, .. } => self.scan_exp(exp, counts, in_loop, order, loop_depth),
+			Expand { exp, .. } => self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth),
 		}
 	}
 
@@ -753,8 +924,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 
 	fn generate_code_for_statement(&mut self, statement: &'ast Statement) -> Result<(), CompileError> {
 		let Statement::Assign { node, exp } = statement;
-		self.generate(exp);
-		self.add_stack_indices(node, None, false, false);
+		if self.inlineable_item(node)
+			.filter(|item| self.inline_exp.contains_key(&item.name.text))
+			.is_none()
+		{
+			self.generate(exp);
+			self.add_stack_indices(node, None, false, false);
+		}
 		self.compiler.check_errors()
 	}
 
@@ -852,7 +1028,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						self.emit(code![StackLoad(offset as u16)]);
 					},
 					None => {
-						if let Some(&static_pos) = self.static_var_position.get(&name.text) {
+						if let Some(exp) = self.inline_exp.remove(&name.text) {
+							// Single-use inlined assignment: emit the RHS here.
+							self.generate(exp);
+						} else if let Some(&static_pos) = self.static_var_position.get(&name.text) {
 							// Inline (single-use, non-loop, non-output) implicit cell.
 							self.module_call.push(ModuleCall::ImplicitCell { stack_index: static_pos });
 							self.emit(code![CellRead]);
