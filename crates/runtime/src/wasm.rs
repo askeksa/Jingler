@@ -634,7 +634,7 @@ impl<'ir> WasmGenerator<'ir> {
 					push!();
 				},
 
-				CellInit => {
+				CellInit(..) => {
 					b.global_get(self.state_ptr);
 					b.global_get(self.state_ptr);
 					b.i32_const(16);
@@ -643,7 +643,7 @@ impl<'ir> WasmGenerator<'ir> {
 					pop!();
 					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 				},
-				CellRead => {
+				CellRead(..) => {
 					b.global_get(self.state_ptr);
 					b.global_get(self.state_ptr);
 					b.i32_const(16);
@@ -652,7 +652,7 @@ impl<'ir> WasmGenerator<'ir> {
 					b.load(self.memory, LoadKind::V128, MemArg { align: 16, offset: 0 });
 					push!();
 				},
-				CellPush => {
+				CellPush(..) => {
 					let state_addr = self.module().locals.add(ValType::I32);
 					cell_stack.push(state_addr);
 					b.global_get(self.state_ptr);

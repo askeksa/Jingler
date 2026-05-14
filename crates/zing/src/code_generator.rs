@@ -45,11 +45,12 @@ enum StateKind { Cell, Delay }
 enum ModuleCall<'ast> {
 	ImplicitCell {
 		stack_index: usize,
+		cell_type: ir::Type,
 	},
 	Init {
 		kind: StateKind,
 		value: &'ast Expression,
-		width: Width,
+		cell_type: ir::Type,
 	},
 	Call {
 		inputs: Vec<Type>,
@@ -148,7 +149,7 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	stack_index: HashMap<String, usize>,
 	/// Static-phase stack position of every static-scope name (input or assignment LHS),
 	/// populated at the start of each dynamic body to detect implicit-cell references.
-	static_var_position: HashMap<String, usize>,
+	static_var_position: HashMap<String, (usize, ir::Type)>,
 	/// For each variable currently slated for inline expansion, the RHS
 	/// expression to generate at its (single) use site. Populated at the
 	/// start of each body before code generation; consulted in
@@ -628,18 +629,18 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	fn generate_static_module_calls(&mut self, module_call: &Vec<ModuleCall<'ast>>) {
 		for call in module_call {
 			match call {
-				&ModuleCall::ImplicitCell { stack_index } => {
+				&ModuleCall::ImplicitCell { stack_index, cell_type } => {
 					let offset = self.stack_height - stack_index - 1;
-					self.emit(code![StackLoad(offset as u16), CellInit]);
+					self.emit(code![StackLoad(offset as u16), CellInit(cell_type)]);
 				},
-				&ModuleCall::Init { kind, value, width } => {
+				&ModuleCall::Init { kind, value, cell_type } => {
 					self.generate(value);
 					match kind {
 						StateKind::Cell => {
-							self.emit(code![CellInit]);
+							self.emit(code![CellInit(cell_type)]);
 						},
 						StateKind::Delay => {
-							self.emit(code![BufferAlloc(width.to_ir()), CellInit]);
+							self.emit(code![BufferAlloc(cell_type.width), CellInit(cell_type)]);
 						},
 					}
 				},
@@ -691,7 +692,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		for item in &inputs.items {
 			if item.item_type.scope == Some(Scope::Static) {
 				if item.name.text != "_" {
-					self.static_var_position.insert(item.name.text.clone(), pos);
+					self.static_var_position.insert(item.name.text.clone(), (pos, item.item_type.to_ir()));
 				}
 				pos += 1;
 			} else if all_scopes {
@@ -707,7 +708,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				{
 					for item in &node.items {
 						if item.name.text != "_" {
-							self.static_var_position.insert(item.name.text.clone(), pos);
+							self.static_var_position.insert(item.name.text.clone(), (pos, item.item_type.to_ir()));
 						}
 						pos += 1;
 					}
@@ -727,10 +728,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 
 		let hoisted = self.scan_dynamic_for_hoist(body, outputs);
 
-		for (name, static_pos) in &hoisted {
-			self.module_call.push(ModuleCall::ImplicitCell { stack_index: *static_pos });
+		for &(ref name, static_pos, cell_type) in &hoisted {
+			self.module_call.push(ModuleCall::ImplicitCell { stack_index: static_pos, cell_type });
 			self.stack_index.insert(name.clone(), self.stack_height);
-			self.emit(code![CellRead]);
+			self.emit(code![CellRead(cell_type)]);
 		}
 
 		self.next_stack_index = self.stack_height;
@@ -746,7 +747,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 	fn scan_dynamic_for_hoist(&self,
 		body: &'ast Vec<Statement>,
 		outputs: &'ast Pattern,
-	) -> Vec<(String, usize)> {
+	) -> Vec<(String, usize, ir::Type)> {
 		let tracked: HashSet<String> = self.static_var_position.keys().cloned().collect();
 		let mut counts: HashMap<String, usize> = HashMap::new();
 		let mut in_loop: HashSet<String> = HashSet::new();
@@ -757,15 +758,18 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			}
 		}
 
-		let mut hoisted: Vec<(String, usize)> = order.iter()
+		let mut hoisted: Vec<(String, usize, ir::Type)> = order.iter()
 			.filter(|n| counts[*n] > 1 || in_loop.contains(*n))
-			.map(|n| (n.clone(), self.static_var_position[n]))
+			.map(|n| {
+				let (pos, cell_type) = self.static_var_position[n];
+				(n.clone(), pos, cell_type)
+			})
 			.collect();
 
 		for item in &outputs.items {
-			if let Some(&pos) = self.static_var_position.get(&item.name.text) {
-				if !hoisted.iter().any(|(n, _)| n == &item.name.text) {
-					hoisted.push((item.name.text.clone(), pos));
+			if let Some(&(pos, cell_type)) = self.static_var_position.get(&item.name.text) {
+				if !hoisted.iter().any(|(n, _, _)| n == &item.name.text) {
+					hoisted.push((item.name.text.clone(), pos, cell_type));
 				}
 			}
 		}
@@ -1031,10 +1035,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						if let Some(exp) = self.inline_exp.remove(&name.text) {
 							// Single-use inlined assignment: emit the RHS here.
 							self.generate(exp);
-						} else if let Some(&static_pos) = self.static_var_position.get(&name.text) {
+						} else if let Some(&(static_pos, cell_type)) = self.static_var_position.get(&name.text) {
 							// Inline (single-use, non-loop, non-output) implicit cell.
-							self.module_call.push(ModuleCall::ImplicitCell { stack_index: static_pos });
-							self.emit(code![CellRead]);
+							self.module_call.push(ModuleCall::ImplicitCell { stack_index: static_pos, cell_type });
+							self.emit(code![CellRead(cell_type)]);
 						} else {
 							match self.names.lookup_variable(self.current_member_index, &name.text) {
 								Some(VariableRef::Parameter { index }) => {
@@ -1085,21 +1089,24 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								if self.repetition_depth > 0 {
 									self.unsupported(exp, "Built-in module in repetition body");
 								}
-								let width = self.retrieve_width(exp).unwrap();
+								let width = self.retrieve_width(exp).unwrap().to_ir();
 								match name.text.as_str() {
 									"cell" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], width });
-										self.emit(code![CellPush]);
+										let cell_type = ir::Type { width, value_type: ir::ValueType::Number };
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Cell, value: &args[1], cell_type });
+										self.emit(code![CellPush(cell_type)]);
 										self.update_stack.push((StateKind::Cell, &args[0]));
 									},
 									"delay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[1], width });
-										self.emit(code![CellPush, BufferLoad]);
+										let cell_type = ir::Type { width, value_type: ir::ValueType::Buffer };
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[1], cell_type });
+										self.emit(code![CellPush(cell_type), BufferLoad]);
 										self.update_stack.push((StateKind::Delay, &args[0]));
 									},
 									"dyndelay" => {
-										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[2], width });
-										self.emit(code![CellPush]);
+										let cell_type = ir::Type { width, value_type: ir::ValueType::Buffer };
+										self.module_call.push(ModuleCall::Init { kind: StateKind::Delay, value: &args[2], cell_type });
+										self.emit(code![CellPush(cell_type)]);
 										self.generate(&args[1]);
 										self.emit(code![BufferLoadWithOffset]);
 										self.update_stack.push((StateKind::Delay, &args[0]));
@@ -1274,12 +1281,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					},
 					Some(Scope::Dynamic) => {
 						// Already evaluated and stored in a cell
+						let cell_type = ir::Type { width: width.unwrap().to_ir(), value_type: ir::ValueType::Buffer };
 						self.module_call.push(ModuleCall::Init {
 							kind: StateKind::Cell,
 							value: exp,
-							width: width.unwrap(),
+							cell_type,
 						});
-						self.emit(code![CellRead]);
+						self.emit(code![CellRead(cell_type)]);
 					},
 					None => panic!("Buffer initialization in a function"),
 				}

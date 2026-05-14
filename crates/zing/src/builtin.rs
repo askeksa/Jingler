@@ -136,13 +136,13 @@ pub static PRECOMPILED_FUNCTIONS: &[PrecompiledMember] = &[
 pub static PRECOMPILED_MODULES: &[PrecompiledMember] = &[
 	("$autokill_mono", N, sig!([dynamic mono number, dynamic mono number] [dynamic mono number]), &[code![
 		Constant(0),
-		CellInit
+		CellInit(Type { width: Mono, value_type: Number })
 	], code![
 		Constant(0x46000000), // Counter threshold
 		StackLoad(1), // Copy of output
 		Constant(0x46000000), Mul, Round, // 0 when small
 		Constant(0), Eq, // True when small
-		CellPush, And, // Preserve counter when small
+		CellPush(Type { width: Mono, value_type: Number }), And, // Preserve counter when small
 		Constant(0x3F800000), Add, // Increment counter
 		IfGreaterEq, // Has counter reached threshold?
 		Kill, // Kill when counter reaches threshold
@@ -153,14 +153,14 @@ pub static PRECOMPILED_MODULES: &[PrecompiledMember] = &[
 	]]),
 	("$autokill_stereo", N, sig!([dynamic stereo number, dynamic stereo number] [dynamic stereo number]), &[code![
 		Constant(0),
-		CellInit
+		CellInit(Type { width: Mono, value_type: Number })
 	], code![
 		Constant(0x46000000), // Counter threshold
 		StackLoad(1), // Copy of output
 		Constant(0x46000000), Expand(ir::Width::Stereo), Mul, Round, // 0 when small
 		SplitRL, Or, // 0 when both channels small
 		Constant(0), Eq, // True when small
-		CellPush, And, // Preserve counter when small
+		CellPush(Type { width: Mono, value_type: Number }), And, // Preserve counter when small
 		Constant(0x3F800000), Add, // Increment counter
 		IfGreaterEq, // Has counter reached threshold?
 		Kill, // Kill when counter reaches threshold

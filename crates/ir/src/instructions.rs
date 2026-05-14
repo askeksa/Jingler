@@ -4,7 +4,7 @@ use std::fmt::{Display, Error, Formatter};
 
 use serde::{Deserialize, Serialize};
 
-use crate::program::Width;
+use crate::program::{Type, Width};
 
 #[macro_export]
 macro_rules! code {
@@ -12,6 +12,8 @@ macro_rules! code {
 		&{
 			#[allow(unused)] use ir::Instruction::*;
 			#[allow(unused)] use ir::NoteProperty::*;
+			#[allow(unused)] use ir::Type;
+			#[allow(unused)] use ir::ValueType::*;
 			#[allow(unused)] use ir::Width::*;
 			[$($b),*]
 		}
@@ -77,9 +79,9 @@ pub enum Instruction {
 	StackStore(u16),
 
 	// State
-	CellInit,
-	CellRead,
-	CellPush,
+	CellInit(Type),
+	CellRead(Type),
+	CellPush(Type),
 	CellFetch,
 	CellPop,
 	StateEnter,
@@ -156,8 +158,8 @@ impl Instruction {
 				(offset + 2, offset + 1)
 			},
 
-			CellInit | CellPop => (1, 0),
-			CellRead | CellPush | CellFetch => (0, 1),
+			CellInit(..) | CellPop => (1, 0),
+			CellRead(..) | CellPush(..) | CellFetch => (0, 1),
 			StateEnter | StateLeave => (0, 0),
 
 			BufferAlloc(..) => (1, 1),
@@ -203,6 +205,15 @@ impl Display for Instruction {
 			},
 			Instruction::BufferAlloc(width) => {
 				write!(f, "BufferAlloc({})", width)?;
+			},
+			Instruction::CellInit(t) => {
+				write!(f, "CellInit({})", t)?;
+			},
+			Instruction::CellRead(t) => {
+				write!(f, "CellRead({})", t)?;
+			},
+			Instruction::CellPush(t) => {
+				write!(f, "CellPush({})", t)?;
 			},
 			inst => {
 				write!(f, "{:?}", inst)?;
