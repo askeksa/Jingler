@@ -1,5 +1,5 @@
 use convert::{Music, convert_music_with_program, renoise::convert_renoise_file};
-use runtime::{JinglerRuntimeInstance, default_jingler_runtime};
+use runtime::{JinglerRuntimeHandle, default_jingler_runtime};
 use zing::compiler;
 
 use std::error::Error;
@@ -205,7 +205,7 @@ fn interpolate_curve(points: &[(usize, f32)], sample: usize, cursor: &mut usize)
 }
 
 fn compute_audio(
-	instance: &mut dyn JinglerRuntimeInstance,
+	instance: &mut dyn JinglerRuntimeHandle,
 	sample_rate: f32,
 	n_samples: usize,
 	events: &[(usize, MusicEvent)],
@@ -303,15 +303,25 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 					}
 				}
 				if options.write_wasm.is_some() || options.play || options.write_wav.is_some() {
-					let runtime = default_jingler_runtime().unwrap();
-					match runtime.load_program(&program) {
+					let (rt, mut instance) = default_jingler_runtime().unwrap();
+					match rt.submit_program(&program) {
 						Err(e) => {
 							println!("Runtime error: {}", e);
 						}
-						Ok(mut instance) => {
+						Ok(_) => {
+							if let Err(e) = instance.poll_pending() {
+								println!("Runtime error: {}", e);
+							}
 							if let Some(ref filename) = options.write_wasm {
-								if let Err(e) = fs::write(filename, instance.dump()) {
-									println!("Error writing Wasm to '{}': {}", filename, e);
+								match instance.dump() {
+									Some(bytes) => {
+										if let Err(e) = fs::write(filename, bytes) {
+											println!("Error writing Wasm to '{}': {}", filename, e);
+										}
+									}
+									None => {
+										println!("Error: no instance available to dump");
+									}
 								}
 							}
 							if options.play || options.write_wav.is_some() {

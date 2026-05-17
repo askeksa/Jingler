@@ -2,13 +2,13 @@ use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use walrus::*;
 use walrus::ir::*;
-use wasmtime::{Caller, Config, Engine, Linker, Module, Store, TypedFunc};
+use wasmtime::{Caller, Config, Engine, Linker, Module, Store, TypedFunc, Val};
 
-use crate::{JinglerRuntime, JinglerRuntimeInstance};
 use ::ir;
+use ::ir::diff;
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
 
@@ -27,7 +27,7 @@ const MAX_MEMORY_SIZE: u64 = 0x100000000; // 4GB
 /// Sentinel track value marking end of note commands
 const COMMAND_SENTINEL: i32 = 0x7FFFFFFF;
 
-pub struct WasmRuntime {
+pub(crate) struct WasmCompiler {
 	engine: Engine,
 	linker: Linker<Arc<WasmRuntimeData>>,
 	gmdls_data: Arc<WasmRuntimeData>,
@@ -37,7 +37,7 @@ struct WasmRuntimeData {
 	gmdls_data: Vec<u8>,
 }
 
-pub struct WasmRuntimeInstance {
+pub(crate) struct WasmInstanceInner {
 	program: ir::Program,
 	wasm: Vec<u8>,
 	store: Store<Arc<WasmRuntimeData>>,
@@ -46,10 +46,11 @@ pub struct WasmRuntimeInstance {
 	note_off_func: TypedFunc<(i32, i32), ()>,
 	next_sample_func: TypedFunc<(), (f64, f64)>,
 	set_parameter_func: TypedFunc<(i32, f32), ()>,
+	constant_globals: Vec<wasmtime::Global>,
 }
 
-impl WasmRuntime {
-	pub fn new() -> Result<Self> {
+impl WasmCompiler {
+	pub(crate) fn new() -> Result<Self> {
 		let mut config = Config::new();
 		if cfg!(target_os = "windows") {
 			config.profiler(wasmtime::ProfilingStrategy::VTune);
@@ -81,9 +82,11 @@ impl WasmRuntime {
 	}
 }
 
-impl JinglerRuntime for WasmRuntime {
-	fn load_program(&self, program: &ir::Program) -> Result<Box<dyn JinglerRuntimeInstance>> {
-		let wasm = compile_to_wasm(program)?;
+impl WasmCompiler {
+	pub(crate) fn compile_and_instantiate(&self, program: &ir::Program) -> Result<WasmInstanceInner> {
+		let constants = diff::collect_constants(program);
+		let n_constants = constants.len();
+		let wasm = compile_to_wasm(program, &constants)?;
 		let module = Module::from_binary(&self.engine, &wasm)?;
 		let mut store = Store::new(&self.engine, self.gmdls_data.clone());
 		let instance = self.linker.instantiate(&mut store, &module)?;
@@ -93,7 +96,15 @@ impl JinglerRuntime for WasmRuntime {
 		let next_sample_func = instance.get_typed_func::<(), (f64, f64)>(&mut store, "next_sample")?;
 		let set_parameter_func = instance.get_typed_func::<(i32, f32), ()>(&mut store, "set_parameter")?;
 
-		Ok(Box::new(WasmRuntimeInstance {
+		let mut constant_globals = Vec::with_capacity(n_constants);
+		for i in 0..n_constants {
+			let name = format!("const_{}", i);
+			let g = instance.get_global(&mut store, &name)
+				.ok_or_else(|| anyhow!("missing exported constant global {}", name))?;
+			constant_globals.push(g);
+		}
+
+		Ok(WasmInstanceInner {
 			program: program.clone(),
 			wasm,
 			store,
@@ -102,26 +113,27 @@ impl JinglerRuntime for WasmRuntime {
 			note_off_func,
 			next_sample_func,
 			set_parameter_func,
-		}))
+			constant_globals,
+		})
 	}
 }
 
-impl JinglerRuntimeInstance for WasmRuntimeInstance {
-	fn dump(&self) -> &[u8] {
+impl WasmInstanceInner {
+	pub(crate) fn dump(&self) -> &[u8] {
 		&self.wasm
 	}
 
-	fn initialize(&mut self, sample_rate: f32) -> Result<()> {
+	pub(crate) fn initialize(&mut self, sample_rate: f32) -> Result<()> {
 		self.initialize_func.call(&mut self.store, sample_rate)?;
 		Ok(())
 	}
 
-	fn next_sample(&mut self) -> Result<[f64; 2]> {
+	pub(crate) fn next_sample(&mut self) -> Result<[f64; 2]> {
 		let (l, r) = self.next_sample_func.call(&mut self.store, ())?;
 		Ok([l, r])
 	}
 
-	fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
+	pub(crate) fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
 		for (track, track_channel) in self.program.track_order.iter().enumerate() {
 			if *track_channel == channel as usize {
 				self.note_on_func.call(&mut self.store, (track as i32, note as i32, velocity as i32))?;
@@ -130,7 +142,7 @@ impl JinglerRuntimeInstance for WasmRuntimeInstance {
 		Ok(())
 	}
 
-	fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
+	pub(crate) fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
 		for (track, track_channel) in self.program.track_order.iter().enumerate() {
 			if *track_channel == channel as usize {
 				self.note_off_func.call(&mut self.store, (track as i32, note as i32))?;
@@ -139,7 +151,7 @@ impl JinglerRuntimeInstance for WasmRuntimeInstance {
 		Ok(())
 	}
 
-	fn set_parameter(&mut self, index: usize, value: f32) -> Result<()> {
+	pub(crate) fn set_parameter(&mut self, index: usize, value: f32) -> Result<()> {
 		if index < self.program.parameters.len() {
 			let param = &self.program.parameters[index];
 			let quant_value = param.min + value * (param.max - param.min);
@@ -147,13 +159,60 @@ impl JinglerRuntimeInstance for WasmRuntimeInstance {
 		}
 		Ok(())
 	}
+
+	pub(crate) fn set_constant(&mut self, slot: u32, value: f32) -> Result<()> {
+		let global = self.constant_globals
+			.get(slot as usize)
+			.ok_or_else(|| anyhow!("constant slot {} out of range (have {})", slot, self.constant_globals.len()))?;
+		global.set(&mut self.store, Val::F32(value.to_bits()))?;
+		Ok(())
+	}
+
+	pub(crate) fn current_constants(&mut self) -> Vec<f32> {
+		let globals = self.constant_globals.clone();
+		globals.iter().map(|g| {
+			match g.get(&mut self.store) {
+				Val::F32(bits) => f32::from_bits(bits),
+				_ => f32::NAN,
+			}
+		}).collect()
+	}
 }
 
-fn compile_to_wasm(program: &ir::Program) -> Result<Vec<u8>> {
+fn compile_to_wasm(program: &ir::Program, constants: &[u32]) -> Result<Vec<u8>> {
 	let config = ModuleConfig::new();
 	let mut module = walrus::Module::with_config(config);
 	let memory = module.memories.add_local(false, false, INITIAL_MEMORY_SIZE >> 16, Some(MAX_MEMORY_SIZE >> 16), None);
 	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(0.0)));
+
+	// One mutable f32 global per Constant occurrence in the program, indexed by
+	// the deterministic slot order produced by `diff::collect_constants`. The
+	// audio thread mutates these via `Global::set` for live constant updates.
+	let mut constant_globals: Vec<GlobalId> = Vec::with_capacity(constants.len());
+	for (i, &bits) in constants.iter().enumerate() {
+		let g = module.globals.add_local(
+			ValType::F32,
+			true,
+			false,
+			ConstExpr::Value(Value::F32(f32::from_bits(bits))),
+		);
+		module.exports.add(&format!("const_{}", i), g);
+		constant_globals.push(g);
+	}
+
+	// Per-procedure starting slot offset so each procedure's emit knows where
+	// to resume slot counting independent of compile order.
+	let mut proc_const_starts: Vec<u32> = Vec::with_capacity(program.procedures.len() + 1);
+	let mut acc: u32 = 0;
+	proc_const_starts.push(0);
+	for proc in &program.procedures {
+		for instr in &proc.code {
+			if matches!(instr, ir::Instruction::Constant(_)) {
+				acc += 1;
+			}
+		}
+		proc_const_starts.push(acc);
+	}
 	let state_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(0)));
 	let buffer_alloc_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(BUFFER_BASE_ADDRESS)));
 	let track_command_ptr = module.globals.add_local(ValType::I32, true, false, ConstExpr::Value(Value::I32(NOTE_COMMANDS_ADDRESS)));
@@ -199,6 +258,9 @@ fn compile_to_wasm(program: &ir::Program) -> Result<Vec<u8>> {
 		buffer_alloc_fn,
 		gmdls_sample_fn,
 		function_id_map: HashMap::new(),
+		constant_globals,
+		proc_const_starts,
+		current_const_slot: Cell::new(0),
 	};
 
 	generator.generate()?;
@@ -331,6 +393,10 @@ struct WasmGenerator<'ir> {
 	gmdls_sample_fn: FunctionId,
 
 	function_id_map: HashMap<u16, FunctionId>,
+
+	constant_globals: Vec<GlobalId>,
+	proc_const_starts: Vec<u32>,
+	current_const_slot: Cell<u32>,
 }
 
 impl<'ir> WasmGenerator<'ir> {
@@ -385,6 +451,11 @@ impl<'ir> WasmGenerator<'ir> {
 				_ => {}
 			}
 		}
+
+		// Resume constant slot counting at this procedure's deterministic
+		// starting offset, after callees have run their own emit (each of
+		// which clobbers the slot counter).
+		self.current_const_slot.set(self.proc_const_starts[proc_id as usize]);
 
 		// Create builder
 		let params = procedure.inputs.iter().map(|_| ValType::V128).collect::<Vec<_>>();
@@ -511,8 +582,10 @@ impl<'ir> WasmGenerator<'ir> {
 				Trunc => op!(1, 1, b.unop(UnaryOp::F64x2Trunc)),
 				Sqrt => op!(1, 1, b.unop(UnaryOp::F64x2Sqrt)),
 
-				Constant(value) => op!(0, 1, {
-					b.f32_const(f32::from_bits(value));
+				Constant(_) => op!(0, 1, {
+					let slot = self.current_const_slot.get();
+					self.current_const_slot.set(slot + 1);
+					b.global_get(self.constant_globals[slot as usize]);
 					b.unop(UnaryOp::F64PromoteF32);
 					b.unop(UnaryOp::F64x2Splat);
 				}),

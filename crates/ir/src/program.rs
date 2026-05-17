@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::instructions::Instruction;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Program {
 	// Parameters
 	pub parameters: Vec<Parameter>,
@@ -18,7 +18,7 @@ pub struct Program {
 	pub track_order: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Parameter {
 	pub name: String,
 	pub min: f32,
@@ -26,7 +26,7 @@ pub struct Parameter {
 	pub default: f32,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Procedure {
 	pub name: String,
 	pub kind: ProcedureKind,

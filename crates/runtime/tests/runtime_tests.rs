@@ -1,4 +1,4 @@
-use runtime::{JinglerRuntimeInstance, default_jingler_runtime};
+use runtime::{JinglerRuntimeHandle, default_jingler_runtime};
 use zing::compiler::Compiler;
 
 const SAMPLE_RATE: f32 = 44100.0;
@@ -9,12 +9,13 @@ fn compile(src: &str) -> ir::Program {
 		.unwrap_or_else(|mut e| panic!("Compilation failed:\n{}", e.next().unwrap_or_default()))
 }
 
-fn make_runtime(src: &str) -> Box<dyn JinglerRuntimeInstance> {
+fn make_runtime(src: &str) -> Box<dyn JinglerRuntimeHandle> {
 	let program = compile(src);
-	let rt = default_jingler_runtime().unwrap();
-	let mut instance = rt.load_program(&program).unwrap();
-	instance.initialize(SAMPLE_RATE).unwrap();
-	instance
+	let (rt, mut handle) = default_jingler_runtime().unwrap();
+	rt.submit_program(&program).unwrap();
+	handle.initialize(SAMPLE_RATE).unwrap();
+	handle.poll_pending().unwrap();
+	handle
 }
 
 fn run(src: &str, n: usize) -> Vec<[f64; 2]> {
@@ -1825,14 +1826,20 @@ fn instrument_mixed_static_and_dynamic_inputs() {
 
 #[test]
 fn multiple_instances_from_same_runtime() {
+	// The new API has a single runtime owning a single handle, so this test
+	// verifies that two independent runtime constructions both succeed and
+	// produce identical output on the same program.
 	let program = compile("global module main () -> (out: stereo)  out = 1.0");
-	let rt = default_jingler_runtime().unwrap();
 
-	let mut inst1 = rt.load_program(&program).unwrap();
+	let (rt1, mut inst1) = default_jingler_runtime().unwrap();
+	rt1.submit_program(&program).unwrap();
 	inst1.initialize(SAMPLE_RATE).unwrap();
+	inst1.poll_pending().unwrap();
 
-	let mut inst2 = rt.load_program(&program).unwrap();
+	let (rt2, mut inst2) = default_jingler_runtime().unwrap();
+	rt2.submit_program(&program).unwrap();
 	inst2.initialize(SAMPLE_RATE).unwrap();
+	inst2.poll_pending().unwrap();
 
 	let s1 = inst1.next_sample().unwrap();
 	let s2 = inst2.next_sample().unwrap();
@@ -1847,13 +1854,16 @@ fn multiple_instances_independent_state() {
 			out = cell(out + 1, 0)
 	"#;
 	let program = compile(src);
-	let rt = default_jingler_runtime().unwrap();
 
-	let mut inst1 = rt.load_program(&program).unwrap();
+	let (rt1, mut inst1) = default_jingler_runtime().unwrap();
+	rt1.submit_program(&program).unwrap();
 	inst1.initialize(SAMPLE_RATE).unwrap();
+	inst1.poll_pending().unwrap();
 
-	let mut inst2 = rt.load_program(&program).unwrap();
+	let (rt2, mut inst2) = default_jingler_runtime().unwrap();
+	rt2.submit_program(&program).unwrap();
 	inst2.initialize(SAMPLE_RATE).unwrap();
+	inst2.poll_pending().unwrap();
 
 	// Advance inst1 by 3 samples
 	inst1.next_sample().unwrap();
@@ -1913,8 +1923,9 @@ fn reinitialize_kills_notes() {
 fn reinitialize_with_different_sample_rate() {
 	let src = "global module main () -> (out: stereo)  out = samplerate()";
 	let program = compile(src);
-	let rt = default_jingler_runtime().unwrap();
-	let mut inst = rt.load_program(&program).unwrap();
+	let (rt, mut inst) = default_jingler_runtime().unwrap();
+	rt.submit_program(&program).unwrap();
+	inst.poll_pending().unwrap();
 
 	inst.initialize(44100.0).unwrap();
 	let s = inst.next_sample().unwrap();
@@ -1923,4 +1934,227 @@ fn reinitialize_with_different_sample_rate() {
 	inst.initialize(48000.0).unwrap();
 	let s = inst.next_sample().unwrap();
 	assert_mono(s, 48000.0);
+}
+
+// ============================================================
+// Live constant updates (submit_program + poll_pending)
+// ============================================================
+
+mod live_update_tests {
+	use super::*;
+	use runtime::SubmitOutcome;
+
+	fn make_pair() -> (
+		std::sync::Arc<dyn runtime::JinglerRuntime>,
+		Box<dyn JinglerRuntimeHandle>,
+	) {
+		default_jingler_runtime().unwrap()
+	}
+
+	#[test]
+	fn first_submit_is_fresh_compile() {
+		let program = compile("global module main () -> (out: stereo)  out = 1.0");
+		let (rt, mut handle) = make_pair();
+		let outcome = rt.submit_program(&program).unwrap();
+		assert_eq!(outcome, SubmitOutcome::FreshCompile);
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+		let s = handle.next_sample().unwrap();
+		assert_mono(s, 1.0);
+	}
+
+	#[test]
+	fn identical_resubmit_is_no_change() {
+		let program = compile("global module main () -> (out: stereo)  out = 1.0");
+		let (rt, _handle) = make_pair();
+		assert_eq!(rt.submit_program(&program).unwrap(), SubmitOutcome::FreshCompile);
+		assert_eq!(rt.submit_program(&program).unwrap(), SubmitOutcome::NoChange);
+	}
+
+	#[test]
+	fn constant_change_preserves_state() {
+		// A cell that accumulates a constant increment each sample.
+		let src_a = r#"
+			global module main () -> (out: stereo)
+				out = cell(out + 1, 0)
+		"#;
+		// Same shape but with a different increment constant. Note that
+		// `out + 1` desugars to a Constant(1.0) instruction; we replace the
+		// literal here by changing the program source. Both programs share
+		// the same number and arrangement of Constants.
+		let src_b = r#"
+			global module main () -> (out: stereo)
+				out = cell(out + 10, 0)
+		"#;
+		let prog_a = compile(src_a);
+		let prog_b = compile(src_b);
+
+		let (rt, mut handle) = make_pair();
+		assert_eq!(rt.submit_program(&prog_a).unwrap(), SubmitOutcome::FreshCompile);
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		// `cell(out + 1, 0)` emits the stored value first then updates.
+		// Sample 1 → 0, sample 2 → 1, sample 3 → 2. Internal cell = 3.
+		assert_mono(handle.next_sample().unwrap(), 0.0);
+		assert_mono(handle.next_sample().unwrap(), 1.0);
+		assert_mono(handle.next_sample().unwrap(), 2.0);
+
+		// Submit the constant-only variant; should be a ConstantUpdate.
+		let outcome = rt.submit_program(&prog_b).unwrap();
+		assert!(matches!(outcome, SubmitOutcome::ConstantUpdate { count: 1 }),
+			"expected ConstantUpdate {{ count: 1 }}, got {:?}", outcome);
+
+		// Drain pending; cell value (3) is preserved. The next sample emits
+		// the preserved 3, then the +10 increment kicks in for sample 5 → 13.
+		handle.poll_pending().unwrap();
+		assert_mono(handle.next_sample().unwrap(), 3.0);
+		assert_mono(handle.next_sample().unwrap(), 13.0);
+	}
+
+	#[test]
+	fn structural_change_recompiles_and_resets_state() {
+		let src_a = r#"
+			global module main () -> (out: stereo)
+				out = cell(out + 1, 0)
+		"#;
+		// Structural change: different output computation.
+		let src_b = r#"
+			global module main () -> (out: stereo)
+				out = cell(out + 1, 0) * 2
+		"#;
+		let prog_a = compile(src_a);
+		let prog_b = compile(src_b);
+
+		let (rt, mut handle) = make_pair();
+		rt.submit_program(&prog_a).unwrap();
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		// Advance the accumulator state.
+		for _ in 0..5 {
+			handle.next_sample().unwrap();
+		}
+
+		// Structural change recompiles.
+		assert_eq!(rt.submit_program(&prog_b).unwrap(), SubmitOutcome::FreshCompile);
+		handle.poll_pending().unwrap();
+
+		// Fresh instance: cell starts at 0. First sample → 0 * 2 = 0,
+		// second sample → 1 * 2 = 2.
+		assert_mono(handle.next_sample().unwrap(), 0.0);
+		assert_mono(handle.next_sample().unwrap(), 2.0);
+	}
+
+	#[test]
+	fn batched_constant_updates_collapse() {
+		let src = |k: f32| format!(
+			"global module main () -> (out: stereo)\n\tout = {}\n",
+			k
+		);
+		let prog_a = compile(&src(1.0));
+		let prog_b = compile(&src(2.0));
+		let prog_c = compile(&src(7.5));
+
+		let (rt, mut handle) = make_pair();
+		rt.submit_program(&prog_a).unwrap();
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		// Submit two constant updates without polling in between.
+		rt.submit_program(&prog_b).unwrap();
+		rt.submit_program(&prog_c).unwrap();
+
+		// One drain collapses both updates → final value wins.
+		handle.poll_pending().unwrap();
+		let s = handle.next_sample().unwrap();
+		assert_mono(s, 7.5);
+
+		let constants = handle.current_constants();
+		assert_eq!(constants.len(), 1);
+		assert_approx(constants[0] as f64, 7.5);
+	}
+
+	#[test]
+	fn structural_clears_queued_constant_updates() {
+		let src_a = "global module main () -> (out: stereo)  out = 1.0";
+		let src_b = "global module main () -> (out: stereo)  out = 2.0"; // constants-only vs A
+		let src_c = "global module main () -> (out: stereo)  out = 1.0 + 1.0"; // structural vs B
+
+		let prog_a = compile(src_a);
+		let prog_b = compile(src_b);
+		let prog_c = compile(src_c);
+
+		let (rt, mut handle) = make_pair();
+		rt.submit_program(&prog_a).unwrap();
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		// Queue a constant update on top of A, then a structural change.
+		assert!(matches!(
+			rt.submit_program(&prog_b).unwrap(),
+			SubmitOutcome::ConstantUpdate { .. }
+		));
+		assert_eq!(rt.submit_program(&prog_c).unwrap(), SubmitOutcome::FreshCompile);
+
+		// Drain: the structural replacement should win; the stale constant
+		// update against A must not bleed through.
+		handle.poll_pending().unwrap();
+		let s = handle.next_sample().unwrap();
+		assert_mono(s, 2.0); // from 1.0 + 1.0 in prog_c
+	}
+
+	#[test]
+	fn constant_update_after_unpicked_structural() {
+		// Submit a structural change, then a constants-only change against
+		// that staged program (before poll_pending). One poll should install
+		// the new instance with the queued updates applied.
+		let src_a = "global module main () -> (out: stereo)  out = 1.0";
+		let src_b = "global module main () -> (out: stereo)  out = 1.0 + 3.0"; // structural vs A
+		let src_c = "global module main () -> (out: stereo)  out = 2.0 + 3.0"; // constants vs B
+
+		let prog_a = compile(src_a);
+		let prog_b = compile(src_b);
+		let prog_c = compile(src_c);
+
+		let (rt, mut handle) = make_pair();
+		rt.submit_program(&prog_a).unwrap();
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		// Structural staged, not yet picked up.
+		assert_eq!(rt.submit_program(&prog_b).unwrap(), SubmitOutcome::FreshCompile);
+		// Constants-only against the staged B.
+		assert!(matches!(
+			rt.submit_program(&prog_c).unwrap(),
+			SubmitOutcome::ConstantUpdate { count: 1 }
+		));
+
+		handle.poll_pending().unwrap();
+		let s = handle.next_sample().unwrap();
+		assert_mono(s, 5.0); // 2.0 + 3.0
+	}
+
+	#[test]
+	fn multiple_const_slots_targets_correct_slot() {
+		// Two constants in different positions; change only the second.
+		let src_a = "global module main () -> (out: stereo)  out = 1.0 + 2.0";
+		let src_b = "global module main () -> (out: stereo)  out = 1.0 + 9.0";
+
+		let prog_a = compile(src_a);
+		let prog_b = compile(src_b);
+
+		let (rt, mut handle) = make_pair();
+		rt.submit_program(&prog_a).unwrap();
+		handle.initialize(SAMPLE_RATE).unwrap();
+		handle.poll_pending().unwrap();
+
+		assert!(matches!(
+			rt.submit_program(&prog_b).unwrap(),
+			SubmitOutcome::ConstantUpdate { count: 1 }
+		));
+		handle.poll_pending().unwrap();
+		let s = handle.next_sample().unwrap();
+		assert_mono(s, 10.0);
+	}
 }
