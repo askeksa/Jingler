@@ -533,9 +533,12 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		out
 	}
 
-	/// Walk all statements whose first-LHS scope matches `scope`
-	/// and accumulate variable-reference counts and loop-nesting info
-	/// for `tracked` names.
+	/// Walk all statements and accumulate variable-reference counts and
+	/// loop-nesting info for `tracked` names, counting only uses evaluated
+	/// in the `scope` phase. Each statement is scanned with its own scope
+	/// as the starting context; `scan_exp` switches context at phase
+	/// boundaries, so e.g. the static init arg of a `cell` inside a
+	/// dynamic statement is counted as a static-phase use.
 	fn count_uses(&self,
 		body: &'ast Vec<Statement>,
 		tracked: &HashSet<String>,
@@ -546,9 +549,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		let mut order = vec![];
 		for Statement::Assign { node, exp } in body {
 			let stmt_scope = node.items.first().and_then(|i| i.item_type.scope);
-			if stmt_scope == scope {
-				self.scan_exp(exp, tracked, scope, &mut counts, &mut in_loop, &mut order, 0);
-			}
+			self.scan_exp(exp, tracked, scope, stmt_scope, &mut counts, &mut in_loop, &mut order, 0);
 		}
 		(counts, in_loop)
 	}
@@ -754,7 +755,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		let mut order: Vec<String> = vec![];
 		for Statement::Assign { node, exp } in body {
 			if node.items.iter().any(|item| item.item_type.scope == Some(Scope::Dynamic)) {
-				self.scan_exp(exp, &tracked, Some(Scope::Dynamic), &mut counts, &mut in_loop, &mut order, 0);
+				self.scan_exp(exp, &tracked, Some(Scope::Dynamic), Some(Scope::Dynamic), &mut counts, &mut in_loop, &mut order, 0);
 			}
 		}
 
@@ -776,20 +777,32 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		hoisted
 	}
 
+	/// Count uses of `tracked` names in `exp` that are evaluated in the
+	/// `phase` phase. `context` is the phase the expression itself is
+	/// evaluated in (its statement's scope at the top level, or `None`
+	/// inside a function, where everything is single-phase); a use is
+	/// counted only when `context == phase`. Recursion switches context
+	/// at phase boundaries: the static args of built-in and module calls,
+	/// `For` counts and `BufferInit` lengths/args are static-phase even
+	/// inside a dynamic statement.
 	fn scan_exp(&self,
 		exp: &'ast Expression,
 		tracked: &HashSet<String>,
 		phase: Option<Scope>,
+		context: Option<Scope>,
 		counts: &mut HashMap<String, usize>,
 		in_loop: &mut HashSet<String>,
 		order: &mut Vec<String>,
 		loop_depth: usize,
 	) {
+		// Inside a function (`context == None`), sub-expressions stay
+		// single-phase; otherwise they get the given phase.
+		let sub_context = |scope| context.and(scope);
 		use Expression::*;
 		match exp {
 			Number { .. } | Bool { .. } | TupleIndex { .. } => {},
 			Variable { name } => {
-				if tracked.contains(&name.text) {
+				if context == phase && tracked.contains(&name.text) {
 					let count = counts.entry(name.text.clone()).or_insert(0);
 					if *count == 0 {
 						order.push(name.text.clone());
@@ -800,15 +813,15 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					}
 				}
 			},
-			UnOp { exp, .. } => self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth),
+			UnOp { exp, .. } => self.scan_exp(exp, tracked, phase, context, counts, in_loop, order, loop_depth),
 			BinOp { left, right, .. } => {
-				self.scan_exp(left, tracked, phase, counts, in_loop, order, loop_depth);
-				self.scan_exp(right, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(left, tracked, phase, context, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, tracked, phase, context, counts, in_loop, order, loop_depth);
 			},
 			Conditional { condition, then, otherwise } => {
-				self.scan_exp(condition, tracked, phase, counts, in_loop, order, loop_depth);
-				self.scan_exp(then, tracked, phase, counts, in_loop, order, loop_depth);
-				self.scan_exp(otherwise, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(condition, tracked, phase, context, counts, in_loop, order, loop_depth);
+				self.scan_exp(then, tracked, phase, context, counts, in_loop, order, loop_depth);
+				self.scan_exp(otherwise, tracked, phase, context, counts, in_loop, order, loop_depth);
 			},
 			Call { name, args, .. } => {
 				match self.names.lookup_member(&name.text) {
@@ -820,42 +833,32 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								// `cell`/`delay` update arg is dynamic; their initial value
 								// arg is static. `dyndelay` has dynamic update + dynamic
 								// offset, with a static initial value.
-								let (dyn_args, static_args): (&[usize], &[usize]) = match name.text.as_str() {
-									"cell"     => (&[0],    &[1]),
-									"delay"    => (&[0],    &[1]),
-									"dyndelay" => (&[0, 1], &[2]),
+								let static_args: &[usize] = match name.text.as_str() {
+									"cell"     => &[1],
+									"delay"    => &[1],
+									"dyndelay" => &[2],
 									_ => panic!("Unknown built-in module"),
 								};
-								let visit: &[usize] = match phase {
-									Some(Scope::Dynamic) => dyn_args,
-									Some(Scope::Static)  => static_args,
-									None => &[0, 1, 2],
-								};
-								for &i in visit {
-									if i < args.len() {
-										self.scan_exp(&args[i], tracked, phase, counts, in_loop, order, loop_depth);
-									}
+								for (i, arg) in args.iter().enumerate() {
+									let arg_scope = if static_args.contains(&i) { Scope::Static } else { Scope::Dynamic };
+									self.scan_exp(arg, tracked, phase, sub_context(Some(arg_scope)), counts, in_loop, order, loop_depth);
 								}
 							},
 							(Module, Precompiled { member }) => {
 								let inputs = member.inputs();
 								for (arg, input_type) in args.iter().zip(inputs) {
-									if phase.map_or(true, |s| input_type.scope == Some(s)) {
-										self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
-									}
+									self.scan_exp(arg, tracked, phase, sub_context(input_type.scope), counts, in_loop, order, loop_depth);
 								}
 							},
 							(Module, Declaration { member_index }) => {
 								let inputs = &self.signatures[*member_index].inputs;
 								for (arg, input_type) in args.iter().zip(inputs) {
-									if phase.map_or(true, |s| input_type.scope == Some(s)) {
-										self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
-									}
+									self.scan_exp(arg, tracked, phase, sub_context(input_type.scope), counts, in_loop, order, loop_depth);
 								}
 							},
 							(Function, _) | (Instrument, _) => {
 								for arg in args {
-									self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
+									self.scan_exp(arg, tracked, phase, context, counts, in_loop, order, loop_depth);
 								}
 							},
 						}
@@ -865,45 +868,41 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			},
 			Tuple { elements, .. } => {
 				for el in elements {
-					self.scan_exp(el, tracked, phase, counts, in_loop, order, loop_depth);
+					self.scan_exp(el, tracked, phase, context, counts, in_loop, order, loop_depth);
 				}
 			},
 			Merge { left, right, .. } => {
-				self.scan_exp(left, tracked, phase, counts, in_loop, order, loop_depth);
-				self.scan_exp(right, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(left, tracked, phase, context, counts, in_loop, order, loop_depth);
+				self.scan_exp(right, tracked, phase, context, counts, in_loop, order, loop_depth);
 			},
 			BufferIndex { exp, index, .. } => {
-				self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth);
-				self.scan_exp(index, tracked, phase, counts, in_loop, order, loop_depth);
+				self.scan_exp(exp, tracked, phase, context, counts, in_loop, order, loop_depth);
+				self.scan_exp(index, tracked, phase, context, counts, in_loop, order, loop_depth);
 			},
 			For { count, body, .. } => {
 				// The loop counter is evaluated once before the loop, in the static
 				// phase (it lives in the surrounding `ModuleCall::For`). The body
 				// is evaluated N times in the current phase.
-				if phase != Some(Scope::Dynamic) {
-					self.scan_exp(count, tracked, phase, counts, in_loop, order, loop_depth);
-				}
-				self.scan_exp(body, tracked, phase, counts, in_loop, order, loop_depth + 1);
+				self.scan_exp(count, tracked, phase, sub_context(Some(Scope::Static)), counts, in_loop, order, loop_depth);
+				self.scan_exp(body, tracked, phase, context, counts, in_loop, order, loop_depth + 1);
 			},
 			BufferInit { length, body, .. } => {
 				// In the dynamic phase, BufferInit just CellReads its precomputed
-				// value. In the static phase, `length` and the inner-call args are
-				// evaluated.
-				if phase != Some(Scope::Dynamic) {
-					self.scan_exp(length, tracked, phase, counts, in_loop, order, loop_depth);
-					if let Expression::Call { args, .. } = &**body {
-						for arg in args {
-							self.scan_exp(arg, tracked, phase, counts, in_loop, order, loop_depth);
-						}
+				// value. `length` and the inner-call args are evaluated in the
+				// static phase.
+				self.scan_exp(length, tracked, phase, sub_context(Some(Scope::Static)), counts, in_loop, order, loop_depth);
+				if let Expression::Call { args, .. } = &**body {
+					for arg in args {
+						self.scan_exp(arg, tracked, phase, sub_context(Some(Scope::Static)), counts, in_loop, order, loop_depth);
 					}
 				}
 			},
 			BufferLiteral { elements, .. } => {
 				for el in elements {
-					self.scan_exp(el, tracked, phase, counts, in_loop, order, loop_depth);
+					self.scan_exp(el, tracked, phase, context, counts, in_loop, order, loop_depth);
 				}
 			},
-			Expand { exp, .. } => self.scan_exp(exp, tracked, phase, counts, in_loop, order, loop_depth),
+			Expand { exp, .. } => self.scan_exp(exp, tracked, phase, context, counts, in_loop, order, loop_depth),
 		}
 	}
 

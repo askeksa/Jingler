@@ -403,6 +403,22 @@ fn cell_static_init() {
 }
 
 #[test]
+fn cell_static_init_var_also_used_statically() {
+	// `a` is used both by another static assignment and as a cell init.
+	let src = r#"
+		global module main () -> (out: stereo)
+			a: static = 1
+			b: static = a
+			out = cell(out, a)
+	"#;
+	let samples = run(src, 3);
+	// cell init is 1 and the update is the cell itself, so out stays 1.
+	assert_mono(samples[0], 1.0);
+	assert_mono(samples[1], 1.0);
+	assert_mono(samples[2], 1.0);
+}
+
+#[test]
 fn cell_multiple() {
 	let src = r#"
 		global module main () -> (out: stereo)
