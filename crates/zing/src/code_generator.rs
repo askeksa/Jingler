@@ -167,13 +167,13 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 
 #[derive(Clone, Debug)]
 enum TrackOrderNode {
-	Instrument { channel: MidiChannelArg },
-	Module { member_index: usize, args: Vec<MidiChannelArg> },
+	Instrument { midi: MidiArg },
+	Module { member_index: usize, args: Vec<MidiArg> },
 }
 
 #[derive(Clone, Debug)]
-enum MidiChannelArg {
-	Value { channel: usize },
+enum MidiArg {
+	Value { channel: u8, start: u8, end: u8, transpose_to: u8 },
 	Input { index: usize },
 }
 
@@ -284,27 +284,32 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		track_order
 	}
 
-	fn convert_midi_channel(&self, current_member_index: usize, channel: &MidiChannel) -> MidiChannelArg {
-		match channel {
-			&MidiChannel::Value { channel } => MidiChannelArg::Value { channel },
-			MidiChannel::Named { name } => MidiChannelArg::Input {
+	fn convert_midi_mapping(&self, current_member_index: usize, midi: &MidiMapping) -> MidiArg {
+		match midi {
+			&MidiMapping::Value { channel, start, end, transpose_to } => MidiArg::Value {
+				channel,
+				start,
+				end,
+				transpose_to,
+			},
+			MidiMapping::Named { name } => MidiArg::Input {
 				index: self.names.lookup_midi_input(current_member_index, &name.text).unwrap()
 			},
 		}
 	}
 
-	fn resolve_midi_channel_arg(&self, channel: &MidiChannelArg, inputs: &Vec<MidiChannelArg>) -> usize {
-		match channel {
-			MidiChannelArg::Value { channel } => channel - 1,
-			MidiChannelArg::Input { index } => self.resolve_midi_channel_arg(&inputs[*index], inputs),
+	fn resolve_midi_arg(&self, midi: &MidiArg, inputs: &Vec<MidiArg>) -> usize {
+		match midi {
+			MidiArg::Value { channel, .. } => *channel as usize - 1,
+			MidiArg::Input { index } => self.resolve_midi_arg(&inputs[*index], inputs),
 		}
 	}
 
-	fn compute_track_order_inner(&mut self, member_index: usize, inputs: &Vec<MidiChannelArg>, track_order: &mut Vec<usize>) {
+	fn compute_track_order_inner(&mut self, member_index: usize, inputs: &Vec<MidiArg>, track_order: &mut Vec<usize>) {
 		for node in self.track_order[member_index].clone() {
 			match node {
-				TrackOrderNode::Instrument { channel } => {
-					track_order.push(self.resolve_midi_channel_arg(&channel, inputs));
+				TrackOrderNode::Instrument { midi } => {
+					track_order.push(self.resolve_midi_arg(&midi, inputs));
 				},
 				TrackOrderNode::Module { member_index, args  } => {
 					self.compute_track_order_inner(member_index, &args, track_order);
@@ -1078,7 +1083,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				self.generate(otherwise);
 				self.emit(code![StackLoad(2), AndNot, Or, PopNext]);
 			},
-			Call { channels, name, args, .. } => {
+			Call { midi, name, args, .. } => {
 				match self.names.lookup_member(&name.text) {
 					Some(MemberRef { kind, definition, .. }) => {
 						use MemberKind::*;
@@ -1147,8 +1152,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									args,
 								});
 								if context == Context::Global {
-									let resolved_args: Vec<MidiChannelArg> = channels.iter()
-										.map(|channel| self.convert_midi_channel(current_member_index, channel))
+									let resolved_args: Vec<MidiArg> = midi.iter()
+										.map(|m| self.convert_midi_mapping(current_member_index, m))
 										.collect();
 									let node = TrackOrderNode::Module { member_index: *member_index, args: resolved_args };
 									self.track_order[current_member_index].push(node);
@@ -1185,8 +1190,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								let FullSignature { inputs, outputs, .. } = &self.signatures[*member_index];
 								let width = outputs.first().unwrap().width.unwrap();
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
-								let channel = self.convert_midi_channel(current_member_index, &channels[0]);
-								let node = TrackOrderNode::Instrument { channel };
+								let midi = self.convert_midi_mapping(current_member_index, &midi[0]);
+								let node = TrackOrderNode::Instrument { midi };
 								self.track_order[current_member_index].push(node);
 								for arg in args {
 									self.generate(arg);

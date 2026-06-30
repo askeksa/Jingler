@@ -212,9 +212,9 @@ impl Location for Include {
 }
 
 impl Member {
-	pub fn midi_channels_location(&self) -> impl Location {
-		match self.channels.first() {
-			Some(channel) => (channel.pos_before(), self.name.pos_before()),
+	pub fn midi_mappings_location(&self) -> impl Location {
+		match self.midi.first() {
+			Some(midi) => (midi.pos_before(), self.name.pos_before()),
 			None => (self.name.pos_before(), self.name.pos_after()),
 		}
 	}
@@ -355,9 +355,9 @@ impl Compiler {
 			match (member.context, member.kind, member.name.text.as_str()) {
 				(Context::Global, MemberKind::Module, "main") => {
 					found_main = true;
-					if !member.channels.is_empty() {
-						self.report_error(&member.midi_channels_location(),
-							"'main' can't have midi channel inputs.");
+					if !member.midi.is_empty() {
+						self.report_error(&member.midi_mappings_location(),
+							"'main' can't have MIDI inputs.");
 					}
 				},
 				(_, _, "main") => {
@@ -374,9 +374,9 @@ impl Compiler {
 				},
 				(Context::Global, MemberKind::Module, _) => {},
 				_ => {
-					if !member.channels.is_empty() {
-						self.report_error(&member.midi_channels_location(),
-							"Only global modules can have midi channel inputs.");
+					if !member.midi.is_empty() {
+						self.report_error(&member.midi_mappings_location(),
+							"Only global modules can have MIDI inputs.");
 					}
 				},
 			}

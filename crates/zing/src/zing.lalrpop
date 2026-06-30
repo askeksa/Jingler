@@ -30,7 +30,7 @@ ParameterDefault: Option<f64> = {
 };
 
 Member: Member = {
-	<context:Context> <kind:MemberKind> <channels:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
+	<context:Context> <kind:MemberKind> <midi:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
 		=> Member {<>},
 };
 
@@ -148,7 +148,7 @@ UnaryExpression: Expression = {
 	<op:UnOp<UnaryOp>> <exp:Box<PrimaryExpression>> => Expression::UnOp {<>},
 	<exp:Box<UnaryExpression>> "." <name:Id> <args:ParenthesizedExpressions?> <after:@R> => Expression::Call {
 		before: exp.pos_before(),
-		channels: vec![],
+		midi: vec![],
 		name,
 		args: [*exp].into_iter().chain(args.into_iter().flatten()).collect(),
 		after,
@@ -166,7 +166,7 @@ PrimaryExpression: Expression = {
 	<before:@L> <value:Num> <after:@R> => Expression::Number {<>},
 	<before:@L> <value:Bool> => Expression::Bool {<>},
 	<name:Id> => Expression::Variable {<>},
-	<before:@L> <channels:MidiArg*> <name:Id> <args:ParenthesizedExpressions> <after:@R> => Expression::Call {<>},
+	<before:@L> <midi:MidiArg*> <name:Id> <args:ParenthesizedExpressions> <after:@R> => Expression::Call {<>},
 	<before:@L> <elements:ParenthesizedExpressions> <after:@R> => Expression::Tuple {<>},
 	<before:@L> "[" <left:Box<Expression>> "," <right:Box<Expression>> "]" <after:@R> => Expression::Merge {<>},
 	<before:@L> "{" <elements:Comma<Expression>> "}" <after:@R> => Expression::BufferLiteral {<>},
@@ -177,9 +177,47 @@ ParenthesizedExpressions: Vec<Expression> = "(" <elements:Comma<Expression>> ")"
 
 MidiParam: Id = <name:Id> "::" => name;
 
-MidiArg: MidiChannel = {
-	<value:Uint> "::" => MidiChannel::Value { channel: value as usize },
-	<name:Id> "::" => MidiChannel::Named { name },
+MidiArg: MidiMapping = {
+	<value:Uint> "::" => MidiMapping::Value {
+		channel: value as u8,
+		start: 0,
+		end: 127,
+		transpose_to: 0,
+	},
+	<value:Uint> "{" <range:MidiNoteRangeTranspose> "}" "::" => MidiMapping::Value {
+		channel: value as u8,
+		start: range.0,
+		end: range.1,
+		transpose_to: range.2,
+	},
+	<name:Id> "::" => MidiMapping::Named { name },
+};
+
+MidiNoteRangeTranspose: (u8, u8, u8) = {
+	<range:MidiNoteRange> => (range.0, range.1, range.0),
+	<range:MidiNoteRange> "/" <transpose:MidiNote> => (range.0, range.1, transpose),
+};
+
+MidiNoteRange: (u8, u8) = {
+	<start:MidiNote> => (start, start),
+	".." <end:MidiNote> => (0, end),
+	<start:MidiNote> ".." => (start, 127),
+	<start:MidiNote> ".." <end:MidiNote> => (start, end),
+};
+
+MidiNote: u8 = {
+	<pos:@L> <note:r"[A-G][-#][0-9]"> =>? {
+		let notebase = match note.as_bytes()[0] {
+			b'C' => 0, b'D' => 2, b'E' => 4, b'F' => 5, b'G' => 7, b'A' => 9, b'B' => 11,
+			_ => unreachable!(),
+		};
+		let sharp = if note.as_bytes()[1] == b'#' { 1 } else { 0 };
+		let octave = note.as_bytes()[2] - b'0';
+		match (notebase, sharp) {
+			(4, 1) | (11, 1) => Err(ParseError::InvalidToken { location: pos }),
+			_ => Ok(notebase + sharp + octave * 12),
+		}
+	}
 };
 
 SignedNum: f64 = {

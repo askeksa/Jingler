@@ -221,7 +221,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			let signature = FullSignature {
 				context: member.context,
 				kind: member.kind,
-				midi_input_count: member.channels.len(),
+				midi_input_count: member.midi.len(),
 				inputs: input_types,
 				outputs: output_types,
 			};
@@ -399,7 +399,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 			BinOp { left, op, right } => self.infer_binop(left, op, right, loc),
 			Conditional { condition, then, otherwise }
 				=> self.infer_conditional(condition, then, otherwise, loc),
-			Call { channels, name, args, .. } => self.infer_call(channels, name, args, loc),
+			Call { midi, name, args, .. } => self.infer_call(midi, name, args, loc),
 			Tuple { elements, .. } => self.infer_tuple(elements, loc),
 			Merge { left, right, .. } => self.infer_merge(left, right, loc),
 			TupleIndex { exp, index, .. } => self.infer_tuple_index(exp, *index, loc),
@@ -518,17 +518,17 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 	}
 
 	fn infer_call(&mut self,
-			channels: &Vec<MidiChannel>, name: &Id, args: &mut Vec<Expression>,
+			midi: &Vec<MidiMapping>, name: &Id, args: &mut Vec<Expression>,
 			loc: &dyn Location) -> (Vec<TypeResult>, Option<Width>) {
 		match self.names.lookup_member(&name.text) {
 			Some(MemberRef { context, kind, definition }) => {
 				let FullSignature {
 					context: current_context, kind: current_kind, ..
 				} = self.signatures[self.current_member_index];
-				let channels_loc = &(loc.pos_before(), name.before);
+				let midi_loc = &(loc.pos_before(), name.before);
 				use Context::*;
 				use MemberKind::*;
-				match (channels.len(), context, kind, current_context, current_kind) {
+				match (midi.len(), context, kind, current_context, current_kind) {
 					(_, _, Module, _, Function) => {
 						self.compiler.report_error(name,
 							"Modules can't be called from functions.");
@@ -539,8 +539,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 							"Global modules can only be called from other global modules.");
 					},
 					(1.., _, Module, _, _) => {
-						self.compiler.report_error(channels_loc,
-							"Only global modules can be prefixed with midi channels.");
+						self.compiler.report_error(midi_loc,
+							"Only global modules can be prefixed with MIDI inputs.");
 					},
 					(_, Note, Module, Note, _) => {},
 					(_, Note, Module, _, _) => {
@@ -549,8 +549,8 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					},
 					(_, _, Module, _, _) => {},
 					(1.., _, Function, _, _) => {
-						self.compiler.report_error(channels_loc,
-							"Functions can't be prefixed with midi channels.");
+						self.compiler.report_error(midi_loc,
+							"Functions can't be prefixed with MIDI inputs.");
 					},
 					(_, Global, Function, Global, _) => {},
 					(_, Global, Function, _, _) => {
@@ -565,12 +565,12 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					(_, _, Function, _, _) => {},
 					(1, _, Instrument, Global, Module) => {},
 					(0, _, Instrument, _, _) => {
-						self.compiler.report_error(channels_loc,
-							"Instruments must be prefixed with a midi channel and '::'.");
+						self.compiler.report_error(midi_loc,
+							"Instruments must be prefixed with a MIDI input and '::'.");
 					},
 					(2.., _, Instrument, _, _) => {
-						self.compiler.report_error(channels_loc,
-							"Instruments only take a single midi channel input.");
+						self.compiler.report_error(midi_loc,
+							"Instruments only take a single MIDI input.");
 					},
 					(_, _, Instrument, _, _) => {
 						self.compiler.report_error(name,
@@ -590,29 +590,29 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 						let FullSignature {
 							midi_input_count, inputs, outputs, ..
 						} = &self.signatures[*member_index].clone();
-						if *kind == Instrument || channels.len() == *midi_input_count {
-							for channel in channels {
-								match channel {
-									MidiChannel::Value { channel } => {
+						if *kind == Instrument || midi.len() == *midi_input_count {
+							for midi_mapping in midi {
+								match midi_mapping {
+									MidiMapping::Value { channel, .. } => {
 										if *channel < 1 || *channel > 16 {
-											self.compiler.report_error(channels_loc,
-												"Midi channel must be between 1 and 16.");
+											self.compiler.report_error(midi_loc,
+												"MIDI channel must be between 1 and 16.");
 										}
 									},
-									MidiChannel::Named { name } => {
+									MidiMapping::Named { name } => {
 										if let None = self.names.lookup_midi_input(self.current_member_index, &name.text) {
 											self.compiler.report_error(name,
-												format!("Midi channel input not found: '{}'.", name));
+												format!("MIDI input not found: '{}'.", name));
 											self.compiler.report_context(&self.current_member_name_loc,
-												"Declare midi channel inputs in front of the module name, separated by '::'.");
+												"Declare MIDI inputs in front of the module name, separated by '::'.");
 										}
 									}
 								}
 							}
 						} else {
 							self.compiler.report_error(name,
-								format!("Incorrect number of midi channels: {} given, {} expected",
-									channels.len(), midi_input_count));
+								format!("Incorrect number of MIDI inputs: {} given, {} expected",
+									midi.len(), midi_input_count));
 						}
 						let sig = &Signature { inputs, outputs };
 						self.check_call_signature(sig, args, loc)
@@ -620,7 +620,7 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				}
 			},
 			None => {
-				if channels.is_empty() {
+				if midi.is_empty() {
 					self.compiler.report_error(name, format!("Function or module not found: '{}'.", name));
 				} else {
 					self.compiler.report_error(name, format!("Instrument or global module not found: '{}'.", name));

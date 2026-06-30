@@ -12,7 +12,7 @@ use crate::compiler::{Compiler, CompileError, Location, PosRange};
 pub struct Names {
 	parameters: HashMap<String, VariableRef>,
 	members: HashMap<String, MemberRef>,
-	channels: Vec<HashMap<String, (usize, PosRange)>>,
+	midi: Vec<HashMap<String, (usize, PosRange)>>,
 	variables: Vec<HashMap<String, VariableRef>>,
 	combinators: HashMap<String, Combinator>,
 }
@@ -65,7 +65,7 @@ impl Names {
 		let mut names = Names {
 			parameters: HashMap::new(),
 			members: HashMap::new(),
-			channels: vec![HashMap::new(); program.members.len()],
+			midi: vec![HashMap::new(); program.members.len()],
 			variables: vec![HashMap::new(); program.members.len()],
 			combinators: HashMap::new(),
 		};
@@ -117,9 +117,9 @@ impl Names {
 			};
 			names.insert_member(program, compiler, &member.name, member_ref);
 
-			// Insert midi channel inputs
-			for (index, name) in member.channels.iter().enumerate() {
-				names.insert_channel(compiler, member_index, name, index);
+			// Insert midi inputs
+			for (index, name) in member.midi.iter().enumerate() {
+				names.insert_midi(compiler, member_index, name, index);
 			}
 
 			// Run through all patterns in the member; first the inputs,
@@ -165,12 +165,12 @@ impl Names {
 		}).or_insert(member_ref);
 	}
 
-	fn insert_channel(&mut self,
+	fn insert_midi(&mut self,
 			compiler: &mut Compiler,
 			member_index: usize, name: &Id, index: usize) {
 		if name.text == "_" { return; }
-		self.channels[member_index].entry(name.text.clone()).and_modify(|_| {
-			compiler.report_error(name, format!("Duplicate midi channel input '{}'.", name));
+		self.midi[member_index].entry(name.text.clone()).and_modify(|_| {
+			compiler.report_error(name, format!("Duplicate MIDI input '{}'.", name));
 		}).or_insert((index, PosRange::from(name)));
 	}
 
@@ -210,9 +210,9 @@ impl Names {
 		}
 	}
 
-	/// Look up a MIDI channel input by name inside a specific member.
+	/// Look up a MIDI input by name inside a specific member.
 	pub fn lookup_midi_input(&self, member_index: usize, name: &String) -> Option<usize> {
-		self.channels[member_index].get(name).map(|(index, _)| *index)
+		self.midi[member_index].get(name).map(|(index, _)| *index)
 	}
 
 	/// Look up a variable by name inside a specific member.

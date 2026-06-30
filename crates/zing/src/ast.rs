@@ -27,7 +27,7 @@ pub struct Parameter {
 pub struct Member {
 	pub context: Context,
 	pub kind: MemberKind,
-	pub channels: Vec<Id>,
+	pub midi: Vec<Id>,
 	pub name: Id,
 	pub inputs: Pattern,
 	pub outputs: Pattern,
@@ -133,7 +133,7 @@ pub enum Expression {
 	},
 	Call {
 		before: Pos,
-		channels: Vec<MidiChannel>,
+		midi: Vec<MidiMapping>,
 		name: Id,
 		args: Vec<Expression>,
 		after: Pos
@@ -182,8 +182,13 @@ pub enum BinOpKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum MidiChannel {
-	Value { channel: usize },
+pub enum MidiMapping {
+	Value {
+		channel: u8,
+		start: u8,
+		end: u8,
+		transpose_to: u8,
+	},
 	Named { name: Id },
 }
 

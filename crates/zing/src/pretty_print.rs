@@ -31,8 +31,8 @@ impl Display for Member {
 			write!(f, "{} ", self.context)?;
 		}
 		write!(f, "{} ", self.kind)?;
-		for channel in &self.channels {
-			write!(f, "{}::", channel)?;
+		for midi in &self.midi {
+			write!(f, "{}::", midi)?;
 		}
 		write!(f, "{}", self.name)?;
 		fmt_parenthesized_list(f, &self.inputs.items)?;
@@ -266,9 +266,9 @@ impl Expression {
 				write!(f, " : ")?;
 				otherwise.fmt_with_precedence(f, Precedence::Expression)?;
 			},
-			Call { channels, name, args, .. } => {
-				for channel in channels {
-					write!(f, "{}::", channel)?;
+			Call { midi, name, args, .. } => {
+				for midi in midi {
+					write!(f, "{}::", midi)?;
 				}
 				write!(f, "{}", name)?;
 				fmt_parenthesized_list(f, args)?;
@@ -341,11 +341,39 @@ impl Expression {
 	}
 }
 
-impl Display for MidiChannel {
+impl Display for MidiMapping {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		const NOTE_NAMES: [&str; 12] = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"];
+		let write_note = |f: &mut Formatter, n: u8| {
+			let note = n % 12;
+			let octave = n / 12;
+			write!(f, "{}{}", NOTE_NAMES[note as usize], octave)
+		};
 		match self {
-			MidiChannel::Value { channel } => write!(f, "{}", channel),
-			MidiChannel::Named { name } => write!(f, "{}", name),
+			MidiMapping::Value { channel, start, end, transpose_to } => {
+				write!(f, "{}", channel)?;
+				if *start != 0 || *end != 127 {
+					write!(f, "{{")?;
+					if *start == *end {
+						write_note(f, *start)?;
+					} else {
+						if *start != 0 {
+							write_note(f, *start)?;
+						}
+						write!(f, "..")?;
+						if *end != 127 {
+							write_note(f, *end)?;
+						}
+					}
+					if *transpose_to != *start {
+						write!(f, " / ")?;
+						write_note(f, *transpose_to)?;
+					}
+					write!(f, "}}")?;
+				}
+				Ok(())
+			},
+			MidiMapping::Named { name } => write!(f, "{}", name),
 		}
 	}
 }
