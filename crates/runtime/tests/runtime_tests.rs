@@ -2174,3 +2174,157 @@ mod live_update_tests {
 		assert_mono(s, 10.0);
 	}
 }
+
+// ============================================================
+// Extended MIDI mappings (note range + transposition)
+// ============================================================
+
+#[test]
+fn midi_mapping_triggered_key_unit() {
+	use ir::MidiMapping;
+
+	// Sub-range on channel 0, transposed so start (48) maps to 36.
+	let m = MidiMapping { channel: 0, start: 48, end: 60, transpose_to: 36 };
+	assert_eq!(m.triggered_key(0, 48), Some(36)); // range start → transpose target
+	assert_eq!(m.triggered_key(0, 60), Some(48)); // range end (inclusive)
+	assert_eq!(m.triggered_key(0, 54), Some(42)); // middle of range
+	assert_eq!(m.triggered_key(0, 47), None); // just below range
+	assert_eq!(m.triggered_key(0, 61), None); // just above range
+	assert_eq!(m.triggered_key(1, 48), None); // wrong channel
+
+	// Full-range, no transposition (a basic mapping) is a passthrough.
+	let basic = MidiMapping { channel: 3, start: 0, end: 127, transpose_to: 0 };
+	assert_eq!(basic.triggered_key(3, 0), Some(0));
+	assert_eq!(basic.triggered_key(3, 64), Some(64));
+	assert_eq!(basic.triggered_key(3, 127), Some(127));
+	assert_eq!(basic.triggered_key(2, 64), None); // wrong channel
+}
+
+#[test]
+fn midi_mapping_note_range_filter() {
+	// Only notes C-4..C-5 (48..=60) on channel 1 (IR channel 0) trigger the
+	// instrument; the instrument reports the delivered key.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = 1{C-4..A#4}::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	// Below the range: not triggered.
+	rt.note_on(0, 40, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+
+	// In range: triggered, key passed through (no transposition).
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 48.0);
+
+	// Above the range: not triggered, so the sum is unchanged (still just 48).
+	rt.note_on(0, 70, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 48.0);
+}
+
+#[test]
+fn midi_mapping_transposition() {
+	// Range C-4..C-5 transposed so C-4 (48) plays as C-3 (36).
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = 1{C-4..C-5 / C-3}::tone()
+	"#;
+
+	// Range start maps to the transpose target.
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 36.0); // 48 - 48 + 36
+
+	// Range end transposed by the same offset (-12).
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 48.0); // 60 - 48 + 36
+
+	// Out of range: not triggered.
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 47, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn midi_mapping_channel_discrimination() {
+	// Mapping on Zing channel 2 (IR channel 1): only note_on on channel 1 fires.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = 2{C#4..C-5}::tone()
+	"#;
+
+	// Wrong channel: not triggered.
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 50, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+
+	// Correct channel: triggered.
+	let mut rt = make_runtime(src);
+	rt.note_on(1, 50, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 50.0);
+}
+
+#[test]
+fn midi_mapping_note_off_transposed() {
+	// note_off must transpose too: the instrument tracks its active note by the
+	// transposed key it was started with, so an un-transposed off would miss it.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? key() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1{C-4..C-5 / C-3}::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 48, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 36.0); // transposed, gate on
+
+	rt.note_off(0, 48).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0); // off resolved the transposed key → gate off
+}
+
+#[test]
+fn midi_mapping_basic_passthrough() {
+	// A basic mapping (no range/transpose) still passes the key through and
+	// only fires on its own channel — guards the backward-compatible path.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = key()
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 100, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 100.0); // key unchanged
+
+	// Different channel does not trigger this mapping.
+	let mut rt = make_runtime(src);
+	rt.note_on(1, 100, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}

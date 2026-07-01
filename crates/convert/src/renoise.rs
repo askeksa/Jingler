@@ -13,13 +13,16 @@ use crate::xml::{XmlDocument, XmlNode};
 fn test_convert_renoise() {
 	const SAMPLE_RATE: f32 = 44100.0;
 	const PARAMETER_QUANTIZATION_LEVELS: u16 = 16;
-	const TRACK_ORDER: [usize; 10] = [0, 1, 8, 3, 9, 4, 2, 6, 7, 5];
 	const NUM_PARAMETERS: usize = 4;
+
+	// Basic mappings (full note range, no transposition) for each track's channel.
+	let track_order: [ir::MidiMapping; 10] = [0u8, 1, 8, 3, 9, 4, 2, 6, 7, 5]
+		.map(|channel| ir::MidiMapping { channel, start: 0, end: 127, transpose_to: 0 });
 
 	let music = convert_renoise_file("../../test/test.xrns").unwrap();
 
 	let mut out = vec![];
-	music.export(&mut out, SAMPLE_RATE, &TRACK_ORDER, NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
+	music.export(&mut out, SAMPLE_RATE, &track_order, NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
 
 	let expected = std::fs::read_to_string("../../test/expected.asm").unwrap();
 	let actual = String::from_utf8(out).unwrap();

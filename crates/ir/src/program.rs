@@ -14,8 +14,35 @@ pub struct Program {
 	pub main_static_proc_id: usize,
 	// Dynamic procedure ID of the main module
 	pub main_dynamic_proc_id: usize,
-	// MIDI channel (zero based) for each track in execution order
-	pub track_order: Vec<usize>,
+	// MIDI mapping (zero based channel, note range, transposition) for each
+	// track in execution order
+	pub track_order: Vec<MidiMapping>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MidiMapping {
+	// Zero based MIDI channel (0..=15)
+	pub channel: u8,
+	// Inclusive note range start (0..=127)
+	pub start: u8,
+	// Inclusive note range end (0..=127)
+	pub end: u8,
+	// Key that the range start is mapped to (0..=127)
+	pub transpose_to: u8,
+}
+
+impl MidiMapping {
+	/// If a `key` arriving on MIDI `channel` triggers this track, return the
+	/// (possibly transposed) key the instrument should receive; otherwise `None`.
+	pub fn triggered_key(&self, channel: u8, key: u8) -> Option<u8> {
+		if channel == self.channel && key >= self.start && key <= self.end {
+			// key >= start, and start/end/transpose_to are all <= 127, so the
+			// result lies in 0..=254 — fits in u8 with no under/overflow.
+			Some(key - self.start + self.transpose_to)
+		} else {
+			None
+		}
+	}
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

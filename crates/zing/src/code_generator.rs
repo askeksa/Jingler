@@ -18,7 +18,7 @@ pub fn generate_code<'ast, 'comp, 'names>(
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledMember>>,
 		compiler: &mut Compiler)
--> Result<(Vec<ir::Procedure>, usize, usize, Vec<usize>), CompileError> {
+-> Result<(Vec<ir::Procedure>, usize, usize, Vec<ir::MidiMapping>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
 	let main_index = match names.lookup_member(&"main".to_string()).unwrap().definition {
 		MemberDefinition::Declaration { member_index } => member_index,
@@ -278,7 +278,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
-	fn compute_track_order(&mut self, main_index: usize) -> Vec<usize> {
+	fn compute_track_order(&mut self, main_index: usize) -> Vec<ir::MidiMapping> {
 		let mut track_order = vec![];
 		self.compute_track_order_inner(main_index, &vec![], &mut track_order);
 		track_order
@@ -298,14 +298,19 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 	}
 
-	fn resolve_midi_arg(&self, midi: &MidiArg, inputs: &Vec<MidiArg>) -> usize {
+	fn resolve_midi_arg(&self, midi: &MidiArg, inputs: &Vec<MidiArg>) -> ir::MidiMapping {
 		match midi {
-			MidiArg::Value { channel, .. } => *channel as usize - 1,
+			&MidiArg::Value { channel, start, end, transpose_to } => ir::MidiMapping {
+				channel: channel - 1,
+				start,
+				end,
+				transpose_to,
+			},
 			MidiArg::Input { index } => self.resolve_midi_arg(&inputs[*index], inputs),
 		}
 	}
 
-	fn compute_track_order_inner(&mut self, member_index: usize, inputs: &Vec<MidiArg>, track_order: &mut Vec<usize>) {
+	fn compute_track_order_inner(&mut self, member_index: usize, inputs: &Vec<MidiArg>, track_order: &mut Vec<ir::MidiMapping>) {
 		for node in self.track_order[member_index].clone() {
 			match node {
 				TrackOrderNode::Instrument { midi } => {

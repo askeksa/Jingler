@@ -72,7 +72,7 @@ impl Music {
 	}
 
 	pub fn export(&self, w: &mut dyn Write,
-			sample_rate: f32, track_order: &[usize],
+			sample_rate: f32, track_order: &[ir::MidiMapping],
 			num_parameters: usize, quantization_levels: u16) -> std::io::Result<()> {
 		let spt = (self.ticklength * sample_rate).round() as u32;
 		let total_samples = (self.length as f32 * self.ticklength * sample_rate) as u64;
@@ -102,7 +102,7 @@ impl Music {
 		// Velocities
 		writeln!(w, "Velocities:\n\tdd\t1")?;
 		self.notelist(w, track_order,
-			|_, n| vec![n.velocity as u8],
+			|_, n, _| vec![n.velocity as u8],
 			vec![0x80], ".v_"
 		)?;
 		self.autolist(w, &quantized_parameters,
@@ -113,7 +113,7 @@ impl Music {
 		// Keys
 		writeln!(w, "Keys:\n\tdd\t1")?;
 		self.notelist(w, track_order,
-			|_, n| vec![n.key as u8],
+			|_, n, m| vec![m.triggered_key(m.channel, n.key as u8).unwrap()],
 			vec![0x80], ".k_"
 		)?;
 		self.autolist(w, &quantized_parameters,
@@ -124,7 +124,7 @@ impl Music {
 		// Lengths
 		writeln!(w, "Lengths:\n\tdd\tSAMPLES_PER_TICK")?;
 		self.notelist(w, track_order,
-			|_, n| encode_distance(n.length.unwrap_or(0x7E00)),
+			|_, n, _| encode_distance(n.length.unwrap_or(0x7E00)),
 			vec![0x80], ".l_"
 		)?;
 		self.autolist(w, &quantized_parameters,
@@ -135,7 +135,7 @@ impl Music {
 		// Distances
 		writeln!(w, "Distances:\n\tdd\tSAMPLES_PER_TICK")?;
 		self.notelist(w, track_order,
-			|prev_n, n| {
+			|prev_n, n, _| {
 				let prev_line = prev_n.map(|pn| pn.line).unwrap_or(0);
 				encode_distance(n.line - prev_line)
 			},
@@ -176,10 +176,11 @@ impl Music {
 		Ok(())
 	}
 
-	fn notelist<F>(&self, w: &mut dyn Write, track_order: &[usize], mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
-	where F: FnMut(Option<&Note>, &Note) -> Vec<u8> {
+	fn notelist<F>(&self, w: &mut dyn Write, track_order: &[ir::MidiMapping], mut datafunc: F, trackterm: Vec<u8>, prefix: &str) -> std::io::Result<()>
+	where F: FnMut(Option<&Note>, &Note, &ir::MidiMapping) -> Vec<u8> {
 
-		for (i, &channel) in track_order.iter().enumerate() {
+		for (i, mapping) in track_order.iter().enumerate() {
+			let channel = mapping.channel as usize;
 			if channel < 16 && let Some(track_idx) = self.channel_map[channel] {
 				let track = &self.tracks[track_idx];
 				writeln!(w, "\t; {}", track.name)?;
@@ -189,6 +190,12 @@ impl Music {
 				let mut last_songpos: Option<u32> = None;
 				let mut pat_data = Vec::new();
 				for n in &track.notes {
+					// Skip notes the mapping rejects (outside its note range) before
+					// updating prev_n, so cumulative distances stay correct.
+					if mapping.triggered_key(mapping.channel, n.key as u8).is_none() {
+						continue;
+					}
+
 					let trigger_new_line = if let Some(lp) = last_songpos { n.songpos != lp } else { true };
 
 					if trigger_new_line {
@@ -198,7 +205,7 @@ impl Music {
 						last_songpos = Some(n.songpos);
 					}
 
-					pat_data.extend(datafunc(prev_n, n));
+					pat_data.extend(datafunc(prev_n, n, mapping));
 					prev_n = Some(n);
 				}
 				Self::dataline(w, &pat_data)?;

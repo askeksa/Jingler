@@ -134,18 +134,18 @@ impl WasmInstanceInner {
 	}
 
 	pub(crate) fn note_on(&mut self, channel: u8, note: u8, velocity: u8) -> Result<()> {
-		for (track, track_channel) in self.program.track_order.iter().enumerate() {
-			if *track_channel == channel as usize {
-				self.note_on_func.call(&mut self.store, (track as i32, note as i32, velocity as i32))?;
+		for (track, mapping) in self.program.track_order.iter().enumerate() {
+			if let Some(key) = mapping.triggered_key(channel, note) {
+				self.note_on_func.call(&mut self.store, (track as i32, key as i32, velocity as i32))?;
 			}
 		}
 		Ok(())
 	}
 
 	pub(crate) fn note_off(&mut self, channel: u8, note: u8) -> Result<()> {
-		for (track, track_channel) in self.program.track_order.iter().enumerate() {
-			if *track_channel == channel as usize {
-				self.note_off_func.call(&mut self.store, (track as i32, note as i32))?;
+		for (track, mapping) in self.program.track_order.iter().enumerate() {
+			if let Some(key) = mapping.triggered_key(channel, note) {
+				self.note_off_func.call(&mut self.store, (track as i32, key as i32))?;
 			}
 		}
 		Ok(())
