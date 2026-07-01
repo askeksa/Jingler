@@ -24,15 +24,34 @@ pub struct Source {
 }
 
 impl Source {
+	/// Truncate line at the first # that is not part of a note.
+	fn remove_comment(line: &str) -> &str {
+		#[derive(Clone, Copy)]
+		enum State { Initial, Note, Sharp }
+		let mut state = State::Initial;
+		for (i, c) in line.as_bytes().iter().enumerate() {
+			match (state, c) {
+				(State::Initial, b'#') => return &line[..i],
+				(State::Initial, b'A'..=b'G') => state = State::Note,
+				(State::Initial, _) => {},
+				(State::Note, b'#') => state = State::Sharp,
+				(State::Note, _) => state = State::Initial,
+				(State::Sharp, b'0'..=b'9') => state = State::Initial,
+				(State::Sharp, _) => return &line[..i-1],
+			}
+		}
+		match state {
+			State::Sharp => &line[..line.len()-1],
+			_ => &line[..],
+		}
+	}
+
 	pub fn new(filename: PathBuf, raw_input: String, start_offset: usize) -> Source {
 		// Remove comments
+
 		let mut processed = String::with_capacity(raw_input.len());
 		for line in raw_input.lines() {
-			let line = match line.find('#') {
-				Some(i) => &line[..i],
-				None => line,
-			};
-			processed.push_str(line);
+			processed.push_str(Self::remove_comment(line));
 			processed.push('\n');
 		}
 		let processed_input = Rc::from(processed);
