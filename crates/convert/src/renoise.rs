@@ -18,11 +18,14 @@ fn test_convert_renoise() {
 	// Basic mappings (full note range, no transposition) for each track's channel.
 	let track_order: [ir::MidiMapping; 10] = [0u8, 1, 8, 3, 9, 4, 2, 6, 7, 5]
 		.map(|channel| ir::MidiMapping { channel, start: 0, end: 127, transpose_to: 0 });
+	let track_procedures = ["acid", "acid", "pad", "bagpipe", "lead",
+		"bagpipe", "kick", "ridehat", "hihat", "hihat"];
 
 	let music = convert_renoise_file("../../test/test.xrns").unwrap();
 
 	let mut out = vec![];
-	music.export(&mut out, SAMPLE_RATE, &track_order, NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
+	music.export(&mut out, SAMPLE_RATE, &track_order, &track_procedures,
+		NUM_PARAMETERS, PARAMETER_QUANTIZATION_LEVELS).unwrap();
 
 	let expected = std::fs::read_to_string("../../test/expected.asm").unwrap();
 	let actual = String::from_utf8(out).unwrap();
@@ -65,7 +68,7 @@ fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 		60.0 / lines_per_minute
 	};
 
-	let (tracks, instruments) = make_tracks(xsong, ticklength)?;
+	let (tracks, notes, instruments) = make_tracks(xsong, ticklength)?;
 
 	let autos = extract_automation(xsong);
 
@@ -84,29 +87,17 @@ fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 		}
 	}
 
-	let mut channel_map: Vec<Option<usize>> = vec![None; 16];
-	for (i, track) in tracks.iter().enumerate() {
-		let channel = instruments[track.instr as usize].channel as usize;
-		if channel < 16 && channel_map[channel].is_some() {
-			let existing = &tracks[channel_map[channel].unwrap()];
-			return Err(ConvertError::Tracks { track1: track.name.clone(), track2: existing.name.clone(), message: "uses same channel".to_string() });
-		}
-		if channel < 16 {
-			channel_map[channel] = Some(i);
-		}
-	}
-
 	Ok(Music {
 		tracks,
 		instruments,
+		notes,
 		length,
 		ticklength,
 		autos,
-		channel_map,
 	})
 }
 
-fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Instrument>), ConvertError> {
+fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Note>, Vec<Instrument>), ConvertError> {
 	let mut instruments = Vec::new();
 	for xinst in xsong.child("Instruments").child("Instrument").iter() {
 		let channel: u16 = xinst.child("PluginGenerator").child("Channel").text().parse().unwrap_or(0);
@@ -137,6 +128,7 @@ fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Ins
 	}
 
 	let mut tracks = Vec::new();
+	let mut notes: Vec<Note> = Vec::new();
 	for (tr, xtrack) in xsong.child("Tracks").child("SequencerTrack").iter().enumerate() {
 		if xtrack.child("State").text() != "Active" {
 			continue;
@@ -152,8 +144,12 @@ fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Ins
 			}
 		}
 
-		let mut notes = Vec::new();
-		let mut track_instrs = Vec::new();
+		let track_index = tracks.len() as u16;
+		let labelname: String = tname.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
+		tracks.push(Track {
+			name: tname.clone(),
+			labelname,
+		});
 
 		let col_states = xtrack.child("NoteColumnStates").child("NoteColumnState");
 		for column in 0..ncols {
@@ -161,35 +157,19 @@ fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Ins
 			let is_active = if let Some(cs) = col_state { cs.text() == "Active" } else { false };
 			if !is_active { continue; }
 
-			let mut col_notes = extract_track_notes(xsong, tr, column, &tname)?;
+			let mut col_notes = extract_track_notes(xsong, tr, track_index, column, &tname)?;
 			notes.append(&mut col_notes);
-		}
-
-		for note in &notes {
-			if !track_instrs.contains(&note.instr) {
-				track_instrs.push(note.instr);
-			}
-		}
-
-		for instr in track_instrs {
-			let mut instr_notes: Vec<Note> = notes.iter().filter(|n| n.instr == instr).cloned().collect();
-			instr_notes.sort_by_key(|n| n.line);
-
-			let labelname: String = tname.chars().filter(|c| c.is_alphanumeric() || *c == '_').collect();
-
-			tracks.push(Track {
-				name: tname.clone(),
-				instr,
-				notes: instr_notes,
-				labelname,
-			});
 		}
 	}
 
-	Ok((tracks, instruments))
+	// One globally time-ordered note list. Notes on the same line are ordered by
+	// track and then by column, so the output is independent of extraction order.
+	notes.sort_by_key(|n| (n.line, n.track, n.column));
+
+	Ok((tracks, notes, instruments))
 }
 
-fn extract_track_notes(xsong: &XmlNode, tr: usize, column: usize, tname: &str) -> Result<Vec<Note>, ConvertError> {
+fn extract_track_notes(xsong: &XmlNode, tr: usize, track_index: u16, column: usize, tname: &str) -> Result<Vec<Note>, ConvertError> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 
@@ -281,6 +261,7 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, column: usize, tname: &str) -
 							}
 
 							let note = Note {
+								track: track_index,
 								column: column as u16,
 								line,
 								length: None,
@@ -385,11 +366,6 @@ pub enum ConvertError {
 		track: String,
 		message: String,
 	},
-	Tracks {
-		track1: String,
-		track2: String,
-		message: String,
-	},
 	General {
 		message: String,
 	},
@@ -409,9 +385,6 @@ impl Display for ConvertError {
 			},
 			ConvertError::Track { track, message } => {
 				write!(f, "Track '{track}' {message}")
-			},
-			ConvertError::Tracks { track1, track2, message } => {
-				write!(f, "Tracks '{track1}' and '{track2}' {message}")
 			},
 			ConvertError::General { message } => {
 				write!(f, "{message}")

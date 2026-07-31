@@ -19,6 +19,50 @@ pub struct Program {
 	pub track_order: Vec<MidiMapping>,
 }
 
+impl Program {
+	/// Name of the instrument procedure played by each `PlayInstrument`
+	/// instruction, in execution order.
+	///
+	/// The runtime assigns track indices in the order the `PlayInstrument`
+	/// instructions execute, so entry `i` of the returned vector describes the
+	/// same track as `track_order[i]`.
+	pub fn track_procedure_names(&self) -> Vec<&str> {
+		let mut names = vec![];
+		let mut on_stack = vec![false; self.procedures.len()];
+		self.collect_track_procedure_names(self.main_dynamic_proc_id, &mut on_stack, &mut names);
+		names
+	}
+
+	fn collect_track_procedure_names<'a>(&'a self, proc_id: usize,
+			on_stack: &mut Vec<bool>, names: &mut Vec<&'a str>) {
+		let Some(procedure) = self.procedures.get(proc_id) else { return };
+		if on_stack[proc_id] {
+			// Modules cannot be recursive, but never loop forever on a malformed program.
+			return;
+		}
+		on_stack[proc_id] = true;
+		for inst in &procedure.code {
+			match *inst {
+				Instruction::PlayInstrument(_, dynamic_proc) => {
+					if let Some(played) = self.procedures.get(dynamic_proc as usize) {
+						names.push(&played.name);
+					}
+				},
+				Instruction::Call(callee, _) => {
+					// Only dynamic module procedures can reach a PlayInstrument.
+					let callee = callee as usize;
+					if let Some(p) = self.procedures.get(callee)
+							&& p.kind == (ProcedureKind::Module { scope: Scope::Dynamic }) {
+						self.collect_track_procedure_names(callee, on_stack, names);
+					}
+				},
+				_ => {},
+			}
+		}
+		on_stack[proc_id] = false;
+	}
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MidiMapping {
 	// Zero based MIDI channel (0..=15)
@@ -158,4 +202,62 @@ fn write_list(f: &mut Formatter, list: &Vec<impl Display>) -> Result<(), Error> 
 		first = false;
 	}
 	write!(f, ")")
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::instructions::Instruction::*;
+
+	fn procedure(name: &str, kind: ProcedureKind, code: Vec<crate::instructions::Instruction>) -> Procedure {
+		Procedure { name: name.to_string(), kind, inputs: vec![], outputs: vec![], code }
+	}
+
+	fn module(name: &str, code: Vec<crate::instructions::Instruction>) -> Procedure {
+		procedure(name, ProcedureKind::Module { scope: Scope::Dynamic }, code)
+	}
+
+	fn instrument(name: &str) -> Procedure {
+		procedure(name, ProcedureKind::Instrument { scope: Scope::Dynamic }, vec![])
+	}
+
+	#[test]
+	fn track_procedure_names_follow_the_play_instrument_order() {
+		//  0: main (dynamic), 1: sub (dynamic), 2/3: bass, 4/5: lead, 6: a function
+		let program = Program {
+			parameters: vec![],
+			procedures: vec![
+				module("main", vec![PlayInstrument(2, 3), Call(6, None), Call(1, None), PlayInstrument(4, 5)]),
+				module("sub", vec![PlayInstrument(4, 5), PlayInstrument(2, 3)]),
+				procedure("bass", ProcedureKind::Instrument { scope: Scope::Static }, vec![]),
+				instrument("bass"),
+				procedure("lead", ProcedureKind::Instrument { scope: Scope::Static }, vec![]),
+				instrument("lead"),
+				procedure("helper", ProcedureKind::Function, vec![PlayInstrument(2, 3)]),
+			],
+			main_static_proc_id: 0,
+			main_dynamic_proc_id: 0,
+			track_order: vec![],
+		};
+
+		// Depth first through the module calls, and not into the function.
+		assert_eq!(program.track_procedure_names(), vec!["bass", "lead", "bass", "lead"]);
+	}
+
+	#[test]
+	fn track_procedure_names_terminates_on_a_recursive_program() {
+		let program = Program {
+			parameters: vec![],
+			procedures: vec![
+				module("main", vec![Call(1, None)]),
+				module("sub", vec![PlayInstrument(2, 2), Call(0, None)]),
+				instrument("beep"),
+			],
+			main_static_proc_id: 0,
+			main_dynamic_proc_id: 0,
+			track_order: vec![],
+		};
+
+		assert_eq!(program.track_procedure_names(), vec!["beep"]);
+	}
 }

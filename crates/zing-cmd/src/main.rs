@@ -145,26 +145,24 @@ fn build_music_events(music: &Music, sample_rate: f32) -> Vec<(usize, MusicEvent
 	let sps = music.ticklength * sample_rate; // samples per tick/line
 	let mut events: Vec<(usize, MusicEvent)> = Vec::new();
 
-	for track in &music.tracks {
-		let channel = music.instruments.get(track.instr as usize)
+	for note in &music.notes {
+		let channel = music.instruments.get(note.instr as usize)
 			.map(|inst| inst.channel as u8)
 			.unwrap_or(0);
 
-		for note in &track.notes {
-			let on_sample = (note.line as f32 * sps) as usize;
-			events.push((on_sample, MusicEvent::NoteOn {
-				channel,
-				key: note.key as u8,
-				velocity: note.velocity as u8,
-			}));
+		let on_sample = (note.line as f32 * sps) as usize;
+		events.push((on_sample, MusicEvent::NoteOn {
+			channel,
+			key: note.key as u8,
+			velocity: note.velocity as u8,
+		}));
 
-			let length = note.length.unwrap_or(0x7E00);
-			let off_sample = ((note.line + length) as f32 * sps) as usize;
-			events.push((off_sample, MusicEvent::NoteOff {
-				channel,
-				key: note.key as u8,
-			}));
-		}
+		let length = note.length.unwrap_or(0x7E00);
+		let off_sample = ((note.line + length) as f32 * sps) as usize;
+		events.push((off_sample, MusicEvent::NoteOff {
+			channel,
+			key: note.key as u8,
+		}));
 	}
 
 	// Within the same sample: note-offs before note-ons
