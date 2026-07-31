@@ -1196,11 +1196,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								let width = outputs.first().unwrap().width.unwrap();
 								let (in_count, out_count) = (inputs.len() + 1, outputs.len());
 								let midi = self.convert_midi_mapping(current_member_index, &midi[0]);
-								let node = TrackOrderNode::Instrument { midi };
-								self.track_order[current_member_index].push(node);
 								for arg in args {
 									self.generate(arg);
 								}
+								let node = TrackOrderNode::Instrument { midi };
+								self.track_order[current_member_index].push(node);
 								self.emit(code![Constant(0)]);
 								self.expand(width);
 								self.emit(code![PlayInstrument(static_proc_id, dynamic_proc_id)]);
