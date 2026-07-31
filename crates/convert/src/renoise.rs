@@ -33,6 +33,98 @@ fn test_convert_renoise() {
 	assert_eq!(expected, actual);
 }
 
+#[cfg(test)]
+mod level_tests {
+	use super::*;
+
+	/// A minimal song with one instrument, one track and a master track. Every
+	/// volume and panning is a placeholder that `song` fills in.
+	const SONG: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseSong doc_version="64">
+	<GlobalSongData>
+		<BeatsPerMin>120</BeatsPerMin>
+		<LinesPerBeat>4</LinesPerBeat>
+		<PlaybackEngineVersion>6</PlaybackEngineVersion>
+		<GlobalTrackHeadroom>{headroom}</GlobalTrackHeadroom>
+	</GlobalSongData>
+	<Instruments>
+		<Instrument>
+			<Name>lead</Name>
+			<GlobalProperties><Volume>{instrument_volume}</Volume></GlobalProperties>
+			<PluginGenerator><Channel>0</Channel><Volume>{plugin_volume}</Volume></PluginGenerator>
+		</Instrument>
+	</Instruments>
+	<Tracks>
+		<SequencerTrack>
+			<Name>lead track</Name>
+			<State>Active</State>
+			<NumberOfVisibleNoteColumns>1</NumberOfVisibleNoteColumns>
+			<FilterDevices><Devices><TrackMixerDevice>
+				<Volume><Value>{track_volume}</Value></Volume>
+				<Panning><Value>{track_panning}</Value></Panning>
+				<PostVolume><Value>{track_post_volume}</Value></PostVolume>
+				<PostPanning><Value>{track_post_panning}</Value></PostPanning>
+			</TrackMixerDevice></Devices></FilterDevices>
+		</SequencerTrack>
+		<SequencerMasterTrack>
+			<Name>Mst</Name>
+			<FilterDevices><Devices><MasterTrackMixerDevice>
+				<Volume><Value>{master_volume}</Value></Volume>
+				<Panning><Value>{master_panning}</Value></Panning>
+				<PostVolume><Value>{master_post_volume}</Value></PostVolume>
+				<PostPanning><Value>{master_post_panning}</Value></PostPanning>
+			</MasterTrackMixerDevice></Devices></FilterDevices>
+		</SequencerMasterTrack>
+	</Tracks>
+</RenoiseSong>
+"#;
+
+	const VOLUMES: [&str; 6] = ["headroom", "instrument_volume", "plugin_volume",
+		"track_volume", "track_post_volume", "master_volume"];
+	const PANNINGS: [&str; 4] = ["track_panning", "track_post_panning",
+		"master_panning", "master_post_panning"];
+
+	/// `SONG` with every level neutral, except `placeholder`, which gets `value`.
+	fn song(placeholder: &str, value: &str) -> Result<Music, ConvertError> {
+		let mut xml = SONG.to_string();
+		for (names, neutral) in [(&VOLUMES[..], "1.0"), (&PANNINGS[..], "0.5")] {
+			for name in names {
+				let value = if *name == placeholder { value } else { neutral };
+				xml = xml.replace(&format!("{{{name}}}"), value);
+			}
+		}
+		convert_renoise_song(&mut xml.as_bytes())
+	}
+
+	#[test]
+	fn a_song_with_neutral_levels_converts() {
+		song("nothing", "").unwrap();
+	}
+
+	#[test]
+	fn every_volume_must_be_unity() {
+		for placeholder in VOLUMES {
+			// -6 dB, which is Renoise's default headroom.
+			let error = song(placeholder, "0.501187205").unwrap_err();
+			let ConvertError::Level { message, .. } = &error else {
+				panic!("attenuated {placeholder} gave {error:?}, expected a Level error");
+			};
+			assert!(message.contains("-6.00 dB"), "{placeholder}: {message}");
+		}
+	}
+
+	#[test]
+	fn every_panning_must_be_centered() {
+		for placeholder in PANNINGS {
+			let error = song(placeholder, "0.75").unwrap_err();
+			let ConvertError::Level { message, .. } = &error else {
+				panic!("panned {placeholder} gave {error:?}, expected a Level error");
+			};
+			assert!(message.contains("expected 0.5 (center)"), "{placeholder}: {message}");
+		}
+	}
+}
+
 pub fn convert_renoise_file(input: &(impl AsRef<Path> + ?Sized)) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
@@ -68,6 +160,8 @@ fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 		60.0 / lines_per_minute
 	};
 
+	check_volume(param_value(&xgsd, "GlobalTrackHeadroom", 1.0), "Song", "global track headroom")?;
+
 	let (tracks, notes, instruments) = make_tracks(xsong, ticklength)?;
 
 	let autos = extract_automation(xsong);
@@ -99,9 +193,15 @@ fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 
 fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Note>, Vec<Instrument>), ConvertError> {
 	let mut instruments = Vec::new();
-	for xinst in xsong.child("Instruments").child("Instrument").iter() {
+	for (index, xinst) in xsong.child("Instruments").child("Instrument").iter().enumerate() {
 		let channel: u16 = xinst.child("PluginGenerator").child("Channel").text().parse().unwrap_or(0);
 		let name = xinst.child("Name").text();
+
+		// Renoise displays instrument numbers in hexadecimal.
+		let location = format!("Instrument {index:02X} '{name}'");
+		check_volume(param_value(&xinst.child("GlobalProperties"), "Volume", 1.0), &location, "volume")?;
+		check_volume(param_value(&xinst.child("PluginGenerator"), "Volume", 1.0), &location, "plugin volume")?;
+
 		instruments.push(Instrument {
 			name,
 			channel,
@@ -112,18 +212,27 @@ fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Not
 		let tname = xgrouptrack.child("Name").text();
 		let xdevices = xgrouptrack.child("FilterDevices").child("Devices");
 		for xmixer in xdevices.child("GroupTrackMixerDevice").iter() {
-			if is_active(&xmixer) {
-				let vol: f32 = xmixer.child("Volume").child("Value").text().parse().unwrap_or(1.0);
-				let post_vol: f32 = xmixer.child("PostVolume").child("Value").text().parse().unwrap_or(1.0);
-				if vol != 1.0 || post_vol != 1.0 {
-					return Err(ConvertError::GroupTrack { track: tname.clone(), message: "has non-zero volume".into() });
-				}
-			}
+			check_mixer(&xmixer, &format!("Group track '{tname}'"))?;
 		}
 		for xsend in xdevices.child("SendDevice").iter() {
 			if is_active(&xsend) {
 				return Err(ConvertError::GroupTrack { track: tname, message: "uses Send".into() });
 			}
+		}
+	}
+
+	for xsendtrack in xsong.child("Tracks").child("SequencerSendTrack").iter() {
+		let tname = xsendtrack.child("Name").text();
+		let xdevices = xsendtrack.child("FilterDevices").child("Devices");
+		for xmixer in xdevices.child("SendTrackMixerDevice").iter() {
+			check_mixer(&xmixer, &format!("Send track '{tname}'"))?;
+		}
+	}
+
+	for xmastertrack in xsong.child("Tracks").child("SequencerMasterTrack").iter() {
+		let xdevices = xmastertrack.child("FilterDevices").child("Devices");
+		for xmixer in xdevices.child("MasterTrackMixerDevice").iter() {
+			check_mixer(&xmixer, "Master track")?;
 		}
 	}
 
@@ -138,6 +247,9 @@ fn make_tracks(xsong: &XmlNode, _ticklength: f32) -> Result<(Vec<Track>, Vec<Not
 		let ncols: usize = xtrack.child("NumberOfVisibleNoteColumns").text().parse().unwrap_or(1);
 
 		let xdevices = xtrack.child("FilterDevices").child("Devices");
+		for xmixer in xdevices.child("TrackMixerDevice").iter() {
+			check_mixer(&xmixer, &format!("Track '{tname}'"))?;
+		}
 		for xsend in xdevices.child("SendDevice").iter() {
 			if is_active(&xsend) {
 				return Err(ConvertError::Track { track: tname, message: "uses Send".into() });
@@ -339,6 +451,51 @@ fn extract_automation(xsong: &XmlNode) -> Vec<Vec<AutomationPoint>> {
 	parameter_points
 }
 
+/// The value of a parameter, which is either the text of the named node itself
+/// or the text of its `Value` child. Absent or unparseable values give `default`.
+fn param_value(xparent: &XmlNode, name: &str, default: f32) -> f32 {
+	let xparam = xparent.child(name);
+	if xparam.is_empty() { return default; }
+	let text = xparam.child("Value").text();
+	let text = if text.is_empty() { xparam.text() } else { text };
+	text.trim().parse().unwrap_or(default)
+}
+
+/// The player applies no gain of its own, so every volume in the song must be
+/// at unity for what Renoise plays to be what the player produces.
+fn check_volume(value: f32, location: &str, parameter: &str) -> Result<(), ConvertError> {
+	if value != 1.0 {
+		let db = 20.0 * value.log10();
+		return Err(ConvertError::Level {
+			location: location.to_string(),
+			message: format!("{parameter} is {value} ({db:+.2} dB), expected 1.0 (0 dB)"),
+		});
+	}
+	Ok(())
+}
+
+/// Likewise, the player pans nothing, so every panning must be centered.
+fn check_panning(value: f32, location: &str, parameter: &str) -> Result<(), ConvertError> {
+	if value != 0.5 {
+		return Err(ConvertError::Level {
+			location: location.to_string(),
+			message: format!("{parameter} is {value}, expected 0.5 (center)"),
+		});
+	}
+	Ok(())
+}
+
+/// Check that a mixer device leaves the signal untouched, both pre and post.
+/// This covers the track, group track, send track and master track mixers,
+/// which all name their parameters the same way.
+fn check_mixer(xmixer: &XmlNode, location: &str) -> Result<(), ConvertError> {
+	check_volume(param_value(xmixer, "Volume", 1.0), location, "volume")?;
+	check_volume(param_value(xmixer, "PostVolume", 1.0), location, "post volume")?;
+	check_panning(param_value(xmixer, "Panning", 0.5), location, "panning")?;
+	check_panning(param_value(xmixer, "PostPanning", 0.5), location, "post panning")?;
+	Ok(())
+}
+
 fn is_active(xdevice: &XmlNode) -> bool {
 	if xdevice.is_empty() { return false; }
 	let val = xdevice.child("IsActive").child("Value").text();
@@ -366,6 +523,11 @@ pub enum ConvertError {
 		track: String,
 		message: String,
 	},
+	/// A volume or panning that is not at its neutral setting.
+	Level {
+		location: String,
+		message: String,
+	},
 	General {
 		message: String,
 	},
@@ -385,6 +547,9 @@ impl Display for ConvertError {
 			},
 			ConvertError::Track { track, message } => {
 				write!(f, "Track '{track}' {message}")
+			},
+			ConvertError::Level { location, message } => {
+				write!(f, "{location}: {message}")
 			},
 			ConvertError::General { message } => {
 				write!(f, "{message}")

@@ -12,7 +12,7 @@ MusicData:
 
 Velocities:
 	dd	1
-	; Channel 1, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 1'
+	; Channel 1, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 1'
 .v_0_acid_acid1:
 	; Position 5, pattern 4
 	db	67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67
@@ -56,7 +56,7 @@ Velocities:
 	db	67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67,67,65,65,67,67,65,65,109,65,65,67,67,67,67
 	db	128
 
-	; Channel 2, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 2'
+	; Channel 2, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 2'
 .v_1_acid_acid2:
 	; Position 14, pattern 15
 	db	64,16,64,16,64,64,64,64,16,64,16,64,16,64,64,64,64,16,64,16,64,16,64,64,64,64,16,64,16,64,16,64,64,64,64,16
@@ -80,7 +80,7 @@ Velocities:
 .v_2_pad:
 	db	128
 
-	; Channel 4, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low R'
+	; Channel 4, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low R'
 .v_3_bagpipe_bagpipelowR:
 	; Position 0, pattern 0
 	db	127,127
@@ -98,7 +98,7 @@ Velocities:
 .v_4_lead:
 	db	128
 
-	; Channel 5, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low L'
+	; Channel 5, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low L'
 .v_5_bagpipe_bagpipelowL:
 	; Position 0, pattern 0
 	db	127,127
@@ -112,7 +112,7 @@ Velocities:
 	db	127,127,127,127,127,127,127,127,127,127,127,127,127,127,127
 	db	128
 
-	; Channel 3, keys 0-127: kick, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'kick'
+	; Channel 3, keys 0-127: kick, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'kick'
 .v_6_kick_kick:
 	; Position 10, pattern 9
 	db	127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127
@@ -150,7 +150,7 @@ Velocities:
 	db	127
 	db	128
 
-	; Channel 7, keys 0-127: ridehat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'ride hat'
+	; Channel 7, keys 0-127: ridehat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'ride hat'
 .v_7_ridehat_ridehat:
 	; Position 10, pattern 9
 	db	127
@@ -180,7 +180,7 @@ Velocities:
 	db	127
 	db	128
 
-	; Channel 8, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hats short'
+	; Channel 8, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hats short'
 .v_8_hihat_hatsshort:
 	; Position 7, pattern 6
 	db	127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127
@@ -212,7 +212,7 @@ Velocities:
 	db	127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127
 	db	128
 
-	; Channel 6, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hat closed'
+	; Channel 6, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hat closed'
 .v_9_hihat_hatclosed:
 	; Position 6, pattern 5
 	db	127,127,127,127,127,127,127,127,127,127,127,127,127,127,127,127
@@ -264,7 +264,7 @@ Velocities:
 
 Keys:
 	dd	1
-	; Channel 1, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 1'
+	; Channel 1, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 1'
 .k_0_acid_acid1:
 	; Position 5, pattern 4
 	db	37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47
@@ -308,7 +308,7 @@ Keys:
 	db	37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47,37,37,37,37,37,37,49,37,37,25,49,50,25,47
 	db	128
 
-	; Channel 2, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 2'
+	; Channel 2, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 2'
 .k_1_acid_acid2:
 	; Position 14, pattern 15
 	db	49,49,37,49,37,37,49,37,61,49,49,37,49,37,37,49,37,61,49,49,37,49,37,37,49,37,61,49,49,37,49,37,37,49,37,61
@@ -332,7 +332,7 @@ Keys:
 .k_2_pad:
 	db	128
 
-	; Channel 4, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low R'
+	; Channel 4, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low R'
 .k_3_bagpipe_bagpipelowR:
 	; Position 0, pattern 0
 	db	73,85
@@ -350,7 +350,7 @@ Keys:
 .k_4_lead:
 	db	128
 
-	; Channel 5, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low L'
+	; Channel 5, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low L'
 .k_5_bagpipe_bagpipelowL:
 	; Position 0, pattern 0
 	db	73,85
@@ -364,7 +364,7 @@ Keys:
 	db	104,109,107,106,104,107,102,99,102,99,102,99,104,106,109
 	db	128
 
-	; Channel 3, keys 0-127: kick, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'kick'
+	; Channel 3, keys 0-127: kick, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'kick'
 .k_6_kick_kick:
 	; Position 10, pattern 9
 	db	84,84,84,84,84,84,84,84,84,84,84,84,84,84,84,84,84
@@ -402,7 +402,7 @@ Keys:
 	db	84
 	db	128
 
-	; Channel 7, keys 0-127: ridehat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'ride hat'
+	; Channel 7, keys 0-127: ridehat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'ride hat'
 .k_7_ridehat_ridehat:
 	; Position 10, pattern 9
 	db	93
@@ -432,7 +432,7 @@ Keys:
 	db	93
 	db	128
 
-	; Channel 8, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hats short'
+	; Channel 8, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hats short'
 .k_8_hihat_hatsshort:
 	; Position 7, pattern 6
 	db	119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119
@@ -464,7 +464,7 @@ Keys:
 	db	119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119,119
 	db	128
 
-	; Channel 6, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hat closed'
+	; Channel 6, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hat closed'
 .k_9_hihat_hatclosed:
 	; Position 6, pattern 5
 	db	89,89,89,89,89,89,89,89,89,89,89,89,89,89,89,89
@@ -520,7 +520,7 @@ Keys:
 
 Lengths:
 	dd	SAMPLES_PER_TICK
-	; Channel 1, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 1'
+	; Channel 1, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 1'
 .l_0_acid_acid1:
 	; Position 5, pattern 4
 	db	1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3
@@ -564,7 +564,7 @@ Lengths:
 	db	1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3,1,1,1,1,1,1,2,2,2,1,2,3,1,3
 	db	128
 
-	; Channel 2, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 2'
+	; Channel 2, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 2'
 .l_1_acid_acid2:
 	; Position 14, pattern 15
 	db	6,2,1,2,2,1,1,1,3,6,2,1,2,2,1,1,1,3,6,2,1,2,2,1,1,1,3,6,2,1,2,2,1,1,1,3
@@ -588,7 +588,7 @@ Lengths:
 .l_2_pad:
 	db	128
 
-	; Channel 4, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low R'
+	; Channel 4, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low R'
 .l_3_bagpipe_bagpipelowR:
 	; Position 0, pattern 0
 	db	253,96,253,96
@@ -606,7 +606,7 @@ Lengths:
 .l_4_lead:
 	db	128
 
-	; Channel 5, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low L'
+	; Channel 5, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low L'
 .l_5_bagpipe_bagpipelowL:
 	; Position 0, pattern 0
 	db	253,96,253,96
@@ -620,7 +620,7 @@ Lengths:
 	db	8,1,8,8,16,1,24,1,24,1,1,8,1,16,16
 	db	128
 
-	; Channel 3, keys 0-127: kick, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'kick'
+	; Channel 3, keys 0-127: kick, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'kick'
 .l_6_kick_kick:
 	; Position 10, pattern 9
 	db	1,1,1,1,1,8,8,4,8,8,8,8,8,8,8,1,1
@@ -658,7 +658,7 @@ Lengths:
 	db	1
 	db	128
 
-	; Channel 7, keys 0-127: ridehat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'ride hat'
+	; Channel 7, keys 0-127: ridehat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'ride hat'
 .l_7_ridehat_ridehat:
 	; Position 10, pattern 9
 	db	5
@@ -688,7 +688,7 @@ Lengths:
 	db	4
 	db	128
 
-	; Channel 8, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hats short'
+	; Channel 8, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hats short'
 .l_8_hihat_hatsshort:
 	; Position 7, pattern 6
 	db	2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6,4
@@ -720,7 +720,7 @@ Lengths:
 	db	2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
 	db	128
 
-	; Channel 6, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hat closed'
+	; Channel 6, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hat closed'
 .l_9_hihat_hatclosed:
 	; Position 6, pattern 5
 	db	2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
@@ -772,7 +772,7 @@ Lengths:
 
 Distances:
 	dd	SAMPLES_PER_TICK
-	; Channel 1, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 1'
+	; Channel 1, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 1'
 .d_0_acid_acid1:
 	; Position 5, pattern 4
 	db	253,32,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2
@@ -816,7 +816,7 @@ Distances:
 	db	4,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2,4,2,2,2,2,2,2,2,2,2,2,2,4,2
 	db	128
 
-	; Channel 2, keys 0-127: acid, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'acid 2'
+	; Channel 2, keys 0-127: acid, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'acid 2'
 .d_1_acid_acid2:
 	; Position 14, pattern 15
 	db	249,64,8,4,2,4,4,2,2,2,4,8,4,2,4,4,2,2,2,4,8,4,2,4,4,2,2,2,4,8,4,2,4,4,2,2,2
@@ -840,7 +840,7 @@ Distances:
 .d_2_pad:
 	db	128
 
-	; Channel 4, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low R'
+	; Channel 4, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low R'
 .d_3_bagpipe_bagpipelowR:
 	; Position 0, pattern 0
 	db	0,0
@@ -858,7 +858,7 @@ Distances:
 .d_4_lead:
 	db	128
 
-	; Channel 5, keys 0-127: bagpipe, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'bagpipe low L'
+	; Channel 5, keys 0-127: bagpipe, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'bagpipe low L'
 .d_5_bagpipe_bagpipelowL:
 	; Position 0, pattern 0
 	db	0,0
@@ -872,7 +872,7 @@ Distances:
 	db	1,7,1,8,8,15,1,23,1,0,23,1,7,1,16
 	db	128
 
-	; Channel 3, keys 0-127: kick, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'kick'
+	; Channel 3, keys 0-127: kick, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'kick'
 .d_6_kick_kick:
 	; Position 10, pattern 9
 	db	251,64,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8,4
@@ -910,7 +910,7 @@ Distances:
 	db	4
 	db	128
 
-	; Channel 7, keys 0-127: ridehat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'ride hat'
+	; Channel 7, keys 0-127: ridehat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'ride hat'
 .d_7_ridehat_ridehat:
 	; Position 10, pattern 9
 	db	251,64
@@ -940,7 +940,7 @@ Distances:
 	db	4
 	db	128
 
-	; Channel 8, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hats short'
+	; Channel 8, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hats short'
 .d_8_hihat_hatsshort:
 	; Position 7, pattern 6
 	db	252,32,2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6,4,2,4,2,4,2,2,4,2,6
@@ -972,7 +972,7 @@ Distances:
 	db	2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
 	db	128
 
-	; Channel 6, keys 0-127: hihat, instrument 'VST alias: JinglerZing2 (Instr. 0B)', track 'hat closed'
+	; Channel 6, keys 0-127: hihat, instrument 'VST3 alias: Jingler (Instr. 0B)', track 'hat closed'
 .d_9_hihat_hatclosed:
 	; Position 6, pattern 5
 	db	253,164,8,8,8,8,8,8,8,8,8,8,8,8,8,8,8
