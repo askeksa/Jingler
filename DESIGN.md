@@ -1,3 +1,5 @@
+**Note: This document is an early design draft. The actual implementation has deviated somewhat from this, though many of the basic principles are still upheld.**
+
 # Design of Jingler
 This document contains ideas about what the Jingler synthesizer is going to
 be like.
