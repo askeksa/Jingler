@@ -5,7 +5,7 @@ cargo build -r
 $TARGET_DIR = (cargo metadata --format-version 1 | ConvertFrom-Json).target_directory
 
 # Output directory
-$OUTPUT_DIR = "out"
+$OUTPUT_DIR = "out/Windows"
 if (Test-Path $OUTPUT_DIR) { Remove-Item -Recurse -Force $OUTPUT_DIR }
 New-Item -ItemType Directory -Path $OUTPUT_DIR | Out-Null
 

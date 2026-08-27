@@ -7,7 +7,7 @@ cargo build -r
 TARGET_DIR=$(cargo metadata --format-version 1 | jq -r '.target_directory')
 
 # Output directory
-OUTPUT_DIR="out"
+OUTPUT_DIR="out/Mac"
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
