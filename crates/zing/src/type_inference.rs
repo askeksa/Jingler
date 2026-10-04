@@ -183,7 +183,16 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 						}
 					},
 				}
-				if item_type.width == Some(Width::Generic) {
+				if member.external {
+					if item_type.width == Some(Width::Generic) {
+						self.compiler.report_error(variable_name,
+							"External members can't have generic inputs or outputs.");
+					}
+					if item_type.value_type == Some(ValueType::Buffer) {
+						self.compiler.report_error(variable_name,
+							"External members can't have buffer inputs or outputs.");
+					}
+				} else if item_type.width == Some(Width::Generic) {
 					if is_output {
 						if !seen_generic_input {
 							self.compiler.report_error(variable_name,
@@ -240,6 +249,10 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 				precompiled_calles.push(self.names.autokill_key(member));
 			}
 			self.precompiled_callees.push(precompiled_calles);
+			if member.external {
+				// No body to infer, and no assignments to the outputs
+				continue;
+			}
 			self.infer_body(member)?;
 			self.check_outputs(member)?;
 		}

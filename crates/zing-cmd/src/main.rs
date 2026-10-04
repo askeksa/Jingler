@@ -1,5 +1,5 @@
 use convert::{Music, convert_music_with_program, renoise::convert_renoise_file};
-use runtime::{JinglerRuntimeHandle, default_jingler_runtime};
+use runtime::{Externals, JinglerRuntimeHandle, compile_wasm, default_jingler_runtime};
 use zing::compiler;
 
 use std::error::Error;
@@ -292,6 +292,12 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 					}
 				}
 				if options.print_ir {
+					for (e, external) in program.externals.iter().enumerate() {
+						println!("E{}: {}", e, external);
+					}
+					if !program.externals.is_empty() {
+						println!();
+					}
 					for (p, proc) in program.procedures.iter().enumerate() {
 						println!("{:2}: {}", p, proc);
 						for (i, inst) in proc.code.iter().enumerate() {
@@ -300,8 +306,21 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 						println!();
 					}
 				}
-				if options.write_wasm.is_some() || options.play || options.write_wav.is_some() {
-					let (rt, mut instance) = default_jingler_runtime().unwrap();
+				if let Some(ref filename) = options.write_wasm {
+					// Needs no implementations of external members; the module imports them.
+					match compile_wasm(&program) {
+						Ok(bytes) => {
+							if let Err(e) = fs::write(filename, bytes) {
+								println!("Error writing Wasm to '{}': {}", filename, e);
+							}
+						}
+						Err(e) => {
+							println!("Error compiling Wasm: {}", e);
+						}
+					}
+				}
+				if options.play || options.write_wav.is_some() {
+					let (rt, mut instance) = default_jingler_runtime(Externals::new()).unwrap();
 					match rt.submit_program(&program) {
 						Err(e) => {
 							println!("Runtime error: {}", e);
@@ -310,44 +329,30 @@ fn play_file(options: &PlayOptions) -> Vec<PathBuf> {
 							if let Err(e) = instance.poll_pending() {
 								println!("Runtime error: {}", e);
 							}
-							if let Some(ref filename) = options.write_wasm {
-								match instance.dump() {
-									Some(bytes) => {
-										if let Err(e) = fs::write(filename, bytes) {
-											println!("Error writing Wasm to '{}': {}", filename, e);
+							let (n_samples, events, curves) = if let Some(ref music) = music {
+								let n_samples = (music.length as f32 * music.ticklength * options.sample_rate) as usize;
+								let events = build_music_events(music, options.sample_rate);
+								let curves = build_parameter_curves(music, options.sample_rate);
+								(n_samples, events, curves)
+							} else {
+								((options.duration * options.sample_rate) as usize, vec![], vec![])
+							};
+
+							match compute_audio(&mut *instance, options.sample_rate, n_samples, &events, &curves) {
+								Ok(output) => {
+									if let Some(ref wav_filename) = options.write_wav {
+										if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
+											println!("Error writing wav file '{}': {}", wav_filename, e);
 										}
 									}
-									None => {
-										println!("Error: no instance available to dump");
+									if options.play {
+										if let Err(e) = play_sound(options.sample_rate, &output) {
+											println!("Error playing sound: {}", e);
+										}
 									}
 								}
-							}
-							if options.play || options.write_wav.is_some() {
-								let (n_samples, events, curves) = if let Some(ref music) = music {
-									let n_samples = (music.length as f32 * music.ticklength * options.sample_rate) as usize;
-									let events = build_music_events(music, options.sample_rate);
-									let curves = build_parameter_curves(music, options.sample_rate);
-									(n_samples, events, curves)
-								} else {
-									((options.duration * options.sample_rate) as usize, vec![], vec![])
-								};
-
-								match compute_audio(&mut *instance, options.sample_rate, n_samples, &events, &curves) {
-									Ok(output) => {
-										if let Some(ref wav_filename) = options.write_wav {
-											if let Err(e) = write_wav(wav_filename, options.sample_rate, &output) {
-												println!("Error writing wav file '{}': {}", wav_filename, e);
-											}
-										}
-										if options.play {
-											if let Err(e) = play_sound(options.sample_rate, &output) {
-												println!("Error playing sound: {}", e);
-											}
-										}
-									}
-									Err(e) => {
-										println!("Runtime error: {}", e);
-									}
+								Err(e) => {
+									println!("Runtime error: {}", e);
 								}
 							}
 						}

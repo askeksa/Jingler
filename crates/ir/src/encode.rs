@@ -243,6 +243,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::BufferAlloc(..) => encode(BufferAlloc, 0),
 		Instruction::Kill => encode(Kill, 0),
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
+		Instruction::CallExternal(..) => unreachable!("External members are rejected up front"),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
 		Instruction::Parameter(index) => encode_parameter(index),
@@ -442,10 +443,27 @@ fn check_opcode_space(opcode_capacity: &Vec<u16>, constants: &Vec<u32>) -> Resul
 	Ok(())
 }
 
+// The player has no way to call external members.
+fn check_no_external_members(program: &Program) -> Result<()> {
+	let mut names: Vec<&str> = vec![];
+	for external in &program.externals {
+		// A module has both a static and a dynamic part; name it once.
+		if !names.contains(&external.name.as_str()) {
+			names.push(&external.name);
+		}
+	}
+	if names.is_empty() {
+		Ok(())
+	} else {
+		Err(anyhow!("\nThe player does not support external members: {}.", names.join(", ")))
+	}
+}
+
 pub fn encode_bytecodes_source(
 		program: &Program, jingler_asm_path: &String,
 		sample_rate: f32, embed_constant_index: bool, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
+	check_no_external_members(program)?;
 	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate, embed_constant_index);
 	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
 	check_opcode_space(&opcode_capacity, &constants)?;
@@ -537,4 +555,35 @@ pub fn encode_bytecodes_source(
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::program::{ExternalProcedure, Scope, Type, ValueType};
+
+	#[test]
+	fn external_members_are_rejected() {
+		let mono = Type { width: Width::Mono, value_type: ValueType::Number };
+		let external = |name: &str, kind: ProcedureKind| ExternalProcedure {
+			name: name.to_string(), kind, inputs: vec![mono], outputs: vec![mono],
+		};
+		let program = Program {
+			parameters: vec![],
+			procedures: vec![],
+			externals: vec![
+				external("osc", ProcedureKind::Module { scope: Scope::Dynamic }),
+				external("osc", ProcedureKind::Module { scope: Scope::Static }),
+				external("lookup", ProcedureKind::Function),
+			],
+			main_static_proc_id: 0,
+			main_dynamic_proc_id: 0,
+			track_order: vec![],
+		};
+		let mut out = vec![];
+		let error = encode_bytecodes_source(&program, &"jingler.asm".to_string(), 44100.0, false, 16.0, &mut out)
+			.unwrap_err().to_string();
+		assert!(error.contains("external members: osc, lookup."), "{error}");
+		assert!(out.is_empty());
+	}
 }

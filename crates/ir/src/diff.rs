@@ -39,6 +39,7 @@ pub fn diff_programs(old: &Program, new: &Program) -> Diff {
 		|| old.main_static_proc_id != new.main_static_proc_id
 		|| old.main_dynamic_proc_id != new.main_dynamic_proc_id
 		|| old.track_order != new.track_order
+		|| old.externals != new.externals
 		|| old.procedures.len() != new.procedures.len()
 	{
 		return Diff::Structural;
@@ -73,5 +74,40 @@ pub fn diff_programs(old: &Program, new: &Program) -> Diff {
 		Diff::Identical
 	} else {
 		Diff::ConstantsOnly(changes)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::program::{ExternalProcedure, ProcedureKind, Type, ValueType, Width};
+
+	fn program(externals: Vec<ExternalProcedure>) -> Program {
+		Program {
+			parameters: vec![],
+			procedures: vec![],
+			externals,
+			main_static_proc_id: 0,
+			main_dynamic_proc_id: 0,
+			track_order: vec![],
+		}
+	}
+
+	fn function(width: Width) -> ExternalProcedure {
+		let value = Type { width, value_type: ValueType::Number };
+		ExternalProcedure {
+			name: "f".to_string(),
+			kind: ProcedureKind::Function,
+			inputs: vec![value],
+			outputs: vec![value],
+		}
+	}
+
+	#[test]
+	fn changed_externals_are_a_structural_change() {
+		let mono = program(vec![function(Width::Mono)]);
+		assert_eq!(diff_programs(&program(vec![]), &mono), Diff::Structural);
+		assert_eq!(diff_programs(&mono, &program(vec![function(Width::Stereo)])), Diff::Structural);
+		assert_eq!(diff_programs(&mono, &mono.clone()), Diff::Identical);
 	}
 }

@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
+use std::iter::{once, repeat_n};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -9,6 +10,8 @@ use wasmtime::{Caller, Config, Engine, Linker, Module, Store, TypedFunc, Val};
 
 use ::ir;
 use ::ir::diff;
+
+use crate::external::{ExternalData, ExternalSignatures, Implementations, lane_count};
 
 const RANDOM_SCRAMBLE: i64 = 0x42118159;
 
@@ -27,20 +30,30 @@ const MAX_MEMORY_SIZE: u64 = 0x100000000; // 4GB
 /// Sentinel track value marking end of note commands
 const COMMAND_SENTINEL: i32 = 0x7FFFFFFF;
 
+/// Import module of external members: `<name>` for a function, and
+/// `<name>.static` / `<name>.dynamic` for the two parts of a module.
+const EXTERNAL_IMPORT_MODULE: &str = "external";
+
 pub(crate) struct WasmCompiler {
 	engine: Engine,
-	linker: Linker<Arc<WasmRuntimeData>>,
-	gmdls_data: Arc<WasmRuntimeData>,
+	linker: Linker<StoreData>,
+	runtime_data: Arc<WasmRuntimeData>,
+	signatures: ExternalSignatures,
 }
 
 struct WasmRuntimeData {
 	gmdls_data: Vec<u8>,
 }
 
+struct StoreData {
+	runtime_data: Arc<WasmRuntimeData>,
+	externals: ExternalData,
+}
+
 pub(crate) struct WasmInstanceInner {
 	program: ir::Program,
 	wasm: Vec<u8>,
-	store: Store<Arc<WasmRuntimeData>>,
+	store: Store<StoreData>,
 	initialize_func: TypedFunc<f32, ()>,
 	note_on_func: TypedFunc<(i32, i32, i32), ()>,
 	note_off_func: TypedFunc<(i32, i32), ()>,
@@ -50,7 +63,7 @@ pub(crate) struct WasmInstanceInner {
 }
 
 impl WasmCompiler {
-	pub(crate) fn new() -> Result<Self> {
+	pub(crate) fn new(signatures: ExternalSignatures) -> Result<Self> {
 		let mut config = Config::new();
 		if cfg!(target_os = "windows") {
 			config.profiler(wasmtime::ProfilingStrategy::VTune);
@@ -67,9 +80,11 @@ impl WasmCompiler {
 		linker.func_wrap("math", "sincos", |x: f64| -> (f64, f64) { x.sin_cos() })?;
 		linker.func_wrap("math", "tan", |x: f64| -> f64 { x.tan() })?;
 
-		linker.func_wrap("gmdls", "sample", |caller: Caller<'_, Arc<WasmRuntimeData>>, sound_id: i32, index: i32| -> i32 {
-			gmdls_lookup(&caller.data().gmdls_data, sound_id, index)
+		linker.func_wrap("gmdls", "sample", |caller: Caller<'_, StoreData>, sound_id: i32, index: i32| -> i32 {
+			gmdls_lookup(&caller.data().runtime_data.gmdls_data, sound_id, index)
 		})?;
+
+		define_external_imports(&engine, &mut linker, &signatures)?;
 
 		let gmdls_data = load_gmdls();
 		let data = Arc::new(WasmRuntimeData { gmdls_data });
@@ -77,18 +92,74 @@ impl WasmCompiler {
 		Ok(Self {
 			engine,
 			linker,
-			gmdls_data: data,
+			runtime_data: data,
+			signatures,
 		})
 	}
 }
 
+/// Every registered implementation is available as an import; a program only
+/// imports the external members it uses. Values cross as plain `f64` lanes.
+fn define_external_imports(engine: &Engine, linker: &mut Linker<StoreData>, signatures: &ExternalSignatures) -> Result<()> {
+	use wasmtime::{FuncType, ValType};
+	let lanes = |widths: &[ir::Width]| repeat_n(ValType::F64, lane_count(widths.iter().copied()));
+
+	for (index, (name, signature)) in signatures.functions.iter().enumerate() {
+		let ty = FuncType::new(engine, lanes(&signature.inputs), lanes(&signature.outputs));
+		let member = name.clone();
+		linker.func_new(EXTERNAL_IMPORT_MODULE, name, ty, move |mut caller, params, results| {
+			caller.data_mut().externals.call_function(index, &member, params, results)
+				.map_err(wasmtime::Error::from_anyhow)
+		})?;
+	}
+
+	for (index, (name, signature)) in signatures.modules.iter().enumerate() {
+		// Static part: static inputs -> state handle
+		let ty = FuncType::new(engine, lanes(&signature.static_inputs), [ValType::I32]);
+		let member = name.clone();
+		linker.func_new(EXTERNAL_IMPORT_MODULE, &format!("{}.static", name), ty, move |mut caller, params, results| {
+			let handle = caller.data_mut().externals.init_module(index, &member, params)
+				.map_err(wasmtime::Error::from_anyhow)?;
+			results[0] = Val::I32(handle);
+			Ok(())
+		})?;
+
+		// Dynamic part: state handle, dynamic inputs -> outputs
+		let params = once(ValType::I32).chain(lanes(&signature.dynamic.inputs));
+		let ty = FuncType::new(engine, params, lanes(&signature.dynamic.outputs));
+		let member = name.clone();
+		linker.func_new(EXTERNAL_IMPORT_MODULE, &format!("{}.dynamic", name), ty, move |mut caller, params, results| {
+			caller.data_mut().externals.process_module(index, &member, params, results)
+				.map_err(wasmtime::Error::from_anyhow)
+		})?;
+	}
+
+	Ok(())
+}
+
+/// Compile a program to a Wasm module. Its `external` imports are left for
+/// whoever instantiates the module to supply.
+pub(crate) fn compile_program(program: &ir::Program) -> Result<Vec<u8>> {
+	let constants = diff::collect_constants(program);
+	compile_to_wasm(program, &constants)
+}
+
 impl WasmCompiler {
+	/// Check that the program's external members match the registered implementations.
+	pub(crate) fn check_externals(&self, program: &ir::Program) -> Result<()> {
+		self.signatures.check_program(program)
+	}
+
 	pub(crate) fn compile_and_instantiate(&self, program: &ir::Program) -> Result<WasmInstanceInner> {
 		let constants = diff::collect_constants(program);
 		let n_constants = constants.len();
 		let wasm = compile_to_wasm(program, &constants)?;
 		let module = Module::from_binary(&self.engine, &wasm)?;
-		let mut store = Store::new(&self.engine, self.gmdls_data.clone());
+		let data = StoreData {
+			runtime_data: self.runtime_data.clone(),
+			externals: ExternalData::new(self.signatures.modules.len()),
+		};
+		let mut store = Store::new(&self.engine, data);
 		let instance = self.linker.instantiate(&mut store, &module)?;
 		let initialize_func = instance.get_typed_func::<f32, ()>(&mut store, "initialize")?;
 		let note_on_func = instance.get_typed_func::<(i32, i32, i32), ()>(&mut store, "note_on")?;
@@ -124,8 +195,18 @@ impl WasmInstanceInner {
 	}
 
 	pub(crate) fn initialize(&mut self, sample_rate: f32) -> Result<()> {
+		// The static parts run again and create new states.
+		self.store.data_mut().externals.clear_states();
 		self.initialize_func.call(&mut self.store, sample_rate)?;
 		Ok(())
+	}
+
+	pub(crate) fn take_implementations(&mut self) -> Option<Implementations> {
+		self.store.data_mut().externals.implementations.take()
+	}
+
+	pub(crate) fn set_implementations(&mut self, implementations: Option<Implementations>) {
+		self.store.data_mut().externals.implementations = implementations;
 	}
 
 	pub(crate) fn next_sample(&mut self) -> Result<[f64; 2]> {
@@ -180,6 +261,7 @@ impl WasmInstanceInner {
 }
 
 fn compile_to_wasm(program: &ir::Program, constants: &[u32]) -> Result<Vec<u8>> {
+	check_external_procedures(program)?;
 	let config = ModuleConfig::new();
 	let mut module = walrus::Module::with_config(config);
 	let memory = module.memories.add_local(false, false, INITIAL_MEMORY_SIZE >> 16, Some(MAX_MEMORY_SIZE >> 16), None);
@@ -258,6 +340,7 @@ fn compile_to_wasm(program: &ir::Program, constants: &[u32]) -> Result<Vec<u8>> 
 		buffer_alloc_fn,
 		gmdls_sample_fn,
 		function_id_map: HashMap::new(),
+		external_function_ids: HashMap::new(),
 		constant_globals,
 		proc_const_starts,
 		current_const_slot: Cell::new(0),
@@ -266,6 +349,41 @@ fn compile_to_wasm(program: &ir::Program, constants: &[u32]) -> Result<Vec<u8>> 
 	generator.generate()?;
 
 	Ok(generator.module().emit_wasm())
+}
+
+/// External procedures can only take and return mono or stereo numbers, the
+/// static part of a module produces no outputs, and every `CallExternal`
+/// must name an external procedure.
+fn check_external_procedures(program: &ir::Program) -> Result<()> {
+	use ir::ProcedureKind::*;
+	for external in &program.externals {
+		let supported_types = external.inputs.iter().chain(&external.outputs).all(|t| {
+			t.value_type == ir::ValueType::Number && t.width != ir::Width::Generic
+		});
+		let supported_kind = match external.kind {
+			Function | Module { scope: ir::Scope::Dynamic } => true,
+			Module { scope: ir::Scope::Static } => external.outputs.is_empty(),
+			Instrument { .. } => false,
+		};
+		if !supported_types || !supported_kind {
+			return Err(anyhow!("Unsupported external procedure: {}", external));
+		}
+	}
+	for procedure in &program.procedures {
+		for instr in &procedure.code {
+			if let &ir::Instruction::CallExternal(index) = instr && index as usize >= program.externals.len() {
+				return Err(anyhow!("Invalid {} in procedure '{}'", instr, procedure.name));
+			}
+		}
+	}
+	Ok(())
+}
+
+/// What a `Call`, `PlayInstrument` or `CallExternal` instruction calls.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+enum Callee {
+	Procedure(u16),
+	External(u16),
 }
 
 /// Build folded_multiply(val: i32) -> i32:
@@ -393,6 +511,7 @@ struct WasmGenerator<'ir> {
 	gmdls_sample_fn: FunctionId,
 
 	function_id_map: HashMap<u16, FunctionId>,
+	external_function_ids: HashMap<u16, FunctionId>,
 
 	constant_globals: Vec<GlobalId>,
 	proc_const_starts: Vec<u32>,
@@ -433,6 +552,16 @@ impl<'ir> WasmGenerator<'ir> {
 		}
 	}
 
+	fn get_external_function_id(&mut self, index: u16) -> FunctionId {
+		if let Some(&id) = self.external_function_ids.get(&index) {
+			id
+		} else {
+			let id = self.generate_external_function(index);
+			self.external_function_ids.insert(index, id);
+			id
+		}
+	}
+
 	fn generate_function_for_procedure(&mut self, proc_id: u16) -> FunctionId {
 		let procedure = &self.program.procedures[proc_id as usize];
 
@@ -440,13 +569,16 @@ impl<'ir> WasmGenerator<'ir> {
 		let mut callees = HashMap::new();
 		for instr in &procedure.code {
 			use ir::Instruction::*;
-			match instr {
+			match *instr {
 				Call(proc_id, ..) => {
-					callees.entry(*proc_id).or_insert_with(|| self.get_function_id(*proc_id));
+					callees.entry(Callee::Procedure(proc_id)).or_insert_with(|| self.get_function_id(proc_id));
 				}
 				PlayInstrument(static_proc_id, dynamic_proc_id) => {
-					callees.entry(*static_proc_id).or_insert_with(|| self.get_function_id(*static_proc_id));
-					callees.entry(*dynamic_proc_id).or_insert_with(|| self.get_function_id(*dynamic_proc_id));
+					callees.entry(Callee::Procedure(static_proc_id)).or_insert_with(|| self.get_function_id(static_proc_id));
+					callees.entry(Callee::Procedure(dynamic_proc_id)).or_insert_with(|| self.get_function_id(dynamic_proc_id));
+				}
+				CallExternal(index) => {
+					callees.entry(Callee::External(index)).or_insert_with(|| self.get_external_function_id(index));
 				}
 				_ => {}
 			}
@@ -480,13 +612,108 @@ impl<'ir> WasmGenerator<'ir> {
 		builder.finish(args, &mut self.module().funcs)
 	}
 
+	/// A function with the usual V128 calling convention around the import for
+	/// an external procedure, which takes and returns plain `f64` lanes. The
+	/// static part of a module stores the state handle returned by its import
+	/// in a cell, exactly where a Zing module would keep its cells, and the
+	/// dynamic part reads it back and passes it to its import.
+	fn generate_external_function(&mut self, index: u16) -> FunctionId {
+		let external = &self.program.externals[index as usize];
+		let (inputs, outputs) = (&external.inputs, &external.outputs);
+		let scope = match external.kind {
+			ir::ProcedureKind::Module { scope } => Some(scope),
+			_ => None,
+		};
+		let input_lanes = lane_count(inputs.iter().map(|t| t.width));
+		let output_lanes = lane_count(outputs.iter().map(|t| t.width));
+		let (import_name, import_params, import_results) = match scope {
+			Some(ir::Scope::Static) => (
+				format!("{}.static", external.name),
+				vec![ValType::F64; input_lanes],
+				vec![ValType::I32],
+			),
+			Some(ir::Scope::Dynamic) => (
+				format!("{}.dynamic", external.name),
+				once(ValType::I32).chain(repeat_n(ValType::F64, input_lanes)).collect(),
+				vec![ValType::F64; output_lanes],
+			),
+			None => (
+				external.name.clone(),
+				vec![ValType::F64; input_lanes],
+				vec![ValType::F64; output_lanes],
+			),
+		};
+		let import_type = self.module().types.add(&import_params, &import_results);
+		let (import_fn, _) = self.module().add_import_func(EXTERNAL_IMPORT_MODULE, &import_name, import_type);
+
+		let params = inputs.iter().map(|_| ValType::V128).collect::<Vec<_>>();
+		let results = outputs.iter().map(|_| ValType::V128).collect::<Vec<_>>();
+		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
+		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
+		builder.name(format!("external: {}", import_name));
+		let mut b = builder.func_body();
+
+		let advance_state_ptr = |b: &mut InstrSeqBuilder| {
+			b.global_get(self.state_ptr);
+			b.i32_const(16);
+			b.binop(BinaryOp::I32Add);
+			b.global_set(self.state_ptr);
+		};
+
+		match scope {
+			Some(ir::Scope::Static) => {
+				// Address of the cell for the state handle
+				b.global_get(self.state_ptr);
+			},
+			Some(ir::Scope::Dynamic) => {
+				// State handle from the cell
+				b.global_get(self.state_ptr);
+				b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+				advance_state_ptr(&mut b);
+			},
+			None => {},
+		}
+
+		// Mono values have the same value in both lanes; pass lane 0.
+		for (arg, input) in args.iter().zip(inputs) {
+			b.local_get(*arg);
+			b.unop(UnaryOp::F64x2ExtractLane { idx: 0 });
+			if input.width == ir::Width::Stereo {
+				b.local_get(*arg);
+				b.unop(UnaryOp::F64x2ExtractLane { idx: 1 });
+			}
+		}
+		b.call(import_fn);
+
+		if scope == Some(ir::Scope::Static) {
+			b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
+			advance_state_ptr(&mut b);
+		} else {
+			let lanes = (0..output_lanes).map(|_| self.module().locals.add(ValType::F64)).collect::<Vec<_>>();
+			for lane in lanes.iter().rev() {
+				b.local_set(*lane);
+			}
+			let mut lanes = lanes.iter();
+			for output in outputs {
+				b.local_get(*lanes.next().unwrap());
+				b.unop(UnaryOp::F64x2Splat);
+				if output.width == ir::Width::Stereo {
+					b.local_get(*lanes.next().unwrap());
+					b.binop(BinaryOp::F64x2ReplaceLane { idx: 1 });
+				}
+			}
+		}
+
+		builder.finish(args, &mut self.module().funcs)
+	}
+
 	fn generate_function_for_procedure_inner(
 		&self,
 		code: &[ir::Instruction],
 		pc: &mut usize,
 		b: &mut InstrSeqBuilder,
 		stack: &mut Vec<LocalId>,
-		callees: &HashMap<u16, FunctionId>,
+		callees: &HashMap<Callee, FunctionId>,
 	) {
 		// Helper: pop local from operand stack and push to wasm stack
 		macro_rules! pop {
@@ -544,17 +771,26 @@ impl<'ir> WasmGenerator<'ir> {
 					stack.push(local);
 				},
 
-				Call(proc_id, ..) => {
-					let procedure = &self.program.procedures[proc_id as usize];
-					let id = callees[&proc_id];
+				Call(..) | CallExternal(..) => {
+					let (id, input_count, output_count) = match code[*pc] {
+						Call(proc_id, ..) => {
+							let procedure = &self.program.procedures[proc_id as usize];
+							(callees[&Callee::Procedure(proc_id)], procedure.inputs.len(), procedure.outputs.len())
+						},
+						CallExternal(index) => {
+							let external = &self.program.externals[index as usize];
+							(callees[&Callee::External(index)], external.inputs.len(), external.outputs.len())
+						},
+						_ => unreachable!(),
+					};
 
-					let split_point = stack.len() - procedure.inputs.len();
+					let split_point = stack.len() - input_count;
 					let inputs = stack.split_off(split_point);
 					for input in inputs {
 						b.local_get(input);
 					}
 					b.call(id);
-					let outputs = procedure.outputs.iter().map(|_| self.module().locals.add(ValType::V128)).collect::<Vec<_>>();
+					let outputs = (0..output_count).map(|_| self.module().locals.add(ValType::V128)).collect::<Vec<_>>();
 					for output in outputs.iter().rev() {
 						b.local_set(*output);
 					}
@@ -1250,8 +1486,8 @@ impl<'ir> WasmGenerator<'ir> {
 				PlayInstrument(static_proc_id, dynamic_proc_id) => {
 					let static_proc = &self.program.procedures[static_proc_id as usize];
 					let dynamic_proc = &self.program.procedures[dynamic_proc_id as usize];
-					let static_fn = callees[&static_proc_id];
-					let dynamic_fn = callees[&dynamic_proc_id];
+					let static_fn = callees[&Callee::Procedure(static_proc_id)];
+					let dynamic_fn = callees[&Callee::Procedure(dynamic_proc_id)];
 
 					let saved_state = self.module().locals.add(ValType::I32);
 					let current_track = self.module().locals.add(ValType::I32);

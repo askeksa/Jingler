@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
 use nih_plug::prelude::*;
-use runtime::{JinglerRuntime, JinglerRuntimeHandle, SubmitOutcome, default_jingler_runtime};
+use runtime::{Externals, JinglerRuntime, JinglerRuntimeHandle, SubmitOutcome, default_jingler_runtime};
 
 const NUM_PARAMS: usize = 15;
 const LISTEN_ADDR: &str = "0.0.0.0:26127";
@@ -29,7 +29,8 @@ static LISTENER_INIT: Once = Once::new();
 
 fn global_runtime() -> Option<Arc<GlobalRuntime>> {
 	GLOBAL_RUNTIME.get_or_init(|| {
-		match default_jingler_runtime() {
+		// No external members are implemented yet.
+		match default_jingler_runtime(Externals::new()) {
 			Ok((listener, handle)) => Some(Arc::new(GlobalRuntime {
 				listener,
 				handle: Mutex::new(handle),

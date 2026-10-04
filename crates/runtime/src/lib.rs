@@ -1,3 +1,4 @@
+mod external;
 mod wasm;
 
 use std::collections::HashMap;
@@ -8,7 +9,12 @@ use anyhow::Result;
 
 use ir::diff::{Diff, diff_programs};
 
+use crate::external::Implementations;
 use crate::wasm::{WasmCompiler, WasmInstanceInner};
+
+pub use crate::external::{
+	ExternalFunction, ExternalModule, Externals, FALSE, FnFunction, TRUE, Value, Values, from_fn,
+};
 
 /// Listener-side handle to the Jingler runtime. Cheap to clone via `Arc`.
 ///
@@ -17,6 +23,9 @@ use crate::wasm::{WasmCompiler, WasmInstanceInner};
 /// change) or queues constant-value updates (only `Constant(u32)` values
 /// differed). All staged work is picked up on the audio side by
 /// `JinglerRuntimeHandle::poll_pending`.
+///
+/// A program whose external members don't match the registered
+/// implementations is rejected, leaving the current program in place.
 pub trait JinglerRuntime: Send + Sync {
 	fn submit_program(&self, program: &ir::Program) -> Result<SubmitOutcome>;
 }
@@ -109,6 +118,7 @@ impl JinglerRuntime for JinglerRuntimeImpl {
 				Ok(SubmitOutcome::ConstantUpdate { count })
 			}
 			Diff::Structural => {
+				self.inner.compiler.check_externals(program)?;
 				// Compile outside the pending lock — this is the expensive step.
 				let instance = self.inner.compiler.compile_and_instantiate(program)?;
 				{
@@ -129,6 +139,9 @@ impl JinglerRuntime for JinglerRuntimeImpl {
 struct JinglerRuntimeHandleImpl {
 	inner: Arc<Inner>,
 	instance: Option<WasmInstanceInner>,
+	/// Implementations of external members while no instance holds them.
+	/// They move into each installed instance, carrying their own data along.
+	implementations: Option<Implementations>,
 	sample_rate: Option<f32>,
 }
 
@@ -151,8 +164,21 @@ impl JinglerRuntimeHandle for JinglerRuntimeHandleImpl {
 		drop(pending);
 
 		if let Some(mut inst) = new_instance {
+			let implementations = match self.instance.as_mut() {
+				Some(old) => old.take_implementations(),
+				None => self.implementations.take(),
+			};
+			inst.set_implementations(implementations);
 			if let Some(sr) = self.sample_rate {
-				inst.initialize(sr)?;
+				if let Err(e) = inst.initialize(sr) {
+					// Keep the implementations for the program still playing.
+					let implementations = inst.take_implementations();
+					match self.instance.as_mut() {
+						Some(old) => old.set_implementations(implementations),
+						None => self.implementations = implementations,
+					}
+					return Err(e);
+				}
 			}
 			self.instance = Some(inst);
 		}
@@ -214,8 +240,11 @@ impl JinglerRuntimeHandle for JinglerRuntimeHandleImpl {
 	}
 }
 
-pub fn default_jingler_runtime() -> Result<(Arc<dyn JinglerRuntime>, Box<dyn JinglerRuntimeHandle>)> {
-	let compiler = WasmCompiler::new()?;
+/// Create the runtime, with implementations of the external members that
+/// programs may use. The implementations are fixed from here on.
+pub fn default_jingler_runtime(externals: Externals) -> Result<(Arc<dyn JinglerRuntime>, Box<dyn JinglerRuntimeHandle>)> {
+	let (signatures, implementations) = externals.into_parts();
+	let compiler = WasmCompiler::new(signatures)?;
 	let inner = Arc::new(Inner {
 		compiler,
 		pending_flag: AtomicBool::new(false),
@@ -231,7 +260,16 @@ pub fn default_jingler_runtime() -> Result<(Arc<dyn JinglerRuntime>, Box<dyn Jin
 	let handle: Box<dyn JinglerRuntimeHandle> = Box::new(JinglerRuntimeHandleImpl {
 		inner,
 		instance: None,
+		implementations: Some(implementations),
 		sample_rate: None,
 	});
 	Ok((rt, handle))
+}
+
+/// Compile a program to a Wasm module without instantiating it. The module
+/// imports its external members from the `external` module (`<name>` for a
+/// function, `<name>.static` and `<name>.dynamic` for a module); supplying
+/// them is up to whoever instantiates it.
+pub fn compile_wasm(program: &ir::Program) -> Result<Vec<u8>> {
+	wasm::compile_program(program)
 }

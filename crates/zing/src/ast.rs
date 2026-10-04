@@ -25,6 +25,8 @@ pub struct Parameter {
 
 #[derive(Clone, Debug)]
 pub struct Member {
+	/// Implemented by the embedder of the runtime; has no body.
+	pub external: bool,
 	pub context: Context,
 	pub kind: MemberKind,
 	pub midi: Vec<Id>,
@@ -73,7 +75,7 @@ pub struct Type {
 	pub value_type: Option<ValueType>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Scope {
 	Static,
 	Dynamic,

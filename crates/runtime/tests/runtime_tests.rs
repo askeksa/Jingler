@@ -1,4 +1,4 @@
-use runtime::{JinglerRuntimeHandle, default_jingler_runtime};
+use runtime::{Externals, JinglerRuntimeHandle, default_jingler_runtime};
 use zing::compiler::Compiler;
 
 const SAMPLE_RATE: f32 = 44100.0;
@@ -11,7 +11,7 @@ fn compile(src: &str) -> ir::Program {
 
 fn make_runtime(src: &str) -> Box<dyn JinglerRuntimeHandle> {
 	let program = compile(src);
-	let (rt, mut handle) = default_jingler_runtime().unwrap();
+	let (rt, mut handle) = default_jingler_runtime(Externals::new()).unwrap();
 	rt.submit_program(&program).unwrap();
 	handle.initialize(SAMPLE_RATE).unwrap();
 	handle.poll_pending().unwrap();
@@ -1847,12 +1847,12 @@ fn multiple_instances_from_same_runtime() {
 	// produce identical output on the same program.
 	let program = compile("global module main () -> (out: stereo)  out = 1.0");
 
-	let (rt1, mut inst1) = default_jingler_runtime().unwrap();
+	let (rt1, mut inst1) = default_jingler_runtime(Externals::new()).unwrap();
 	rt1.submit_program(&program).unwrap();
 	inst1.initialize(SAMPLE_RATE).unwrap();
 	inst1.poll_pending().unwrap();
 
-	let (rt2, mut inst2) = default_jingler_runtime().unwrap();
+	let (rt2, mut inst2) = default_jingler_runtime(Externals::new()).unwrap();
 	rt2.submit_program(&program).unwrap();
 	inst2.initialize(SAMPLE_RATE).unwrap();
 	inst2.poll_pending().unwrap();
@@ -1871,12 +1871,12 @@ fn multiple_instances_independent_state() {
 	"#;
 	let program = compile(src);
 
-	let (rt1, mut inst1) = default_jingler_runtime().unwrap();
+	let (rt1, mut inst1) = default_jingler_runtime(Externals::new()).unwrap();
 	rt1.submit_program(&program).unwrap();
 	inst1.initialize(SAMPLE_RATE).unwrap();
 	inst1.poll_pending().unwrap();
 
-	let (rt2, mut inst2) = default_jingler_runtime().unwrap();
+	let (rt2, mut inst2) = default_jingler_runtime(Externals::new()).unwrap();
 	rt2.submit_program(&program).unwrap();
 	inst2.initialize(SAMPLE_RATE).unwrap();
 	inst2.poll_pending().unwrap();
@@ -1939,7 +1939,7 @@ fn reinitialize_kills_notes() {
 fn reinitialize_with_different_sample_rate() {
 	let src = "global module main () -> (out: stereo)  out = samplerate()";
 	let program = compile(src);
-	let (rt, mut inst) = default_jingler_runtime().unwrap();
+	let (rt, mut inst) = default_jingler_runtime(Externals::new()).unwrap();
 	rt.submit_program(&program).unwrap();
 	inst.poll_pending().unwrap();
 
@@ -1964,7 +1964,7 @@ mod live_update_tests {
 		std::sync::Arc<dyn runtime::JinglerRuntime>,
 		Box<dyn JinglerRuntimeHandle>,
 	) {
-		default_jingler_runtime().unwrap()
+		default_jingler_runtime(Externals::new()).unwrap()
 	}
 
 	#[test]

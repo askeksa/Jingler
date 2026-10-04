@@ -30,9 +30,14 @@ ParameterDefault: Option<f64> = {
 };
 
 Member: Member = {
-	<context:Context> <kind:MemberKind> <midi:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
+	<external:External> <context:Context> <kind:MemberKind> <midi:MidiParam*> <name:Id> <inputs:Pattern> "->" <outputs:Pattern> <body:Statement*>
 		=> Member {<>},
 };
+
+External: bool = {
+	=> false,
+	"external" => true,
+}
 
 Context: Context = {
 	=> Context::Universal,

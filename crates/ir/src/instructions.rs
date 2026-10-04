@@ -100,6 +100,9 @@ pub enum Instruction {
 
 	// Procedures/instruments/notes
 	Call(u16, Option<Width>),
+	// Index into `Program::externals`. The static part of an external module
+	// keeps the state for the call site in a cell, which the dynamic part reads.
+	CallExternal(u16),
 	PlayInstrument(u16, u16),
 	Kill,
 	ReadNoteProperty(NoteProperty),
@@ -172,6 +175,7 @@ impl Instruction {
 			BufferInitEnd => (2, 1),
 
 			Call(..) => panic!("stack_change on 'call'"),
+			CallExternal(..) => panic!("stack_change on 'call_external'"),
 			PlayInstrument(..) => (0, 0),
 			Kill => (0, 0),
 			ReadNoteProperty(..) => (0, 1),

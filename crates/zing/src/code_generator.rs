@@ -18,7 +18,7 @@ pub fn generate_code<'ast, 'comp, 'names>(
 		callees: Vec<Vec<usize>>,
 		precompiled_callees: Vec<Vec<*const PrecompiledMember>>,
 		compiler: &mut Compiler)
--> Result<(Vec<ir::Procedure>, usize, usize, Vec<ir::MidiMapping>), CompileError> {
+-> Result<(Vec<ir::Procedure>, Vec<ir::ExternalProcedure>, usize, usize, Vec<ir::MidiMapping>), CompileError> {
 	let mut cg = CodeGenerator::new(names, compiler, signatures, stored_widths, callees, precompiled_callees);
 	let main_index = match names.lookup_member(&"main".to_string()).unwrap().definition {
 		MemberDefinition::Declaration { member_index } => member_index,
@@ -28,7 +28,7 @@ pub fn generate_code<'ast, 'comp, 'names>(
 	let main_static_proc_id = cg.static_proc_id[main_index] as usize;
 	let main_dynamic_proc_id = cg.dynamic_proc_id[main_index] as usize;
 	let track_order = cg.compute_track_order(main_index);
-	Ok((take(&mut cg.procedures), main_static_proc_id, main_dynamic_proc_id, track_order))
+	Ok((take(&mut cg.procedures), take(&mut cg.externals), main_static_proc_id, main_dynamic_proc_id, track_order))
 }
 
 fn statement_scope(statement: &Statement) -> Option<Scope> {
@@ -54,8 +54,8 @@ enum ModuleCall<'ast> {
 	},
 	Call {
 		inputs: Vec<Type>,
-		static_proc_id: u16,
-		generic_width: Option<Width>,
+		/// Runs the static part of the module
+		static_call: Instruction,
 		args: &'ast Vec<Expression>,
 	},
 	For {
@@ -132,6 +132,12 @@ struct CodeGenerator<'ast, 'comp, 'names> {
 	precompiled_proc_ids: HashMap<*const PrecompiledMember, Vec<u16>>,
 	/// Member and scope for ID
 	member_for_id: Vec<(MemberRef, Option<Scope>)>,
+	/// External procedure ID for a member and scope (`None` for a function)
+	external_id: HashMap<(usize, Option<Scope>), u16>,
+	/// Member and scope for external procedure ID
+	member_for_external_id: Vec<(usize, Option<Scope>)>,
+	/// The external procedures of the external members reachable from main
+	externals: Vec<ir::ExternalProcedure>,
 	/// The current member index
 	current_member_index: usize,
 	/// The current member kind
@@ -202,6 +208,9 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			dynamic_proc_id: vec![0; member_count],
 			precompiled_proc_ids: HashMap::new(),
 			member_for_id: vec![],
+			external_id: HashMap::new(),
+			member_for_external_id: vec![],
+			externals: vec![],
 			current_member_index: 0,
 			current_kind: MemberKind::Module,
 			current_scope: None,
@@ -264,6 +273,16 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						MemberKind::Instrument => {
 							(inputs.len() + 1, inputs.len() + 1)
 						},
+					}
+				},
+				Instruction::CallExternal(id) => {
+					let (member_index, scope) = self.member_for_external_id[id as usize];
+					let FullSignature { inputs, outputs, .. } = &self.signatures[member_index];
+					let input_count = |scope| inputs.iter().filter(|t| t.scope == Some(scope)).count();
+					match scope {
+						None => (inputs.len(), outputs.len()),
+						Some(Scope::Static) => (input_count(Scope::Static), 0),
+						Some(Scope::Dynamic) => (input_count(Scope::Dynamic), outputs.len()),
 					}
 				},
 				_ => inst.stack_change(),
@@ -345,7 +364,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						kind,
 						inputs: self.make_type_list(member.inputs().iter().copied(), scope),
 						outputs: self.make_type_list(member.outputs().iter().copied(), scope),
-						code: member.instructions()[index].to_vec()
+						code: member.instructions()[index].to_vec(),
 					}
 				},
 				MemberDefinition::BuiltIn { .. } => {
@@ -450,6 +469,63 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		})
 	}
 
+	/// An external procedure has the signature of the corresponding procedure
+	/// of a Zing member, but the embedder implements it.
+	fn external_procedure(&self, member: &Member, scope: Option<Scope>) -> ir::ExternalProcedure {
+		let kind = match (member.kind, scope) {
+			(MemberKind::Function, _) => ir::ProcedureKind::Function,
+			(MemberKind::Module, Some(Scope::Static)) => ir::ProcedureKind::Module { scope: ir::Scope::Static },
+			(MemberKind::Module, _) => ir::ProcedureKind::Module { scope: ir::Scope::Dynamic },
+			(MemberKind::Instrument, _) => panic!("External instrument"),
+		};
+		ir::ExternalProcedure {
+			name: member.name.text.clone(),
+			kind,
+			inputs: self.make_proc_type_list(&member.inputs, scope),
+			outputs: self.make_proc_type_list(&member.outputs, scope),
+		}
+	}
+
+	/// Like procedures: one per external function, and the dynamic followed
+	/// by the static part of each external module.
+	fn assign_external_ids(&mut self, program: &Program) {
+		for (member_index, member) in program.members.iter().enumerate() {
+			if self.live[member_index] && member.external {
+				let scopes: &[Option<Scope>] = match member.kind {
+					MemberKind::Function => &[None],
+					_ => &[Some(Scope::Dynamic), Some(Scope::Static)],
+				};
+				for &scope in scopes {
+					self.external_id.insert((member_index, scope), self.externals.len() as u16);
+					self.member_for_external_id.push((member_index, scope));
+					self.externals.push(self.external_procedure(member, scope));
+				}
+			}
+		}
+	}
+
+	/// Instruction running a function.
+	fn function_call(&self, member_index: usize, width: Option<Width>) -> Instruction {
+		if let Some(&id) = self.external_id.get(&(member_index, None)) {
+			Instruction::CallExternal(id)
+		} else {
+			Instruction::Call(self.function_proc_id[member_index], width.to_ir())
+		}
+	}
+
+	/// Instruction running the static or dynamic part of a module.
+	fn module_call(&self, member_index: usize, scope: Scope, width: Option<Width>) -> Instruction {
+		if let Some(&id) = self.external_id.get(&(member_index, Some(scope))) {
+			Instruction::CallExternal(id)
+		} else {
+			let proc_id = match scope {
+				Scope::Static => self.static_proc_id[member_index],
+				Scope::Dynamic => self.dynamic_proc_id[member_index],
+			};
+			Instruction::Call(proc_id, width.to_ir())
+		}
+	}
+
 	fn propagate_liveness(&mut self, member_index: usize) {
 		if !self.live[member_index] {
 			self.live[member_index] = true;
@@ -464,7 +540,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 
 	fn assign_ids(&mut self, program: &Program, pred: &dyn Fn(MemberKind, &str) -> bool) {
 		for (member_index, member) in program.members.iter().enumerate() {
-			if self.live[member_index] && pred(member.kind, member.name.text.as_str()) {
+			if self.live[member_index] && !member.external && pred(member.kind, member.name.text.as_str()) {
 				let mut push_id = |proc_id: &mut Vec<u16>, scope: Option<Scope>| {
 					proc_id[member_index] = self.member_for_id.len() as u16;
 					let member_ref = MemberRef {
@@ -516,6 +592,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.assign_ids(program, &|kind, name| kind == MemberKind::Module && name != "main");
 		self.assign_precompiled_ids(PRECOMPILED_FUNCTIONS, MemberKind::Function, &[None]);
 		self.assign_ids(program, &|kind, _| kind == MemberKind::Function);
+		self.assign_external_ids(program);
 	}
 
 	fn inlineable_item<'a>(&self, node: &'a Pattern) -> Option<&'a PatternItem> {
@@ -655,13 +732,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						},
 					}
 				},
-				&ModuleCall::Call { ref inputs, static_proc_id, generic_width, args } => {
+				&ModuleCall::Call { ref inputs, static_call, args } => {
 					for (input_type, arg) in inputs.clone().iter().zip(args) {
 						if input_type.scope == Some(Scope::Static) {
 							self.generate(arg);
 						}
 					}
-					self.emit(code![Call(static_proc_id, generic_width.to_ir())]);
+					self.emit(&[static_call]);
 				},
 				ModuleCall::For { name, count, nested_calls } => {
 					self.generate(count);
@@ -1131,10 +1208,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									}
 								}
 								let key = &raw const **member;
+								let static_call = Instruction::Call(self.precompiled_proc_ids[&key][1], self.retrieve_width(exp).to_ir());
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs.to_vec(),
-									static_proc_id: self.precompiled_proc_ids[&key][1],
-									generic_width: self.retrieve_width(exp),
+									static_call,
 									args,
 								});
 								let proc_id = self.precompiled_proc_ids[&key][0];
@@ -1150,10 +1227,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 										self.generate(arg);
 									}
 								}
+								let width = self.retrieve_width(exp);
 								self.module_call.push(ModuleCall::Call {
 									inputs: inputs,
-									static_proc_id: self.static_proc_id[*member_index],
-									generic_width: self.retrieve_width(exp),
+									static_call: self.module_call(*member_index, Scope::Static, width),
 									args,
 								});
 								if context == Context::Global {
@@ -1163,8 +1240,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									let node = TrackOrderNode::Module { member_index: *member_index, args: resolved_args };
 									self.track_order[current_member_index].push(node);
 								}
-								let proc_id = self.dynamic_proc_id[*member_index];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
+								self.emit(&[self.module_call(*member_index, Scope::Dynamic, width)]);
 							},
 							(Function, BuiltIn { code, .. }) => {
 								for arg in args {
@@ -1184,8 +1260,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 								for arg in args {
 									self.generate(arg);
 								}
-								let proc_id = self.function_proc_id[*member_index];
-								self.emit(code![Call(proc_id, self.retrieve_width(exp).to_ir())]);
+								self.emit(&[self.function_call(*member_index, self.retrieve_width(exp))]);
 							},
 							(Instrument, Declaration { member_index }) => {
 								let current_member_index = self.current_member_index;
@@ -1261,11 +1336,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							_ => panic!("Buffer initialization must be a call"),
 						};
 
-						let static_proc_id = self.static_proc_id[*member_index];
-						let dynamic_proc_id = self.dynamic_proc_id[*member_index];
-
 						let body_width = self.retrieve_width(body);
 						let buffer_width = self.retrieve_width(exp);
+						let static_call = self.module_call(*member_index, Scope::Static, body_width);
+						let dynamic_call = self.module_call(*member_index, Scope::Dynamic, body_width);
 
 						self.generate(length);
 						for arg in args {
@@ -1273,12 +1347,12 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						}
 						self.emit(code![
 							StateEnter,
-							Call(static_proc_id, body_width.to_ir()),
+							static_call,
 							StateLeave,
 							BufferAlloc(buffer_width.unwrap_or(Width::Mono).to_ir()),
 							BufferInitStart,
 							StateEnter,
-							Call(dynamic_proc_id, body_width.to_ir()),
+							dynamic_call,
 							StateLeave
 						]);
 						if let Some(buffer_width) = buffer_width {

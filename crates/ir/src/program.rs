@@ -10,6 +10,9 @@ pub struct Program {
 	pub parameters: Vec<Parameter>,
 	// Procedures
 	pub procedures: Vec<Procedure>,
+	// External members used by the program, implemented by the embedder of
+	// the runtime and called with `CallExternal`
+	pub externals: Vec<ExternalProcedure>,
 	// Static procedure ID of the main module
 	pub main_static_proc_id: usize,
 	// Dynamic procedure ID of the main module
@@ -106,6 +109,17 @@ pub struct Procedure {
 	pub code: Vec<Instruction>,
 }
 
+/// A procedure implemented by the embedder of the runtime: an external
+/// function, or one part of an external module. The static part of a module
+/// keeps a state for the call site, which the dynamic part reads.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ExternalProcedure {
+	pub name: String,
+	pub kind: ProcedureKind,
+	pub inputs: Vec<Type>,
+	pub outputs: Vec<Type>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ProcedureKind {
 	Function,
@@ -141,6 +155,15 @@ pub struct Type {
 impl Display for Procedure {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
 		write!(f, "{} [{}]: ", self.name, self.kind)?;
+		write_list(f, &self.inputs)?;
+		write!(f, " -> ")?;
+		write_list(f, &self.outputs)
+	}
+}
+
+impl Display for ExternalProcedure {
+	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		write!(f, "{} [external {}]: ", self.name, self.kind)?;
 		write_list(f, &self.inputs)?;
 		write!(f, " -> ")?;
 		write_list(f, &self.outputs)
@@ -235,6 +258,7 @@ mod tests {
 				instrument("lead"),
 				procedure("helper", ProcedureKind::Function, vec![PlayInstrument(2, 3)]),
 			],
+			externals: vec![],
 			main_static_proc_id: 0,
 			main_dynamic_proc_id: 0,
 			track_order: vec![],
@@ -253,6 +277,7 @@ mod tests {
 				module("sub", vec![PlayInstrument(2, 2), Call(0, None)]),
 				instrument("beep"),
 			],
+			externals: vec![],
 			main_static_proc_id: 0,
 			main_dynamic_proc_id: 0,
 			track_order: vec![],

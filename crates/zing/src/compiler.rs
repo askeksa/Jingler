@@ -271,7 +271,7 @@ impl Compiler {
 		self.check_contexts(&mut program)?;
 		let names = Names::find(&program, self)?;
 		let (signatures, stored_widths, callees, precompiled_callees) = infer_types(&mut program, &names, self)?;
-		let (procedures, main_static_proc_id, main_dynamic_proc_id, track_order)
+		let (procedures, externals, main_static_proc_id, main_dynamic_proc_id, track_order)
 			= generate_code(&program, &names, signatures, stored_widths, callees, precompiled_callees, self)?;
 		let parameters = program.parameters.iter().map(|p| {
 			ir::Parameter {
@@ -287,6 +287,7 @@ impl Compiler {
 		Ok(ir::Program {
 			parameters,
 			procedures,
+			externals,
 			main_static_proc_id,
 			main_dynamic_proc_id,
 			track_order,
@@ -371,6 +372,12 @@ impl Compiler {
 	fn check_contexts(&mut self, program: &mut Program) -> Result<(), CompileError> {
 		let mut found_main = false;
 		for member in &mut program.members {
+			if member.external {
+				// Reported as external rather than as missing
+				found_main |= member.name.text == "main";
+				self.check_external(member);
+				continue;
+			}
 			match (member.context, member.kind, member.name.text.as_str()) {
 				(Context::Global, MemberKind::Module, "main") => {
 					found_main = true;
@@ -404,6 +411,26 @@ impl Compiler {
 			self.report_error(&(0, 0), "No 'main' module.");
 		}
 		self.check_errors()
+	}
+
+	/// External members are universal functions or modules without MIDI inputs or body.
+	fn check_external(&mut self, member: &Member) {
+		if member.name.text == "main" {
+			self.report_error(&member.name, "'main' can't be external.");
+		}
+		if member.kind == MemberKind::Instrument {
+			self.report_error(&member.name, "Instruments can't be external.");
+		}
+		if member.context != Context::Universal {
+			self.report_error(&member.name, "External members can't be global or note.");
+		}
+		if !member.midi.is_empty() {
+			self.report_error(&member.midi_mappings_location(),
+				"External members can't have MIDI inputs.");
+		}
+		if let Some(Statement::Assign { node, .. }) = member.body.first() {
+			self.report_error(node, "External members can't have a body.");
+		}
 	}
 
 	fn report(&mut self, loc: &dyn Location, category: MessageCategory, text: String) {

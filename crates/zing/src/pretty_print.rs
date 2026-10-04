@@ -27,6 +27,9 @@ impl Display for Parameter {
 
 impl Display for Member {
 	fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+		if self.external {
+			write!(f, "external ")?;
+		}
 		if self.context != Context::Universal {
 			write!(f, "{} ", self.context)?;
 		}
