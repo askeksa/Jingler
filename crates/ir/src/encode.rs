@@ -5,7 +5,7 @@ use strum_macros::FromRepr;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::program::{ProcedureKind, Program, Width};
+use crate::program::{ExternalProcedure, ProcedureKind, Program, Scope, Width};
 use crate::instructions::{Instruction, NoteProperty};
 
 
@@ -218,7 +218,8 @@ fn encode_implicit(implicit: EncodedImplicit, encode: &mut impl FnMut(EncodedByt
 fn encode_bytecode(inst: Instruction, sample_rate: f32,
                    encode: &mut impl FnMut(EncodedBytecode, u16),
                    encode_constant: &mut impl FnMut(u32),
-				   encode_parameter: &mut impl FnMut(u16)) {
+				   encode_parameter: &mut impl FnMut(u16),
+				   encode_external: &mut impl FnMut(u16)) {
 	use EncodedBytecode::*;
 	use EncodedFop::*;
 	use EncodedNoteProperty::*;
@@ -243,7 +244,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::BufferAlloc(..) => encode(BufferAlloc, 0),
 		Instruction::Kill => encode(Kill, 0),
 		Instruction::Call(proc, ..) => encode(ProcCall, proc),
-		Instruction::CallExternal(..) => unreachable!("External members are rejected up front"),
+		Instruction::CallExternal(index) => encode_external(index),
 		Instruction::Constant(constant) => encode_constant(constant),
 		Instruction::SampleRate => encode_constant(sample_rate.to_bits()),
 		Instruction::Parameter(index) => encode_parameter(index),
@@ -387,7 +388,7 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 	}
 }
 
-fn collect_capacities(program: &Program, sample_rate: f32, embed_constant_index: bool) -> (Vec<u16>, BTreeSet<u32>) {
+fn collect_capacities(program: &Program, sample_rate: f32, embed_constant_index: bool) -> (Vec<u16>, BTreeSet<u32>, Vec<u16>) {
 	// Collect arg space for each opcode
 	let mut opcode_capacity = vec![0u16; EncodedBytecode::Implicit as usize + 1];
 	let mut discover_opcode = |opcode: EncodedBytecode, arg: u16| {
@@ -399,8 +400,12 @@ fn collect_capacities(program: &Program, sample_rate: f32, embed_constant_index:
 		constant_set.insert(value);
 	};
 	let mut discover_parameter = |_index: u16| {};
+	let mut external_capacity = vec![0u16; program.externals.len()];
+	let mut discover_external = |index: u16| {
+		external_capacity[index as usize] = 1;
+	};
 	for &inst in program.procedures.iter().map(|p| &p.code).flatten() {
-		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant, &mut discover_parameter);
+		encode_bytecode(inst, sample_rate, &mut discover_opcode, &mut discover_constant, &mut discover_parameter, &mut discover_external);
 	}
 	if opcode_capacity[EncodedBytecode::Random as usize] != 0 {
 		constant_set.insert(RANDOM_SCRAMBLE);
@@ -412,7 +417,7 @@ fn collect_capacities(program: &Program, sample_rate: f32, embed_constant_index:
 		opcode_capacity[EncodedBytecode::ConstantByteIndex as usize] = 1;
 	}
 
-	(opcode_capacity, constant_set)
+	(opcode_capacity, constant_set, external_capacity)
 }
 
 fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<u32>, BTreeMap<u32, u16>, usize) {
@@ -431,8 +436,8 @@ fn build_constant_list(program: &Program, constant_set: &BTreeSet<u32>) -> (Vec<
 	(constants, constant_map, parameter_offset)
 }
 
-fn check_opcode_space(opcode_capacity: &Vec<u16>, constants: &Vec<u32>) -> Result<()> {
-	let opcode_space = opcode_capacity.iter().sum::<u16>() + 1;
+fn check_opcode_space(opcode_capacity: &Vec<u16>, external_capacity: &Vec<u16>, constants: &Vec<u32>) -> Result<()> {
+	let opcode_space = opcode_capacity.iter().sum::<u16>() + external_capacity.iter().sum::<u16>() + 1;
 	if opcode_space > 256 {
 		return Err(anyhow!("\nExceeded opcode space ({} > {}).", opcode_space, 256));
 	}
@@ -443,31 +448,49 @@ fn check_opcode_space(opcode_capacity: &Vec<u16>, constants: &Vec<u32>) -> Resul
 	Ok(())
 }
 
-// The player has no way to call external members.
-fn check_no_external_members(program: &Program) -> Result<()> {
-	let mut names: Vec<&str> = vec![];
-	for external in &program.externals {
-		// A module has both a static and a dynamic part; name it once.
-		if !names.contains(&external.name.as_str()) {
-			names.push(&external.name);
+// The player implements each external procedure as a hand-written player
+// instruction named after it: external_function_<name> for a function,
+// external_module_<name>_dynamic and external_module_<name>_static for the
+// parts of a module. These names are distinct for distinct procedures.
+fn external_instruction_name(external: &ExternalProcedure) -> Result<String> {
+	match external.kind {
+		ProcedureKind::Function => Ok(format!("external_function_{}", external.name)),
+		ProcedureKind::Module { scope: Scope::Dynamic } => Ok(format!("external_module_{}_dynamic", external.name)),
+		ProcedureKind::Module { scope: Scope::Static } => Ok(format!("external_module_{}_static", external.name)),
+		ProcedureKind::Instrument { .. } => Err(anyhow!("\nInstrument '{}' can't be external.", external.name)),
+	}
+}
+
+// Name the player instruction of each external procedure, rejecting names
+// that differ only in case, since their I_ defines would collide.
+fn external_instruction_names(program: &Program) -> Result<Vec<String>> {
+	let names = program.externals.iter()
+		.map(external_instruction_name)
+		.collect::<Result<Vec<String>>>()?;
+	for (i, name) in names.iter().enumerate() {
+		for (j, other) in names[..i].iter().enumerate() {
+			let (member, other_member) = (&program.externals[i].name, &program.externals[j].name);
+			if name.to_uppercase() == other.to_uppercase() {
+				return Err(anyhow!("\nExternal members '{}' and '{}' both need the define 'I_{}'.",
+					other_member, member, name.to_uppercase()));
+			}
 		}
 	}
-	if names.is_empty() {
-		Ok(())
-	} else {
-		Err(anyhow!("\nThe player does not support external members: {}.", names.join(", ")))
-	}
+	Ok(names)
 }
 
 pub fn encode_bytecodes_source(
 		program: &Program, jingler_asm_path: &String,
 		sample_rate: f32, embed_constant_index: bool, parameter_quantization: f32,
 		out: &mut impl std::io::Write) -> Result<()> {
-	check_no_external_members(program)?;
-	let (opcode_capacity, constant_set) = collect_capacities(program, sample_rate, embed_constant_index);
+	let external_names = external_instruction_names(program)?;
+	let (opcode_capacity, constant_set, external_capacity) = collect_capacities(program, sample_rate, embed_constant_index);
 	let (constants, constant_map, parameter_offset) = build_constant_list(program, &constant_set);
-	check_opcode_space(&opcode_capacity, &constants)?;
+	check_opcode_space(&opcode_capacity, &external_capacity, &constants)?;
 
+	for ((name, external), capacity) in external_names.iter().zip(&program.externals).zip(&external_capacity) {
+		writeln!(out, "%define I_{} {} ; {}", name.to_uppercase(), capacity, external)?;
+	}
 	for i in 0 .. EncodedBytecode::Implicit as usize {
 		let (name, _) = bytecode_name(EncodedBytecode::from_repr(i).unwrap(), 0);
 		writeln!(out, "%define I_{} {}", name.to_uppercase(), opcode_capacity[i])?;
@@ -521,7 +544,11 @@ pub fn encode_bytecodes_source(
 				let s = format!("c({arg})");
 				codes.borrow_mut().push(s);
 			};
-			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, &mut encode_parameter);
+			let mut encode_external = |index: u16| {
+				let s = format!("b({})", external_names[index as usize]);
+				codes.borrow_mut().push(s);
+			};
+			encode_bytecode(inst, sample_rate, &mut encode_opcode, &mut encode_constant, &mut encode_parameter, &mut encode_external);
 			for code in codes.borrow().iter() {
 				if first {
 					write!(out, "\tdb\t{code}")?;
@@ -560,30 +587,104 @@ pub fn encode_bytecodes_source(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::program::{ExternalProcedure, Scope, Type, ValueType};
+	use crate::program::{Procedure, Type, ValueType};
+
+	const MONO: Type = Type { width: Width::Mono, value_type: ValueType::Number };
+	const STEREO: Type = Type { width: Width::Stereo, value_type: ValueType::Number };
+	const STATIC: ProcedureKind = ProcedureKind::Module { scope: Scope::Static };
+	const DYNAMIC: ProcedureKind = ProcedureKind::Module { scope: Scope::Dynamic };
+
+	fn external(name: &str, kind: ProcedureKind, inputs: Vec<Type>, outputs: Vec<Type>) -> ExternalProcedure {
+		ExternalProcedure { name: name.to_string(), kind, inputs, outputs }
+	}
+
+	fn program(externals: Vec<ExternalProcedure>, static_code: Vec<Instruction>, dynamic_code: Vec<Instruction>) -> Program {
+		let main = |scope, code| Procedure {
+			name: "main".to_string(), kind: ProcedureKind::Module { scope }, inputs: vec![], outputs: vec![STEREO], code,
+		};
+		Program {
+			parameters: vec![],
+			procedures: vec![main(Scope::Static, static_code), main(Scope::Dynamic, dynamic_code)],
+			externals,
+			main_static_proc_id: 0,
+			main_dynamic_proc_id: 1,
+			track_order: vec![],
+		}
+	}
+
+	fn encode(program: &Program) -> Result<String> {
+		let mut out = vec![];
+		encode_bytecodes_source(program, &"jingler.asm".to_string(), 44100.0, false, 16.0, &mut out)?;
+		Ok(String::from_utf8(out).unwrap())
+	}
 
 	#[test]
-	fn external_members_are_rejected() {
-		let mono = Type { width: Width::Mono, value_type: ValueType::Number };
-		let external = |name: &str, kind: ProcedureKind| ExternalProcedure {
-			name: name.to_string(), kind, inputs: vec![mono], outputs: vec![mono],
-		};
-		let program = Program {
-			parameters: vec![],
-			procedures: vec![],
-			externals: vec![
-				external("osc", ProcedureKind::Module { scope: Scope::Dynamic }),
-				external("osc", ProcedureKind::Module { scope: Scope::Static }),
-				external("lookup", ProcedureKind::Function),
+	fn external_members_encode_as_named_player_instructions() {
+		use Instruction::*;
+		let program = program(
+			vec![
+				external("osc", DYNAMIC, vec![MONO], vec![STEREO]),
+				external("osc", STATIC, vec![MONO, STEREO], vec![]),
+				external("pan", ProcedureKind::Function, vec![MONO, MONO], vec![STEREO]),
 			],
-			main_static_proc_id: 0,
-			main_dynamic_proc_id: 0,
-			track_order: vec![],
-		};
-		let mut out = vec![];
-		let error = encode_bytecodes_source(&program, &"jingler.asm".to_string(), 44100.0, false, 16.0, &mut out)
-			.unwrap_err().to_string();
-		assert!(error.contains("external members: osc, lookup."), "{error}");
-		assert!(out.is_empty());
+			vec![Constant(0), Constant(0), CallExternal(1)],
+			vec![Constant(0), CallExternal(0), Constant(0), Constant(0), CallExternal(2), Add],
+		);
+		let source = encode(&program).unwrap();
+		assert!(source.contains("%define I_EXTERNAL_MODULE_OSC_DYNAMIC 1 ; osc [external module, dynamic part]: (mono number) -> (stereo number)\n"), "{source}");
+		assert!(source.contains("%define I_EXTERNAL_MODULE_OSC_STATIC 1 ; osc [external module, static part]: (mono number, stereo number) -> ()\n"), "{source}");
+		assert!(source.contains("%define I_EXTERNAL_FUNCTION_PAN 1 ; pan [external function]: (mono number, mono number) -> (stereo number)\n"), "{source}");
+		assert!(source.contains("\tdb\tc(0),c(0),b(external_module_osc_static)\n"), "{source}");
+		assert!(source.contains("\tdb\tc(0),b(external_module_osc_dynamic),c(0),c(0),b(external_function_pan),b(add)\n"), "{source}");
+	}
+
+	#[test]
+	fn uncalled_external_parts_get_no_opcode() {
+		use Instruction::*;
+		let program = program(
+			vec![external("pan", ProcedureKind::Function, vec![MONO], vec![MONO])],
+			vec![],
+			vec![Constant(0)],
+		);
+		let source = encode(&program).unwrap();
+		assert!(source.contains("%define I_EXTERNAL_FUNCTION_PAN 0 ;"), "{source}");
+	}
+
+	#[test]
+	fn functions_and_module_parts_get_distinct_player_instructions() {
+		let program = program(
+			vec![
+				external("osc", DYNAMIC, vec![], vec![MONO]),
+				external("osc", STATIC, vec![], vec![]),
+				external("osc_static", DYNAMIC, vec![], vec![MONO]),
+				external("osc_static", STATIC, vec![], vec![]),
+				external("osc", ProcedureKind::Function, vec![], vec![MONO]),
+				external("osc_static", ProcedureKind::Function, vec![], vec![MONO]),
+			],
+			vec![],
+			vec![],
+		);
+		let source = encode(&program).unwrap();
+		for define in [
+			"I_EXTERNAL_MODULE_OSC_DYNAMIC", "I_EXTERNAL_MODULE_OSC_STATIC",
+			"I_EXTERNAL_MODULE_OSC_STATIC_DYNAMIC", "I_EXTERNAL_MODULE_OSC_STATIC_STATIC",
+			"I_EXTERNAL_FUNCTION_OSC", "I_EXTERNAL_FUNCTION_OSC_STATIC",
+		] {
+			assert!(source.contains(&format!("%define {define} 0 ;")), "{source}");
+		}
+	}
+
+	#[test]
+	fn colliding_defines_are_rejected() {
+		let program = program(
+			vec![
+				external("Pan", ProcedureKind::Function, vec![], vec![MONO]),
+				external("pan", ProcedureKind::Function, vec![], vec![MONO]),
+			],
+			vec![],
+			vec![],
+		);
+		let error = encode(&program).unwrap_err().to_string();
+		assert!(error.contains("External members 'Pan' and 'pan' both need the define 'I_EXTERNAL_FUNCTION_PAN'."), "{error}");
 	}
 }

@@ -1,14 +1,15 @@
 # External members
 
-An **external member** is a Zing function or module declared with `external` and no body. The **embedder** supplies its **implementation**. The embedder is the program that runs the compiled Zing program: the VST plugin, `zing-cmd`, a test, or your own code. External members let a patch use things that can't be written in Zing, such as sample data, lookup tables or native DSP code.
+An **external member** is a Zing function or module declared with `external` and no body. The **embedder** supplies its **implementation**. The embedder is the program that runs the compiled Zing program: the VST plugin, `zing-cmd`, a test, your own code, or an intro that ships the NASM player. External members let a patch use things that can't be written in Zing, such as sample data, lookup tables or native DSP code.
 
-This document covers the three layers involved:
+This document covers the layers involved:
 
 - [Zing](#zing): declaring and calling external members.
 - [Runtime API](#runtime-api): implementing them in Rust for the Jingler runtime.
 - [Wasm API](#wasm-api): supplying them yourself when you instantiate a compiled Wasm module.
+- [Player](#player): implementing them as player instructions in the NASM player.
 
-The same example runs through all three layers.
+The same example runs through all of them.
 
 ## Concepts
 
@@ -209,9 +210,66 @@ The function-purity and bool-mask rules from the previous sections apply here to
 
 Besides `external`, a compiled module imports `math.*` (`atan2`, `cos`, `exp2`, `log2`, `pow`, `sin`, `sincos`, `tan`) and `gmdls.sample`.
 
+## Player
+
+The NASM player (`player/jingler.asm`) runs a program as a sequence of **player instructions**. Each player instruction is a short snip of machine code, and the player copies the snips one after another into generated code before it starts rendering. An external member is implemented as hand-written player instructions in your copy of `jingler.asm`:
+
+| Zing | Player instruction | Count define |
+|---|---|---|
+| `external function f` | `external_function_f` | `I_EXTERNAL_FUNCTION_F` |
+| `external module m`, static part | `external_module_m_static` | `I_EXTERNAL_MODULE_M_STATIC` |
+| `external module m`, dynamic part | `external_module_m_dynamic` | `I_EXTERNAL_MODULE_M_DYNAMIC` |
+
+Write each one as a snip in the "Plain snips" part of `jingler.asm`, with its count define as the snip's count. The define is `I_` followed by the instruction name in upper case.
+
+### Generated source
+
+`zing-cmd --write-source` emits a count define for each part the program uses. A comment on each define gives the part's signature. For the example program:
+
+```nasm
+%define I_EXTERNAL_FUNCTION_PAN 1 ; pan [external function]: (mono number, mono number) -> (stereo number)
+%define I_EXTERNAL_MODULE_PULSE_DYNAMIC 1 ; pulse [external module, dynamic part]: (mono number) -> (mono number)
+%define I_EXTERNAL_MODULE_PULSE_STATIC 1 ; pulse [external module, static part]: (mono number, mono number) -> ()
+```
+
+### Edge cases
+
+- **Unused implementations**: the program has no define for an external member it doesn't use, so that member's snips are left out of the build. Thus, you can keep implementations of members that the current program doesn't use without impacting the resulting size of the player code.
+- **Missing implementations**: if the program uses an external member that `jingler.asm` has no snip for, assembly fails with an error like `symbol '_snip_id_external_module_pulse_static' not defined`.
+- **Name collisions**: the player instructions of different external members never share a name, but their defines are upper case. `--write-source` therefore rejects programs with external members whose names differ only in case, such as `Pan` and `pan`.
+- **Opcode space**: each part counts as one opcode towards the player's limit of 256.
+
+### Values and the stack
+
+- Every value occupies one 16-byte stack slot holding two doubles, left at the lower address. A mono value uses the left lane only. The right lane of a mono input can hold anything, and so can the right lane of a mono output.
+- Bools are the same masks as in Rust, per lane.
+- The inputs are pushed in declaration order, so the last input is on top. A module's static part receives only its static inputs, and its dynamic part only its dynamic inputs, each in declaration order.
+- An instruction pops all its inputs and pushes its outputs in declaration order, so the last output ends up on top. A module's static part has no outputs.
+- `rbx` points into the stack, which grows downwards, and `xmm0` caches the top value. The snip's two-letter in/out code says where the top value is on entry (first letter) and where it is on exit (second letter):
+  - `r`: the top value is in `xmm0`, and `rbx` points at the value below it.
+  - `t`: the top value is in `xmm0`, and `rbx` points at its slot, whose contents are undefined.
+  - `b`: the top value is in both `xmm0` and the slot at `rbx`.
+  - `s`: the top value is in the slot at `rbx`, and `xmm0` is undefined.
+
+  In every case, deeper values follow at increasing addresses in 16-byte steps. The player inserts whatever code is needed between instructions. For example, the player's own `add` uses `rt`: it takes the two operands from `[rbx]` and `xmm0`, and leaves the sum in `xmm0`, with `rbx` pointing at the slot of the deeper operand.
+
+### States
+
+- `rdi` points at the state of the current call. The static part writes the state there and advances `rdi` past it.
+- On every call, the dynamic part reads and updates the same state and advances `rdi` by the same amount.
+- The amount must be a multiple of 16 bytes, because the player accesses the following cells with aligned loads and stores.
+- The Wasm runtime's convention of one 16-byte cell holding a handle doesn't apply here. A state takes as many cells as the implementation needs.
+
+### Registers and code
+
+- **Scratch**: an instruction may freely change `rax`, `rdx`, `xmm0` (apart from the stack convention above), other `xmm` registers, the flags, and `r8` and `r9` in 64-bit.
+- **Preserve**: it must preserve `rcx` (the current note, used by note properties), `rsi` (the constant pool) and `rbp` (the current track). It must also leave `rsp` balanced, the x87 register stack empty, and MXCSR unchanged. `rbx` and `rdi` change only as described above.
+- **Position independence**: the snip is copied into generated code, so it must be position-independent. Jumps within the snip are fine. RIP-relative addressing, and relative jumps or calls to code outside the snip, are not. Refer to data by absolute address. In 64-bit, load the address into a register first, as the player's `rlea` macro does.
+- **Size**: a snip can be at most 255 bytes. Put longer code in its own section and call it through an absolute address in a register.
+- **32 and 64 bit**: `jingler.asm` assembles for both. Use the 64-bit register names, which the player maps to their 32-bit counterparts in 32-bit builds.
+
 ## Limitations
 
-- The NASM player doesn't support external members. `zing-cmd --write-source` rejects programs that use them.
 - No current tool registers any implementations:
   - The VST plugin rejects programs that use external members.
   - `zing-cmd --play` and `--write-wav` reject them too.

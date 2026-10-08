@@ -203,14 +203,18 @@ section snipdead text align=1
 %endmacro
 
 %macro snip 3 ; name, inout, number
-	%if %3
+	%ifnum %3
+		%xdefine _snip_number_%1 %3
+	%else
+		%xdefine _snip_number_%1 0
+	%endif
+	%if _snip_number_%1
 		%defstr _inout_%1 %2
-		%rep %3
+		%rep _snip_number_%1
 			%strcat _inout_string _inout_%1 _inout_string
 		%endrep
 		basesnip %1
-		%xdefine _snip_id_%1 _snip_prev_id-%3
-		%xdefine _snip_number_%1 %3
+		%xdefine _snip_id_%1 _snip_prev_id-_snip_number_%1
 		%define _snip_prev_number _snip_number_%1
 		%define _snip_prev_id _snip_id_%1
 	%else
@@ -477,6 +481,14 @@ RenderSamples:
 
 	; Plain snips
 	snipcode	plain
+
+	;; Put implementations for external functions and modules as plain snips.
+	;;
+	;; One instruction for each external function, named
+	;;   external_function_<name>
+	;; Two instructions for each external module, named
+	;;   external_module_<name>_dynamic
+	;;   external_module_<name>_static
 
 	snip		state_enter, rr, I_STATE_ENTER
 	push		rdi
