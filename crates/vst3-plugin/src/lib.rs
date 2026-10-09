@@ -1,10 +1,12 @@
 use std::io::Read;
 use std::net::TcpListener;
 use std::num::NonZeroU32;
+use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
-use nih_plug::prelude::*;
+use nice_plug::midi::{Channel, Key};
+use nice_plug::prelude::*;
 use runtime::{Externals, JinglerRuntime, JinglerRuntimeHandle, SubmitOutcome, default_jingler_runtime};
 
 const NUM_PARAMS: usize = 15;
@@ -36,7 +38,7 @@ fn global_runtime() -> Option<Arc<GlobalRuntime>> {
 				handle: Mutex::new(handle),
 			})),
 			Err(e) => {
-				nih_error!("Jingler: failed to create runtime: {}", e);
+				nice_error!("Jingler: failed to create runtime: {}", e);
 				None
 			}
 		}
@@ -115,11 +117,11 @@ fn listener_thread(runtime: Arc<GlobalRuntime>) {
 	let listener = match TcpListener::bind(LISTEN_ADDR) {
 		Ok(l) => l,
 		Err(e) => {
-			nih_error!("Jingler: failed to bind {}: {}", LISTEN_ADDR, e);
+			nice_error!("Jingler: failed to bind {}: {}", LISTEN_ADDR, e);
 			return;
 		}
 	};
-	nih_log!("Jingler: listening for compiled programs on {}", LISTEN_ADDR);
+	nice_log!("Jingler: listening for compiled programs on {}", LISTEN_ADDR);
 
 	for stream in listener.incoming() {
 		match stream {
@@ -128,18 +130,18 @@ fn listener_thread(runtime: Arc<GlobalRuntime>) {
 				// bincode-serialised ir::Program.
 				let mut len_buf = [0u8; 4];
 				if stream.read_exact(&mut len_buf).is_err() {
-					nih_error!("Jingler: failed to read length prefix");
+					nice_error!("Jingler: failed to read length prefix");
 					continue;
 				}
 				let len = u32::from_le_bytes(len_buf) as usize;
 				if len > MAX_PROGRAM_BYTES {
-					nih_error!("Jingler: program too large ({} bytes, max {})", len, MAX_PROGRAM_BYTES);
+					nice_error!("Jingler: program too large ({} bytes, max {})", len, MAX_PROGRAM_BYTES);
 					continue;
 				}
 
 				let mut data = vec![0u8; len];
 				if stream.read_exact(&mut data).is_err() {
-					nih_error!("Jingler: failed to read {} bytes of program data", len);
+					nice_error!("Jingler: failed to read {} bytes of program data", len);
 					continue;
 				}
 
@@ -147,25 +149,43 @@ fn listener_thread(runtime: Arc<GlobalRuntime>) {
 					Ok(program) => {
 						match runtime.listener.submit_program(&program) {
 							Ok(SubmitOutcome::FreshCompile) => {
-								nih_log!("Jingler: new program compiled ({} bytes)", len);
+								nice_log!("Jingler: new program compiled ({} bytes)", len);
 							}
 							Ok(SubmitOutcome::ConstantUpdate { count }) => {
-								nih_log!("Jingler: queued {} constant update(s)", count);
+								nice_log!("Jingler: queued {} constant update(s)", count);
 							}
 							Ok(SubmitOutcome::NoChange) => {
-								nih_log!("Jingler: program unchanged ({} bytes)", len);
+								nice_log!("Jingler: program unchanged ({} bytes)", len);
 							}
 							Ok(_) => {}
-							Err(e) => nih_error!("Jingler: runtime error: {}", e),
+							Err(e) => nice_error!("Jingler: runtime error: {}", e),
 						}
 					}
-					Err(e) => nih_error!("Jingler: deserialise error: {}", e),
+					Err(e) => nice_error!("Jingler: deserialise error: {}", e),
 				}
 			}
 			Err(e) => {
-				nih_error!("Jingler: accept error: {}", e);
+				nice_error!("Jingler: accept error: {}", e);
 			},
 		}
+	}
+}
+
+// ─── Note events ──────────────────────────────────────────────────────────────
+
+/// The channel numbers a note event addresses: all 16 for a wildcard.
+fn channel_numbers(channel: Channel) -> RangeInclusive<u8> {
+	match channel {
+		Channel::Number(channel) => channel..=channel,
+		Channel::Wildcard => 0..=15,
+	}
+}
+
+/// The key numbers a note event addresses: all 128 for a wildcard.
+fn key_numbers(key: Key) -> RangeInclusive<u8> {
+	match key {
+		Key::Number(key) => key..=key,
+		Key::Wildcard => 0..=127,
 	}
 }
 
@@ -209,6 +229,7 @@ impl Plugin for JinglerPlugin {
 	const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 	const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
+	type Editor = ();
 	type SysExMessage = ();
 	type BackgroundTask = ();
 
@@ -216,17 +237,17 @@ impl Plugin for JinglerPlugin {
 		self.params.clone()
 	}
 
-	fn initialize(
+	fn activate(
 		&mut self,
 		_audio_io_layout: &AudioIOLayout,
 		buffer_config: &BufferConfig,
-		_context: &mut impl InitContext<Self>,
+		_context: &mut impl ActivateContext<Self>,
 	) -> bool {
-		nih_log!("Jingler: initializing");
+		nice_log!("Jingler: initializing");
 		self.sample_rate = buffer_config.sample_rate;
 
 		let Some(runtime) = self.runtime.clone() else {
-			nih_error!("Jingler: runtime unavailable");
+			nice_error!("Jingler: runtime unavailable");
 			return false;
 		};
 
@@ -245,7 +266,7 @@ impl Plugin for JinglerPlugin {
 		// will pick up the cached rate.
 		if let Ok(mut handle) = runtime.handle.lock() {
 			if let Err(e) = handle.initialize(self.sample_rate) {
-				nih_error!("Jingler: runtime error: {}", e);
+				nice_error!("Jingler: runtime error: {}", e);
 				return false;
 			}
 		}
@@ -254,7 +275,7 @@ impl Plugin for JinglerPlugin {
 	}
 
 	fn deactivate(&mut self) {
-		nih_log!("Jingler: deactivating");
+		nice_log!("Jingler: deactivating");
 	}
 
 	fn process(
@@ -268,7 +289,7 @@ impl Plugin for JinglerPlugin {
 				match $action {
 					Ok(result) => result,
 					Err(e) => {
-						nih_error!("Jingler: runtime error in {}: {}", $where, e);
+						nice_error!("Jingler: runtime error in {}: {}", $where, e);
 						return ProcessStatus::Error(concat!("Runtime error in ", $where));
 					}
 				}
@@ -311,14 +332,17 @@ impl Plugin for JinglerPlugin {
 				match next_event {
 					Some(ref event) if event.timing() <= sample_id as u32 => {
 						match *event {
-							NoteEvent::NoteOn { channel, note, velocity, .. } => {
-								check!(handle.note_on(channel, note, (velocity * 127.0) as u8), "note_on");
+							// A note on with a wildcard channel or key has no note to
+							// trigger, so it falls through and is ignored.
+							NoteEvent::NoteOn { channel: Channel::Number(channel), key: Key::Number(key), velocity, .. } => {
+								check!(handle.note_on(channel, key, (velocity * 127.0) as u8), "note_on");
 							}
-							NoteEvent::NoteOff { channel, note, .. } => {
-								check!(handle.note_off(channel, note), "note_off");
-							}
-							NoteEvent::Choke { channel, note, .. } => {
-								check!(handle.note_off(channel, note), "note_off");
+							NoteEvent::NoteOff { channel, key, .. } | NoteEvent::Choke { channel, key, .. } => {
+								for channel in channel_numbers(channel) {
+									for key in key_numbers(key) {
+										check!(handle.note_off(channel, key), "note_off");
+									}
+								}
 							}
 							_ => {}
 						}
@@ -344,4 +368,4 @@ impl Vst3Plugin for JinglerPlugin {
 		&[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
-nih_export_vst3!(JinglerPlugin);
+nice_export_vst3!(JinglerPlugin);
