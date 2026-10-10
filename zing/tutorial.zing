@@ -1,0 +1,19 @@
+# The bass built step by step in Part 1 of ZING.md. Include it from a song:
+#
+#   include "tutorial.zing"
+#
+#   global module main() -> out: stereo
+#   	out = 1::bass(0, 0)
+
+include "base.zing"
+
+parameter brightness 100 to 4000 = 800
+
+instrument bass(transpose: static mono, wobble: mono) -> out: stereo
+	freq = (key() + transpose).key2freq
+	tone = (freq * [0.998, 1.002]).saw + 0.5 * (freq / 2).saw
+	cutoff = (brightness * (1 + 0.5 * wobble) + 2000 * 1.falloff(0.1.s)).hz.phase2angle
+	out = tone
+		.filter(cutoff, 0.5).lowp
+		.adsr(5.ms, 0.3.s, 0.4, 0.2.s)
+		.gain(-6.db)

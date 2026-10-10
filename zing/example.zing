@@ -1,0 +1,83 @@
+include "base.zing"
+
+#################### example sounds ####################
+
+module line(angle: static mono) -> out: stereo
+	dx, dy = sincos(angle)
+	d: dynamic = [dx, dy]
+	out = d * 1.up
+
+module svf(in: generic, cutoff: generic, bandwidth: generic) -> (lpf: generic, bpf: generic)
+	lpf_out = cell(lpf, 0)
+	bpf_out = cell(bpf, 0)
+	bpf = (in - lpf_out - bpf_out * bandwidth) * cutoff + bpf_out
+	lpf = bpf * cutoff + lpf_out
+
+global module main() -> out: stereo
+	ins = 1{..D-4}::sweep() + 1{D#4..}::boing(1.hz.up) + 3::blipblop() + 4::gmdls_try(256) + 5::crackle() + 6::wauw() + 7::band() + 8::string()
+	out = (ins + ins.reverb(512, 1536, 512, 8192) * 0.0625).dc * -6.db
+	#out = ins
+	#out = 0.01.phase2angle.up.sin
+	#out = line(0.1)
+	#l,b = 1.up.sin.svf(0.5, 0.5)
+	#t: static mono = 0
+	#out = cell(l, 0.5 * t)
+
+instrument band() -> out: mono
+	cutoff = key().key2freq.phase2angle
+	dampen = 0x0.04
+	out = noise(1)
+		.filter(cutoff, dampen).bandp
+		.filter(cutoff*2, dampen).bandp
+		.gain(-10.db)
+		.release(0.5.s)
+
+instrument wauw() -> out: mono
+	cutoff = 4.hz.fastsine(0).left.range(0.1, 0.2)
+	dampen = 0.3 - 0.2.falloff(0.5.s)
+	out = key().key2freq.saw
+		.filter(cutoff, dampen).lowp
+		.softclip(8)
+		.adsr(100.ms, 0.25.s, 0.5, 0.1.s)
+#		.echo(0.375.s, 0.5)
+
+instrument sweep() -> out: mono
+	f = key().key2freq
+	d = 0x0.0004
+	w = (f+d).trisaw(0, 0.7) + (f-d).trisaw(0, 0.9)
+	out = w.filter(0.5.hz.up, 0.1).highp
+		.adsr(16.ms, 0.1.s, 0.5, 0.6.s)
+		.gain(-16.db)
+
+instrument boing(t: static mono) -> out: stereo
+	out = [noise(1), noise(2)]
+		.filter(0.1, 0.1).lowp
+		.falloff(1.s)
+		.comb(key().key2period, 0.99)
+		.adsr(8.ms, 0.3.s, 0.3, 0.8.s)
+		.pan(random(t, 1).range(-0.5, 0.5))
+		.gain(-16.db)
+
+instrument blipblop() -> out: stereo
+	i = floor(20.hz.up)
+	key = floor(key() + 15 * random(i, key()))
+	w = key.key2freq.trisaw(0, 0.5).adsr(8.ms, 0.1.s, 0.5, 0.5.s)
+	l = random(i, 1).filter(0.01, 1).lowp
+	out = w.pan(l)
+
+instrument gmdls_try(offset: mono) -> out: mono
+	out = gmdls_linear(offset + key(), 0x0.2.up).release(64.ms)
+
+instrument crackle() -> out: mono
+	r = noise(1).filter(key()/128, 0.1).lowp
+	l = noise(key()).filter(0x0.02, 1).lowp
+	out = (r * max(0,l-0x0.08)).gain(20.db).release(0.25.s)
+
+instrument string() -> out: stereo
+	freq: static = key().key2freq
+	layers = for i to 20 add
+		(freq * (1 + 0x0.02 * random(i, 1))).saw
+		.pan(random(i, key()).range(-0.5, 0.5))
+	out = layers
+		.gain(-20.db)
+		.adsr(0.5.s, 0, 1, 0.5.s)

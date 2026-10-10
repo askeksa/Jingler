@@ -1,0 +1,236 @@
+#################### Basic math functions ####################
+
+# Absolute value.
+function abs(a: generic) -> b: generic
+	b = max(a, -a)
+
+# Limit x to the range min_ to max_.
+function clamp(x: generic, min_: generic, max_: generic) -> out: generic
+	out = min(max(x, min_), max_)
+
+# Limit x to the range -1 to 1.
+function clamp1(x: generic) -> out: generic
+	out = x.clamp(-1, 1)
+
+# Limit x to the range 0 to 1.
+function clamp01(x: generic) -> out: generic
+	out = x.clamp(0, 1)
+
+# Linear interpolation: a when t is 0, b when t is 1. t is clamped to 0 to 1.
+function lerp(a: generic, b: generic, t: generic) -> out: generic
+	out = a + (b - a) * t.clamp01
+
+# Fractional part: wraps any value, also negative ones, into 0 to 1.
+function mod1(a: generic) -> b: generic
+	b = a - floor(a)
+
+# Map in from the range -1 to 1 onto low to high, e.g. to turn an LFO into a sweep. Not clamped.
+function range(in: generic, low: generic, high: generic) -> out: generic
+	out = low + (in + 1) * (high - low) * 0.5
+
+# Replace NaN (not-a-number) values by 0.
+function fixnan(in: generic) -> out: generic
+	out = in == in ? in : 0
+
+# Sine of a stereo phase in turns (1 turn = 2 pi), per channel. The built-in sin is mono only.
+function ssin(in: stereo) -> out: stereo
+	angle = in.phase2angle
+	out = [sin(angle.left), sin(angle.right)]
+
+# Cosine of a stereo phase in turns (1 turn = 2 pi), per channel. The built-in cos is mono only.
+function scos(in: stereo) -> out: stereo
+	angle = in.phase2angle
+	out = [cos(angle.left), cos(angle.right)]
+
+#################### Unit conversion functions ####################
+
+# Seconds to samples, the unit of all times: 0.5.s
+function s(seconds: mono) -> samples: mono
+	samples = seconds * samplerate()
+
+# Milliseconds to samples, the unit of all times: 20.ms
+function ms(milliseconds: mono) -> samples: mono
+	samples = s(milliseconds / 1000)
+
+# Hertz to cycles per sample, the unit of all frequencies: 440.hz
+function hz(hertz: mono) -> persample: mono
+	persample = hertz / samplerate()
+
+# Decibels to a gain factor, counting 6 dB per doubling: -6.db is 0.5, 0.db is 1.
+function db(level: mono) -> out: mono
+	out = exp2(level / 6)
+
+# MIDI key to frequency in cycles per sample. Key 69 is A at 440 Hz; fractional keys detune.
+function key2freq(key: mono) -> freq: mono
+	freq = exp2((key + 0x24.60564) / 12).hz
+
+# MIDI key to the length of one period in samples, e.g. to tune a comb to a note.
+function key2period(key: mono) -> d: mono
+	d = 1 / key2freq(key)
+
+# Frequency in cycles per sample to MIDI key. The inverse of key2freq.
+function freq2key(freq: mono) -> key: mono
+	key = log2(freq.s) * 12 - 0x24.60564
+
+# Period length in samples to MIDI key. The inverse of key2period.
+function period2key(period: mono) -> key: mono
+	key = freq2key(1 / period)
+
+# Phase in turns to angle in radians (multiply by 2 pi).
+function phase2angle(phase: generic) -> angle: generic
+	angle = phase * 6.283185307179586
+
+# Angle in radians to phase in turns (divide by 2 pi).
+function angle2phase(angle: generic) -> phase: generic
+	phase = angle / 6.283185307179586
+
+#################### Basic audio functions ####################
+
+# Multiply by a gain factor, usually given in decibels: x.gain(-6.db)
+function gain(in: generic, g: generic) -> out: generic
+	out = in * g
+
+# Constant-power panning, p from -1 (left) to 1 (right), clamped. 0 leaves the signal unchanged;
+# fully to one side makes that side 3 dB louder.
+function pan(in: stereo, p: mono) -> out: stereo
+	out = in * sqrt(1 -+ clamp1(p))
+
+# Waveshaper (from 4klang). s = 0 leaves in unchanged, s towards 1 adds drive. Must be below 1.
+# Keeps -1 and 1 in place, so a signal within -1 to 1 stays within it.
+function shape(in: generic, s: generic) -> out: generic
+	k = (2*s) / (1-s)
+	out = (1+k)*in / (1+k*abs(in))
+
+# Soft saturation: multiply by gain, then squash smoothly into -1 to 1.
+function softclip(in: generic, gain: mono) -> out: generic
+	gained = in * gain
+	out = gained / sqrt(1 + gained * gained)
+
+# Sound number id from gm.dls at position t in samples, linearly interpolated between samples.
+# Silent if gm.dls is not available.
+function gmdls_linear(id: mono, t: mono) -> out: mono
+	i = floor(t)
+	s1 = gmdls(id, i)
+	s2 = gmdls(id, i+1)
+	out = s1 + (s2 - s1) * (t - i)
+
+# PolyBLEP smoothing term for a waveform that jumps at phase 0: t is the phase (0 to 1), dt the
+# frequency in cycles per sample. Zero except within dt of the jump.
+function polyblep(t: generic, dt: generic) -> out: generic
+	t1 = max(0, 1 - min(t, 1 - t) / dt)
+	t2 = t1 * t1
+	out = t < 0.5 ? -t2 : t2
+
+#################### Basic modules ####################
+
+# Ramp starting at 0 and growing by per_sample every sample: 1.up counts samples.
+module up(per_sample: generic) -> out: generic
+	out = cell(out + per_sample, 0)
+
+# Phase that grows by freq (cycles per sample) every sample and wraps from 1 to 0.
+# offset is the starting phase. The core of the oscillators.
+module phase(freq: generic, offset: static generic) -> out: generic
+	out = mod1(cell(out + freq, offset))
+
+#################### Envelopes ####################
+
+# Multiply by an exponential decay that starts at 1 and halves every halftime samples.
+module falloff(in: generic, halftime: static mono) -> out: generic
+	factor: static mono = exp2(-1 / halftime)
+	ramp: generic = cell(ramp * factor, 1)
+	out = in * ramp
+
+# Multiply by an ADSR envelope: rise to 1 over a_time, fall by 1 per d_time down to s_level
+# (reached after d_time * (1 - s_level)), and after note-off, fade to 0 over r_time. Times in samples.
+note module adsr(in: generic, a_time: static mono, d_time: static mono, s_level: static mono, r_time: static mono) -> out: generic
+	a_slope = 1 / a_time
+	d_slope = 1 / d_time
+	t = cell(t, 0) + 1
+	ads = t <= a_time
+		? t * a_slope
+		: max(s_level, 1 - (t - a_time) * d_slope)
+	out = (in * ads).release(r_time)
+
+# Fade out linearly to 0 over r_time samples after note-off. No effect while the key is held.
+note module release(in: generic, r_time: static mono) -> out: generic
+	r_slope = 1 / r_time
+	r = cell(r - (gate() ? 0 : r_slope), 1)
+	out = in * max(0, r)
+
+#################### Filters ####################
+
+# Resonant filter with low-, band- and high-pass outputs; pick one with lowp, bandp or highp.
+# cutoff in radians per sample (1000.hz.phase2angle), below about 1. Gain at cutoff is 1 / dampen.
+module filter(input: generic, cutoff: generic, dampen: generic) -> (lpf_out: generic, bpf_out: generic, hpf_out: generic)
+	lpf = cell(lpf_out, 0)
+	bpf = cell(bpf_out, 0)
+	lpf_out = lpf + bpf * cutoff
+	hpf_out = input - lpf_out - bpf * dampen
+	bpf_out = bpf + hpf_out * cutoff
+
+# Pick the low-pass output of filter: x.filter(cutoff, dampen).lowp
+function lowp(lpf_out: generic, bpf_out: generic, hpf_out: generic) -> lpf_out: generic
+
+# Pick the band-pass output of filter: x.filter(cutoff, dampen).bandp
+function bandp(lpf_out: generic, bpf_out: generic, hpf_out: generic) -> bpf_out: generic
+
+# Pick the high-pass output of filter: x.filter(cutoff, dampen).highp
+function highp(lpf_out: generic, bpf_out: generic, hpf_out: generic) -> hpf_out: generic
+
+# Feedback delay: in delayed by del samples and multiplied by mul, repeating with mul applied
+# each time round. The dry signal is not included. With del = key2period(key()) it rings at the note.
+module comb(in: generic, del: static mono, mul: mono) -> out:generic
+	out = delay((in + out) * mul, del)
+
+# Echo: in plus its comb repeats.
+module echo(in: generic, del: static mono, mul: mono) -> out:generic
+	out = in + in.comb(del, mul)
+
+# Remove DC offset (a constant shift away from 0), e.g. from a mix after distortion or reverb.
+module dc(in: generic) -> out: generic
+	f: generic = cell(f + out * 0x0.001, 0)
+	out = in - f
+
+#################### Oscillator modules ####################
+
+# Sawtooth falling from 1 to -1, freq in cycles per sample.
+module saw(freq: generic) -> out: generic
+	out = 1 - 2 * phase(freq, 0)
+
+# Sine wave, freq in cycles per sample.
+module sine(freq: mono) -> out: mono
+	out = sin(phase(freq, 0).phase2angle)
+
+# White noise between -1 and 1. Different integer seeds give independent noise.
+module noise(seed: mono) -> out: mono
+	t = cell(t, 0) + 1
+	out = random(t, seed)
+
+# Pulse wave: 1 for the first phase_width (0 to 1) of each cycle, -1 for the rest.
+# freq in cycles per sample, phase_offset is the starting phase.
+module pulse(freq: mono, phase_offset: static mono, phase_width: mono) -> out: mono
+	out = phase(freq, phase_offset) < phase_width ? 1 : -1
+
+# Wave rising from -1 to 1 during the first phase_width (0 to 1) of each cycle, falling for the rest:
+# 0.5 is a triangle, near 0 or 1 a sawtooth. freq in cycles per sample, phase_offset the starting phase.
+module trisaw(freq: mono, phase_offset: static mono, phase_width: mono) -> out: mono
+	p = phase(freq, phase_offset)
+	ramp = p < phase_width ? p / phase_width : (1-p) / (1-phase_width)
+	out = ramp * 2 - 1
+
+# Cheap stereo sine for a fixed frequency (cycles per sample) and starting phase, per channel.
+module fastsine(freq: static stereo, phase_offset: static stereo) -> out: stereo
+	helper: static stereo = 2 * scos(freq)
+	out = cell(out * helper - cell(out, ssin(phase_offset - freq)), ssin(phase_offset))
+
+#################### Effects ####################
+
+# Reverb on the mono sum of in: 32 randomly panned combs of delay_avg +- delay_var samples, decaying
+# to half every half_time samples, after a delay of offset samples. Returns only the reverb, which is loud.
+module reverb(in: stereo, offset: static mono, delay_avg: static mono, delay_var: static mono, half_time: static mono) -> out: stereo
+	m = in.center
+	out = (for i to 32 add _reverb_echo(m, delay_avg + delay_var * random(i, 2), -1 / half_time).pan(random(i, 1))).delay(offset)
+
+module _reverb_echo(in: mono, delay_len: static mono, exp_factor: static mono) -> out: mono
+	factor: static = exp2(delay_len * exp_factor)
+	out = comb(in, delay_len, factor)

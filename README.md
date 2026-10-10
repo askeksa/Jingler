@@ -16,7 +16,8 @@ Instrument patches for Jingler are written in the [Zing](ZING.md) programming la
 
 ## Usage
 
-TBW
+See [ZING-CMD.md](ZING-CMD.md) for how to hear your instruments in the plugin while you write
+them, and [ZING.md](ZING.md) for how to write them.
 
 ## License
 
