@@ -845,16 +845,18 @@ fn instrument_gate_property() {
 // ============================================================
 
 #[test]
-fn parameter_default() {
+fn parameter_starts_at_default() {
 	let src = r#"
-		parameter gain 0 to 100 = 50
+		parameter gain 20 to 100 = 50
+		parameter other -3 to 3
 
 		global module main () -> (out: stereo)
-			out = gain
+			out = [gain, other]
 	"#;
 	let s = run1(src);
-	// Parameter defaults to 0 in the constant pool (set_parameter not called)
-	assert_approx(s[0], 0.0);
+	// Until set_parameter is called, a parameter is at its default, which is
+	// the bottom of its range when none is given.
+	assert_sample(s, 50.0, -3.0);
 }
 
 #[test]

@@ -27,6 +27,25 @@ The plugin has 15 knobs, *Param 01* to *Param 15*, one for each `parameter` in t
 are declared. It listens for programs on port 26127 on all network interfaces, so it can also be
 fed from another machine: `zing-cmd mysong.zing -c -a 192.168.1.20:26127`.
 
+The plugin's window shows the program it plays:
+
+- **MIDI mappings**: each instrument call with its channel, key range and transposition, written
+  the way Zing writes them (`{C-4..C-6 / C-3 (-12)}`), sorted by channel. Hover over the keys to
+  see their MIDI numbers.
+- **Parameters**: a slider for each parameter, with its name and its value in its own range.
+  Moving a slider moves the knob, so the DAW records it. Double-click a slider to go back to the
+  parameter's default. A parameter after the fifteenth has no knob and stays at its default. The
+  DAW shows the knobs' values in their parameters' ranges too, but keeps calling them *Param 01*
+  and so on.
+- **Status**: when the last program arrived, and the last error since then: a program the plugin
+  couldn't read or compile, or an error while playing.
+
+When a program brings a new parameter, its knob moves to the parameter's default; parameters that
+were already there keep their values, also when they move to another knob or their range changes.
+The plugin can only move knobs while its window is open, so a new parameter keeps whatever value
+its knob had until you open the window. The plugin remembers which parameter each knob had in the
+DAW project.
+
 Sounds from gm.dls (`gmdls`, `gmdls_linear`) need the gm.dls file: Windows provides it, and on
 other systems you copy it to `~/.jingler/gm.dls`. Without it they are silent.
 

@@ -267,6 +267,10 @@ fn compile_to_wasm(program: &ir::Program, constants: &[u32]) -> Result<Vec<u8>> 
 	let memory = module.memories.add_local(false, false, INITIAL_MEMORY_SIZE >> 16, Some(MAX_MEMORY_SIZE >> 16), None);
 	let sample_rate = module.globals.add_local(ValType::F32, true, false, ConstExpr::Value(Value::F32(0.0)));
 
+	// Parameters start at their default until set_parameter is called.
+	let parameter_defaults = program.parameters.iter().flat_map(|p| p.default.to_le_bytes()).collect();
+	module.data.add(DataKind::Active { memory, offset: ConstExpr::Value(Value::I32(PARAMETER_ADDRESS)) }, parameter_defaults);
+
 	// One mutable f32 global per Constant occurrence in the program, indexed by
 	// the deterministic slot order produced by `diff::collect_constants`. The
 	// audio thread mutates these via `Global::set` for live constant updates.

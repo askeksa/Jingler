@@ -5,11 +5,21 @@ use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::Once;
 
+use nice_plug::editor::dpi::LogicalSize;
 use nice_plug::midi::{Channel, Key};
 use nice_plug::prelude::*;
+use nice_plug_egui::{EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor};
 use runtime::{Externals, JinglerRuntime, JinglerRuntimeHandle, SubmitOutcome, default_jingler_runtime};
 
-const NUM_PARAMS: usize = 15;
+use crate::editor::JinglerEditor;
+use crate::knobs::{KnobAssignment, NUM_KNOBS, format_value, normalize};
+use crate::status::shared;
+
+mod editor;
+mod knobs;
+mod mappings;
+mod status;
+
 const LISTEN_ADDR: &str = "0.0.0.0:26127";
 /// Sanity cap on incoming serialised program size to prevent OOM from rogue senders.
 const MAX_PROGRAM_BYTES: usize = 64 * 1024 * 1024; // 64 MB
@@ -64,32 +74,63 @@ struct JinglerParams {
 	#[id = "p12"] pub p12: FloatParam,
 	#[id = "p13"] pub p13: FloatParam,
 	#[id = "p14"] pub p14: FloatParam,
+
+	/// The parameters the knobs are assigned to (ADR 0006).
+	#[persist = "knob-assignment"]
+	pub knob_assignment: Mutex<KnobAssignment>,
+}
+
+/// The knob the DAW knows as `Param <index + 1>`. Its value text shows the
+/// value of the parameter it is assigned to, if any.
+fn knob(index: usize) -> FloatParam {
+	FloatParam::new(
+		format!("Param {:02}", index + 1),
+		0.5,
+		FloatRange::Linear { min: 0.0, max: 1.0 },
+	)
+	.with_value_to_string(Arc::new(move |value| match shared().parameter(index) {
+		Some(p) => format_value(p.min + value * (p.max - p.min)),
+		None => format!("{value:.2}"),
+	}))
+	.with_string_to_value(Arc::new(move |text| {
+		let value: f32 = text.trim().parse().ok()?;
+		Some(match shared().parameter(index) {
+			Some(p) => normalize(value, p.min, p.max),
+			None => value.clamp(0.0, 1.0),
+		})
+	}))
 }
 
 impl Default for JinglerParams {
 	fn default() -> Self {
-		let param = |name: &str| FloatParam::new(
-			name,
-			0.5,
-			FloatRange::Linear { min: 0.0, max: 1.0 },
-		);
 		Self {
-			p00: param("Param 01"),
-			p01: param("Param 02"),
-			p02: param("Param 03"),
-			p03: param("Param 04"),
-			p04: param("Param 05"),
-			p05: param("Param 06"),
-			p06: param("Param 07"),
-			p07: param("Param 08"),
-			p08: param("Param 09"),
-			p09: param("Param 10"),
-			p10: param("Param 11"),
-			p11: param("Param 12"),
-			p12: param("Param 13"),
-			p13: param("Param 14"),
-			p14: param("Param 15"),
+			p00: knob(0),
+			p01: knob(1),
+			p02: knob(2),
+			p03: knob(3),
+			p04: knob(4),
+			p05: knob(5),
+			p06: knob(6),
+			p07: knob(7),
+			p08: knob(8),
+			p09: knob(9),
+			p10: knob(10),
+			p11: knob(11),
+			p12: knob(12),
+			p13: knob(13),
+			p14: knob(14),
+			knob_assignment: Mutex::new(KnobAssignment::default()),
 		}
+	}
+}
+
+impl JinglerParams {
+	fn knob(&self, index: usize) -> &FloatParam {
+		[
+			&self.p00, &self.p01, &self.p02, &self.p03, &self.p04,
+			&self.p05, &self.p06, &self.p07, &self.p08, &self.p09,
+			&self.p10, &self.p11, &self.p12, &self.p13, &self.p14,
+		][index]
 	}
 }
 
@@ -99,15 +140,29 @@ struct JinglerPlugin {
 	params: Arc<JinglerParams>,
 	runtime: Option<Arc<GlobalRuntime>>,
 	sample_rate: f32,
+	editor_state: Arc<EguiEditorState>,
+	/// Repaints the editor when a program or an error arrives.
+	repaint: RepaintNotifier,
+	repaint_id: u64,
 }
 
 impl Default for JinglerPlugin {
 	fn default() -> Self {
+		let repaint = RepaintNotifier::new();
 		Self {
 			params: Arc::new(JinglerParams::default()),
 			runtime: global_runtime(),
 			sample_rate: 44100.0,
+			editor_state: EguiEditorState::from_size(LogicalSize::new(780.0, 480.0), 1.0),
+			repaint_id: shared().register(repaint.clone()),
+			repaint,
 		}
+	}
+}
+
+impl Drop for JinglerPlugin {
+	fn drop(&mut self) {
+		shared().unregister(self.repaint_id);
 	}
 }
 
@@ -135,40 +190,51 @@ fn listener_thread(runtime: Arc<GlobalRuntime>) {
 				}
 				let len = u32::from_le_bytes(len_buf) as usize;
 				if len > MAX_PROGRAM_BYTES {
-					nice_error!("Jingler: program too large ({} bytes, max {})", len, MAX_PROGRAM_BYTES);
+					report_error(format!("Program too large ({} bytes, max {})", len, MAX_PROGRAM_BYTES));
 					continue;
 				}
 
 				let mut data = vec![0u8; len];
 				if stream.read_exact(&mut data).is_err() {
-					nice_error!("Jingler: failed to read {} bytes of program data", len);
+					report_error(format!("Failed to read {} bytes of program data", len));
 					continue;
 				}
 
 				match bincode::deserialize::<ir::Program>(&data) {
 					Ok(program) => {
 						match runtime.listener.submit_program(&program) {
-							Ok(SubmitOutcome::FreshCompile) => {
-								nice_log!("Jingler: new program compiled ({} bytes)", len);
+							Ok(outcome) => {
+								match outcome {
+									SubmitOutcome::FreshCompile => {
+										nice_log!("Jingler: new program compiled ({} bytes)", len);
+									}
+									SubmitOutcome::ConstantUpdate { count } => {
+										nice_log!("Jingler: queued {} constant update(s)", count);
+									}
+									SubmitOutcome::NoChange => {
+										nice_log!("Jingler: program unchanged ({} bytes)", len);
+									}
+									_ => {}
+								}
+								shared().accept_program(program);
 							}
-							Ok(SubmitOutcome::ConstantUpdate { count }) => {
-								nice_log!("Jingler: queued {} constant update(s)", count);
-							}
-							Ok(SubmitOutcome::NoChange) => {
-								nice_log!("Jingler: program unchanged ({} bytes)", len);
-							}
-							Ok(_) => {}
-							Err(e) => nice_error!("Jingler: runtime error: {}", e),
+							Err(e) => report_error(format!("Program rejected: {}", e)),
 						}
 					}
-					Err(e) => nice_error!("Jingler: deserialise error: {}", e),
+					Err(e) => report_error(format!("Failed to deserialise program: {}", e)),
 				}
 			}
 			Err(e) => {
-				nice_error!("Jingler: accept error: {}", e);
+				report_error(format!("Failed to accept connection: {}", e));
 			},
 		}
 	}
+}
+
+/// Log an error and show it in the editors.
+fn report_error(error: String) {
+	nice_error!("Jingler: {}", error);
+	shared().report_error(error);
 }
 
 // ─── Note events ──────────────────────────────────────────────────────────────
@@ -192,24 +258,8 @@ fn key_numbers(key: Key) -> RangeInclusive<u8> {
 // ─── Plugin implementation ────────────────────────────────────────────────────
 
 impl JinglerPlugin {
-	fn param_values(&self) -> [f32; NUM_PARAMS] {
-		[
-			self.params.p00.value(),
-			self.params.p01.value(),
-			self.params.p02.value(),
-			self.params.p03.value(),
-			self.params.p04.value(),
-			self.params.p05.value(),
-			self.params.p06.value(),
-			self.params.p07.value(),
-			self.params.p08.value(),
-			self.params.p09.value(),
-			self.params.p10.value(),
-			self.params.p11.value(),
-			self.params.p12.value(),
-			self.params.p13.value(),
-			self.params.p14.value(),
-		]
+	fn param_values(&self) -> [f32; NUM_KNOBS] {
+		std::array::from_fn(|index| self.params.knob(index).value())
 	}
 }
 
@@ -229,12 +279,26 @@ impl Plugin for JinglerPlugin {
 	const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 	const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
-	type Editor = ();
+	type Editor = EguiEditor<JinglerEditor>;
 	type SysExMessage = ();
 	type BackgroundTask = ();
 
 	fn params(&self) -> Arc<dyn Params> {
 		self.params.clone()
+	}
+
+	fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Self::Editor> {
+		let settings = EguiNiceSettings::new()
+			.with_tile("Jingler")
+			.with_resize_hint(ResizeHint::resizable().with_min_logical_size(LogicalSize::new(520.0, 240.0)));
+		create_egui_editor(self.editor_state.clone(), self.repaint.clone(), settings, JinglerEditor::new(self.params.clone()))
+	}
+
+	/// A state saved before knob assignments were has none: adopt the next
+	/// program's parameters without moving any knob (ADR 0006).
+	fn filter_state(state: &mut PluginState) {
+		state.fields.entry("knob-assignment".to_string())
+			.or_insert_with(|| serde_json::to_string(&KnobAssignment::Unknown).unwrap());
 	}
 
 	fn activate(
@@ -290,6 +354,7 @@ impl Plugin for JinglerPlugin {
 					Ok(result) => result,
 					Err(e) => {
 						nice_error!("Jingler: runtime error in {}: {}", $where, e);
+						shared().try_report_error(format!("Runtime error in {}: {}", $where, e));
 						return ProcessStatus::Error(concat!("Runtime error in ", $where));
 					}
 				}

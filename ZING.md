@@ -160,12 +160,21 @@ instrument bass() -> out: stereo
 
 The plugin has 15 knobs, *Param 01* to *Param 15*, given to the parameters in the order they
 are declared, with those of included files first. A parameter follows the knob while notes play,
-so you can automate it.
+so you can automate it. The plugin's window shows a slider for each parameter, with its name and
+value.
 
-> **Plugin and intro.** In the intro, parameters follow the automation of the song, with values
-> rounded to steps of 1/16 of their range (by default). Sounds read from gm.dls (`gmdls`,
-> `gmdls_linear`) use the file Windows provides; on other systems the plugin looks for
-> `~/.jingler/gm.dls` and is silent without it.
+The default is where the knob starts: when a program brings a new parameter, the plugin moves
+its knob to the default. A parameter that was there before keeps its value, even if inserting
+another parameter moves it to the next knob. A parameter after the fifteenth has no knob and stays
+at its default.
+
+> **Plugin and intro.** In the intro, parameters follow the automation of the song. The value of
+> each automation point is rounded to a step of 1/16 of the parameter's range (by default);
+> between points, the value moves gradually from one rounded value to the next. Before its first
+> automation point, a parameter has the value of that point. A parameter without automation
+> plays what the plugin plays: the value its knob has in the song or, after the fifteenth, its
+> default. Sounds read from gm.dls (`gmdls`, `gmdls_linear`) use the file Windows provides; on
+> other systems the plugin looks for `~/.jingler/gm.dls` and is silent without it.
 
 ### Instrument inputs
 
