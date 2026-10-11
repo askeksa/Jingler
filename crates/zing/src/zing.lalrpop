@@ -1,5 +1,4 @@
 
-use std::f64;
 use std::str::FromStr;
 
 use lalrpop_util::ParseError;
