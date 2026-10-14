@@ -531,10 +531,10 @@ impl<'ir> WasmGenerator<'ir> {
 		let initialize_function_id = self.generate_initialize_function();
 		self.module().exports.add("initialize", initialize_function_id);
 
-		let note_on_function_id = self.generate_note_on_function();
+		let note_on_function_id = self.generate_note_command_function("note_on", 1);
 		self.module().exports.add("note_on", note_on_function_id);
 
-		let note_off_function_id = self.generate_note_off_function();
+		let note_off_function_id = self.generate_note_command_function("note_off", 0);
 		self.module().exports.add("note_off", note_off_function_id);
 
 		let next_sample_function_id = self.generate_next_sample_function();
@@ -1501,6 +1501,7 @@ impl<'ir> WasmGenerator<'ir> {
 					let cmd_velocity = self.module().locals.add(ValType::I32);
 					let note_addr = self.module().locals.add(ValType::I32);
 					let link_addr = self.module().locals.add(ValType::I32);
+					let release_addr = self.module().locals.add(ValType::I32);
 
 					// Save state_ptr
 					b.global_get(self.state_ptr);
@@ -1614,7 +1615,13 @@ impl<'ir> WasmGenerator<'ir> {
 								},
 								|off_b| {
 									// --- OFF command ---
-									// Walk linked list, find note with matching key and gate > 0, set gate = 0
+									// Release (set gate = 0) the oldest note with matching key and gate > 0.
+									// The list is newest first, so walk all of it and keep the last match.
+									// Releasing the oldest pairs the offs of overlapping same-key notes
+									// with their ons when the notes end in the order they started.
+									off_b.i32_const(0);
+									off_b.local_set(release_addr);
+
 									off_b.i32_const(NOTE_LISTS_ADDRESS);
 									off_b.local_get(current_track);
 									off_b.i32_const(4);
@@ -1631,7 +1638,7 @@ impl<'ir> WasmGenerator<'ir> {
 											search_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
 											search_b.local_set(note_addr);
 
-											// if note_addr == 0, not found
+											// if note_addr == 0, end of list
 											search_b.local_get(note_addr);
 											search_b.i32_const(0);
 											search_b.binop(BinaryOp::I32Eq);
@@ -1653,9 +1660,7 @@ impl<'ir> WasmGenerator<'ir> {
 														None,
 														|set_b| {
 															set_b.local_get(note_addr);
-															set_b.i32_const(0);
-															set_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
-															set_b.br(found_id);
+															set_b.local_set(release_addr);
 														},
 														|_| {},
 													);
@@ -1669,6 +1674,17 @@ impl<'ir> WasmGenerator<'ir> {
 											search_b.br(search_id);
 										});
 									});
+
+									off_b.local_get(release_addr);
+									off_b.if_else(
+										None,
+										|release_b| {
+											release_b.local_get(release_addr);
+											release_b.i32_const(0);
+											release_b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
+										},
+										|_| {},
+									);
 								},
 							);
 
@@ -1847,31 +1863,23 @@ impl<'ir> WasmGenerator<'ir> {
 		builder.finish(args, &mut self.module().funcs)
 	}
 
-	fn generate_note_on_function(&mut self) -> FunctionId {
-		// note_on(track: i32, key: i32, velocity: i32)
-		// Writes an ON command (type=1) sorted by (track, type) via bubble insertion.
-		let params = [ValType::I32, ValType::I32, ValType::I32];
+	fn generate_note_command_function(&mut self, name: &str, command_type: i32) -> FunctionId {
+		// note_on(track: i32, key: i32, velocity: i32) writes an ON command (type=1),
+		// note_off(track: i32, key: i32) writes an OFF command (type=0).
+		// Commands are sorted by track via bubble insertion. The insertion is stable, so
+		// the commands for a track keep the order in which the host sent them.
+		let params = if command_type == 1 { vec![ValType::I32; 3] } else { vec![ValType::I32; 2] };
 		let results = [];
 		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
 		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
-		builder.name("note_on".to_string());
+		builder.name(name.to_string());
 		let insert_ptr = self.module().locals.add(ValType::I32);
-		let sort_key = self.module().locals.add(ValType::I32);
-		let prev_sort_key = self.module().locals.add(ValType::I32);
 		let mut b = builder.func_body();
 
 		let note_cmds_addr = NOTE_COMMANDS_ADDRESS;
 
 		b.global_get(self.track_command_ptr);
 		b.local_set(insert_ptr);
-
-		// sort_key = track * 2 + 1 (ON)
-		b.local_get(args[0]);
-		b.i32_const(2);
-		b.binop(BinaryOp::I32Mul);
-		b.i32_const(1);
-		b.binop(BinaryOp::I32Add);
-		b.local_set(sort_key);
 
 		b.block(None, |done| {
 			let done_id = done.id();
@@ -1882,22 +1890,12 @@ impl<'ir> WasmGenerator<'ir> {
 				loop_b.binop(BinaryOp::I32LeS);
 				loop_b.br_if(done_id);
 
-				// prev_sort_key = prev_track * 2 + prev_type
+				// Stop behind a command for the same or an earlier track
 				loop_b.local_get(insert_ptr);
 				loop_b.i32_const(16);
 				loop_b.binop(BinaryOp::I32Sub);
 				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
-				loop_b.i32_const(2);
-				loop_b.binop(BinaryOp::I32Mul);
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(16);
-				loop_b.binop(BinaryOp::I32Sub);
-				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
-				loop_b.binop(BinaryOp::I32Add);
-				loop_b.local_set(prev_sort_key);
-
-				loop_b.local_get(prev_sort_key);
-				loop_b.local_get(sort_key);
+				loop_b.local_get(args[0]);
 				loop_b.binop(BinaryOp::I32LeS);
 				loop_b.br_if(done_id);
 
@@ -1917,107 +1915,22 @@ impl<'ir> WasmGenerator<'ir> {
 			});
 		});
 
-		// Write command: [track, 1, key, velocity]
+		// Write command: [track, type, key, velocity] (velocity 0 for OFF)
 		b.local_get(insert_ptr);
 		b.local_get(args[0]);
 		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
 		b.local_get(insert_ptr);
-		b.i32_const(1);
+		b.i32_const(command_type);
 		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
 		b.local_get(insert_ptr);
 		b.local_get(args[1]);
 		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
 		b.local_get(insert_ptr);
-		b.local_get(args[2]);
-		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
-
-		// track_command_ptr += 16
-		b.global_get(self.track_command_ptr);
-		b.i32_const(16);
-		b.binop(BinaryOp::I32Add);
-		b.global_set(self.track_command_ptr);
-
-		builder.finish(args, &mut self.module().funcs)
-	}
-
-	fn generate_note_off_function(&mut self) -> FunctionId {
-		// note_off(track: i32, key: i32)
-		// Writes an OFF command (type=0) sorted by (track, type) via bubble insertion.
-		let params = [ValType::I32, ValType::I32];
-		let results = [];
-		let args = params.iter().map(|param| self.module().locals.add(*param)).collect::<Vec<_>>();
-		let mut builder = FunctionBuilder::new(&mut self.module().types, &params, &results);
-		builder.name("note_off".to_string());
-		let insert_ptr = self.module().locals.add(ValType::I32);
-		let sort_key = self.module().locals.add(ValType::I32);
-		let prev_sort_key = self.module().locals.add(ValType::I32);
-		let mut b = builder.func_body();
-
-		let note_cmds_addr = NOTE_COMMANDS_ADDRESS;
-
-		b.global_get(self.track_command_ptr);
-		b.local_set(insert_ptr);
-
-		// sort_key = track * 2 (OFF = 0)
-		b.local_get(args[0]);
-		b.i32_const(2);
-		b.binop(BinaryOp::I32Mul);
-		b.local_set(sort_key);
-
-		b.block(None, |done| {
-			let done_id = done.id();
-			done.loop_(None, |loop_b| {
-				let loop_id = loop_b.id();
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(note_cmds_addr);
-				loop_b.binop(BinaryOp::I32LeS);
-				loop_b.br_if(done_id);
-
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(16);
-				loop_b.binop(BinaryOp::I32Sub);
-				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
-				loop_b.i32_const(2);
-				loop_b.binop(BinaryOp::I32Mul);
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(16);
-				loop_b.binop(BinaryOp::I32Sub);
-				loop_b.load(self.memory, LoadKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
-				loop_b.binop(BinaryOp::I32Add);
-				loop_b.local_set(prev_sort_key);
-
-				loop_b.local_get(prev_sort_key);
-				loop_b.local_get(sort_key);
-				loop_b.binop(BinaryOp::I32LeS);
-				loop_b.br_if(done_id);
-
-				loop_b.local_get(insert_ptr);
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(16);
-				loop_b.binop(BinaryOp::I32Sub);
-				loop_b.load(self.memory, LoadKind::V128, MemArg { align: 4, offset: 0 });
-				loop_b.store(self.memory, StoreKind::V128, MemArg { align: 4, offset: 0 });
-
-				loop_b.local_get(insert_ptr);
-				loop_b.i32_const(16);
-				loop_b.binop(BinaryOp::I32Sub);
-				loop_b.local_set(insert_ptr);
-				loop_b.br(loop_id);
-			});
-		});
-
-		// Write command: [track, 0, key, 0]
-		b.local_get(insert_ptr);
-		b.local_get(args[0]);
-		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 0 });
-		b.local_get(insert_ptr);
-		b.i32_const(0);
-		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 4 });
-		b.local_get(insert_ptr);
-		b.local_get(args[1]);
-		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 8 });
-		b.local_get(insert_ptr);
-		b.i32_const(0);
+		if command_type == 1 {
+			b.local_get(args[2]);
+		} else {
+			b.i32_const(0);
+		}
 		b.store(self.memory, StoreKind::I32 { atomic: false }, MemArg { align: 4, offset: 12 });
 
 		// track_command_ptr += 16

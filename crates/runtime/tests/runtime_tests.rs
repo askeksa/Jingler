@@ -1610,6 +1610,110 @@ fn notes_interleaved_start_stop() {
 }
 
 // ============================================================
+// Instruments: same-key notes
+// ============================================================
+
+#[test]
+fn note_on_and_off_in_same_sample() {
+	// A note off sent after its note on in the same sample releases the note.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn retrigger_in_same_sample_plays_one_note() {
+	// A host that doesn't layer same-key notes ends the sounding note before
+	// starting a new one on the same key. For two chord notes mapped to one
+	// key, all of that happens in one sample. Exactly one note remains, and
+	// the next note off releases it.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	rt.note_off(0, 60).unwrap();
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 1.0);
+
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn overlapping_same_key_notes_layer() {
+	// Overlapping notes on the same key play as separate notes. Each note off
+	// releases the oldest held note with that key, so notes that end in the
+	// order they started each keep their own length, as in the player.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? velocity() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 100).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 100.0);
+
+	rt.note_on(0, 60, 50).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 150.0);
+
+	// Releases the first note
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 50.0);
+
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn same_key_note_off_after_note_on_in_same_sample() {
+	// A host may send a new note's on before the off of an earlier note on
+	// the same key in the same sample, e.g. when the notes are on different
+	// tracks. The off releases the earlier note, not the new one.
+	let src = r#"
+		instrument tone() -> out: mono
+			out = gate() ? velocity() : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 100).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 100.0);
+
+	rt.note_on(0, 60, 50).unwrap();
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 50.0);
+}
+
+// ============================================================
 // Instruments: autokill
 // ============================================================
 
