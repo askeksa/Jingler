@@ -205,6 +205,98 @@ mod automation_tests {
 	}
 }
 
+#[cfg(test)]
+mod alias_tests {
+	use super::*;
+
+	/// The sequence plays patterns 0, 1, 0. The track of pattern 1 is empty and
+	/// is an alias of whatever `song` says. Pattern 2 is shorter than pattern 1,
+	/// and has a note after its end.
+	const SONG: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseSong doc_version="67">
+	<GlobalSongData>
+		<BeatsPerMin>120</BeatsPerMin>
+		<LinesPerBeat>4</LinesPerBeat>
+		<PlaybackEngineVersion>6</PlaybackEngineVersion>
+	</GlobalSongData>
+	<Instruments><Instrument><Name>lead</Name></Instrument></Instruments>
+	<Tracks>
+		<SequencerTrack>
+			<Name>lead track</Name>
+			<State>Active</State>
+			<NumberOfVisibleNoteColumns>1</NumberOfVisibleNoteColumns>
+			<NoteColumnStates><NoteColumnState>Active</NoteColumnState></NoteColumnStates>
+		</SequencerTrack>
+	</Tracks>
+	<PatternPool><Patterns>
+		<Pattern>
+			<NumberOfLines>8</NumberOfLines>
+			<Tracks><PatternTrack>
+				<AliasPatternIndex>-1</AliasPatternIndex>
+				<Lines>
+					<Line index="0"><NoteColumns><NoteColumn><Note>C-4</Note><Instrument>00</Instrument></NoteColumn></NoteColumns></Line>
+				</Lines>
+			</PatternTrack></Tracks>
+		</Pattern>
+		<Pattern>
+			<NumberOfLines>8</NumberOfLines>
+			<Tracks><PatternTrack>
+				<AliasPatternIndex>{alias}</AliasPatternIndex>
+			</PatternTrack></Tracks>
+		</Pattern>
+		<Pattern>
+			<NumberOfLines>4</NumberOfLines>
+			<Tracks><PatternTrack>
+				<AliasPatternIndex>-1</AliasPatternIndex>
+				<Lines>
+					<Line index="1"><NoteColumns><NoteColumn><Note>OFF</Note></NoteColumn></NoteColumns></Line>
+					<Line index="2"><NoteColumns><NoteColumn><Note>D-4</Note><Instrument>00</Instrument></NoteColumn></NoteColumns></Line>
+					<Line index="6"><NoteColumns><NoteColumn><Note>E-4</Note><Instrument>00</Instrument></NoteColumn></NoteColumns></Line>
+				</Lines>
+			</PatternTrack></Tracks>
+		</Pattern>
+	</Patterns></PatternPool>
+	<PatternSequence><SequenceEntries>
+		<SequenceEntry><Pattern>0</Pattern></SequenceEntry>
+		<SequenceEntry><Pattern>1</Pattern></SequenceEntry>
+		<SequenceEntry><Pattern>0</Pattern></SequenceEntry>
+	</SequenceEntries></PatternSequence>
+</RenoiseSong>
+"#;
+
+	/// The (line, key, length) of every note when pattern 1's track aliases `alias`.
+	fn notes(alias: i32) -> Result<Vec<(u32, u16, Option<u32>)>, ConvertError> {
+		let xml = SONG.replace("{alias}", &alias.to_string());
+		let music = convert_renoise_song(&mut xml.as_bytes())?;
+		Ok(music.notes.iter().map(|n| (n.line, n.key, n.length)).collect())
+	}
+
+	#[test]
+	fn a_track_that_is_no_alias_plays_its_own_lines() {
+		// Pattern 1's track is empty, so the first C-4 lasts until the second.
+		assert_eq!(notes(-1).unwrap(), vec![(0, 48, Some(16)), (16, 48, None)]);
+	}
+
+	#[test]
+	fn an_aliased_track_plays_the_lines_of_its_source() {
+		// The OFF ends the first C-4 and the D-4 is played. The E-4 is outside
+		// pattern 2, so it's ignored even though it's inside pattern 1.
+		assert_eq!(notes(2).unwrap(), vec![(0, 48, Some(9)), (10, 50, Some(6)), (16, 48, None)]);
+	}
+
+	#[test]
+	fn an_alias_of_a_missing_pattern_is_rejected() {
+		assert_eq!(notes(3).unwrap_err().to_string(),
+			"Track 'lead track' in pattern 1 is an alias of pattern 3, which doesn't exist");
+	}
+
+	#[test]
+	fn a_cycle_of_aliases_is_rejected() {
+		assert_eq!(notes(1).unwrap_err().to_string(),
+			"Track 'lead track' in pattern 1 is an alias of pattern 1, which makes the aliases form a cycle");
+	}
+}
+
 pub fn convert_renoise_file(input: &(impl AsRef<Path> + ?Sized)) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
@@ -384,12 +476,11 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, track_index: u16, column: usi
 			// Terminate last note at top of pattern
 			notes.last_mut().map(|last| last.length.get_or_insert(pattern_top - last.line));
 		} else {
-			let tracks = xpat.child("Tracks").child("PatternTrack");
-			if tr < tracks.len() {
-				let xtrack = tracks.at(tr);
+			let played = played_pattern_track(&xpatterns, patn, tr, tname)?;
+			if let Some((xtrack, played_lines)) = played {
 				for xline in xtrack.child("Lines").child("Line").iter() {
 					let index: u16 = xline.attr("index").parse().unwrap_or(0);
-					if (index as u32) < nlines {
+					if (index as u32) < played_lines {
 						let line = pattern_top + index as u32;
 						let xcols = xline.child("NoteColumns").child("NoteColumn");
 						if column < xcols.len() {
@@ -474,6 +565,47 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, track_index: u16, column: usi
 	}
 
 	Ok(notes)
+}
+
+/// The pattern track whose lines play as track `tr` of pattern `patn`, and how
+/// many of its lines play. An aliased pattern track plays the lines of the same
+/// track in the pattern it aliases (which may itself be an alias), and only those
+/// lines that lie inside every pattern along the way, since lines outside a
+/// pattern are ignored. Aliases only cover the lines, not the automation.
+fn played_pattern_track<'a, 'input>(xpatterns: &XmlNode<'a, 'input>, patn: usize, tr: usize, tname: &str)
+		-> Result<Option<(XmlNode<'a, 'input>, u32)>, ConvertError> {
+	let mut source = patn;
+	let mut visited = vec![patn];
+	let mut played_lines = u32::MAX;
+	loop {
+		let xpat = xpatterns.at(source);
+		let nlines: u32 = xpat.child("NumberOfLines").text().parse().unwrap_or(0);
+		played_lines = played_lines.min(nlines);
+
+		let xtracks = xpat.child("Tracks").child("PatternTrack");
+		if tr >= xtracks.len() { return Ok(None); }
+		let xtrack = xtracks.at(tr);
+
+		let Ok(alias) = xtrack.child("AliasPatternIndex").text().parse::<usize>() else {
+			// Absent or -1: not an alias
+			return Ok(Some((xtrack, played_lines)));
+		};
+		let problem = if alias >= xpatterns.len() {
+			Some("which doesn't exist")
+		} else if visited.contains(&alias) {
+			Some("which makes the aliases form a cycle")
+		} else {
+			None
+		};
+		if let Some(problem) = problem {
+			return Err(ConvertError::Track {
+				track: tname.to_string(),
+				message: format!("in pattern {source} is an alias of pattern {alias}, {problem}"),
+			});
+		}
+		visited.push(alias);
+		source = alias;
+	}
 }
 
 fn extract_automation(xsong: &XmlNode) -> Result<Vec<Vec<AutomationPoint>>, ConvertError> {
