@@ -125,6 +125,86 @@ mod level_tests {
 	}
 }
 
+#[cfg(test)]
+mod automation_tests {
+	use super::*;
+
+	/// A song whose master track holds a mixer and an Instrument Automation
+	/// device, with one envelope that `song` aims at a device and parameter.
+	const SONG: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseSong doc_version="67">
+	<GlobalSongData>
+		<BeatsPerMin>120</BeatsPerMin>
+		<LinesPerBeat>4</LinesPerBeat>
+		<PlaybackEngineVersion>6</PlaybackEngineVersion>
+	</GlobalSongData>
+	<Tracks>
+		<SequencerMasterTrack>
+			<Name>Mst</Name>
+			<FilterDevices><Devices>
+				<MasterTrackMixerDevice type="MasterTrackMixerDevice"/>
+				<InstrumentAutomationDevice type="InstrumentAutomationDevice"/>
+			</Devices></FilterDevices>
+		</SequencerMasterTrack>
+	</Tracks>
+	<PatternPool><Patterns><Pattern>
+		<NumberOfLines>64</NumberOfLines>
+		<Tracks><PatternMasterTrack><Automations><Envelopes><Envelope>
+			<DeviceIndex>{device}</DeviceIndex>
+			<ParameterIndex>{parameter}</ParameterIndex>
+			<Envelope>
+				<Length>16384</Length>
+				<Points>
+					<Point>0,0.25,0.0</Point>
+					<Point>16383,0.125,0.0</Point>
+				</Points>
+			</Envelope>
+		</Envelope></Envelopes></Automations></PatternMasterTrack></Tracks>
+	</Pattern></Patterns></PatternPool>
+	<PatternSequence><SequenceEntries><SequenceEntry>
+		<Pattern>0</Pattern>
+	</SequenceEntry></SequenceEntries></PatternSequence>
+</RenoiseSong>
+"#;
+
+	fn song(device: usize, parameter: usize) -> Result<Music, ConvertError> {
+		let xml = SONG.replace("{device}", &device.to_string()).replace("{parameter}", &parameter.to_string());
+		convert_renoise_song(&mut xml.as_bytes())
+	}
+
+	fn rejection(device: usize, parameter: usize) -> String {
+		match song(device, parameter) {
+			Err(error @ ConvertError::Track { .. }) => error.to_string(),
+			other => panic!("device {device} parameter {parameter} gave {other:?}, expected a Track error"),
+		}
+	}
+
+	#[test]
+	fn automation_on_the_master_track_is_extracted() {
+		let music = song(1, 2).unwrap();
+		let autos: Vec<Vec<(u32, f32)>> = music.autos.iter()
+			.map(|points| points.iter().map(|p| (p.line, p.value)).collect())
+			.collect();
+		assert_eq!(autos, vec![vec![], vec![(0, 0.25), (63, 0.125), (64, 0.125)]]);
+	}
+
+	#[test]
+	fn automation_of_another_device_is_rejected() {
+		assert_eq!(rejection(0, 1), "Track 'Mst' in pattern 0 automates parameter 1 of the MasterTrackMixerDevice; \
+			only the slots of an Instrument Automation device can be automated");
+	}
+
+	#[test]
+	fn automation_of_a_missing_device_is_rejected() {
+		assert!(rejection(2, 1).contains("automates device 2, which doesn't exist"));
+	}
+
+	#[test]
+	fn automation_of_parameter_0_is_rejected() {
+		assert!(rejection(1, 0).contains("automates parameter 0 of the InstrumentAutomationDevice"));
+	}
+}
+
 pub fn convert_renoise_file(input: &(impl AsRef<Path> + ?Sized)) -> Result<Music, ConvertError> {
 	let xrns = std::fs::File::open(input.as_ref())?;
 	let mut archive = ZipArchive::new(xrns)?;
@@ -164,7 +244,7 @@ fn make_music(xsong: &XmlNode) -> Result<Music, ConvertError> {
 
 	let (tracks, notes, instruments) = make_tracks(xsong, ticklength)?;
 
-	let autos = extract_automation(xsong);
+	let autos = extract_automation(xsong)?;
 
 	let xpositions = xsong.child("PatternSequence").child("PatternSequence").child("Pattern");
 	let xpositions = if !xpositions.is_empty() { xpositions } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry").child("Pattern") };
@@ -396,10 +476,11 @@ fn extract_track_notes(xsong: &XmlNode, tr: usize, track_index: u16, column: usi
 	Ok(notes)
 }
 
-fn extract_automation(xsong: &XmlNode) -> Vec<Vec<AutomationPoint>> {
+fn extract_automation(xsong: &XmlNode) -> Result<Vec<Vec<AutomationPoint>>, ConvertError> {
 	let xsequence = xsong.child("PatternSequence").child("PatternSequence");
 	let xsequence = if !xsequence.is_empty() { xsequence } else { xsong.child("PatternSequence").child("SequenceEntries").child("SequenceEntry") };
 	let xpatterns = xsong.child("PatternPool").child("Patterns").child("Pattern");
+	let xsongtracks = xsong.child("Tracks").elements();
 
 	let mut parameter_points: Vec<Vec<AutomationPoint>> = Vec::new();
 	let mut line = 0;
@@ -409,9 +490,32 @@ fn extract_automation(xsong: &XmlNode) -> Vec<Vec<AutomationPoint>> {
 		let xpat = xpatterns.at(patn);
 		let nlines: u32 = xpat.child("NumberOfLines").text().parse().unwrap_or(0);
 
-		for xtrack in xpat.child("Tracks").child("PatternTrack").iter() {
+		// Pattern tracks match the song's tracks by position, whatever their kind,
+		// and the automation device may sit on any of them (often the master track).
+		for (tr, xtrack) in xpat.child("Tracks").elements().iter().enumerate() {
+			let xsongtrack = xsongtracks.iter().nth(tr);
+			let tname = xsongtrack.as_ref().map(|t| t.child("Name").text()).unwrap_or_default();
+			let xdevices = xsongtrack.map(|t| t.child("FilterDevices").child("Devices").elements());
+
 			for xenvelope in xtrack.child("Automations").child("Envelopes").child("Envelope").iter() {
 				let Ok(param_idx) = xenvelope.child("ParameterIndex").text().parse() else { continue; };
+
+				// The player only plays back the slots of an Instrument Automation device,
+				// which start at parameter 1. Other automation would only sound in Renoise.
+				let device_index: usize = xenvelope.child("DeviceIndex").text().parse().unwrap_or(usize::MAX);
+				let device = xdevices.as_ref().and_then(|d| d.iter().nth(device_index)).map(|d| d.name()).unwrap_or_default();
+				if device != "InstrumentAutomationDevice" || param_idx == 0 {
+					let what = if device.is_empty() {
+						format!("device {device_index}, which doesn't exist")
+					} else {
+						format!("parameter {param_idx} of the {device}")
+					};
+					return Err(ConvertError::Track {
+						track: tname,
+						message: format!("in pattern {patn} automates {what}; only the slots of an Instrument Automation device can be automated"),
+					});
+				}
+
 				while parameter_points.len() < param_idx {
 					parameter_points.push(Vec::new());
 				}
@@ -448,7 +552,7 @@ fn extract_automation(xsong: &XmlNode) -> Vec<Vec<AutomationPoint>> {
 		}
 	}
 
-	parameter_points
+	Ok(parameter_points)
 }
 
 /// The value of a parameter, which is either the text of the named node itself

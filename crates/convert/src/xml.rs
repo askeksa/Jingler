@@ -44,6 +44,27 @@ impl<'a, 'input: 'a> XmlNode<'a, 'input> {
 		Self::new(children)
 	}
 
+	/// All element children, whatever their names.
+	pub fn elements(&self) -> Self {
+		let mut children = Vec::new();
+		for node in &self.nodes {
+			for child in node.children() {
+				if child.is_element() {
+					children.push(child);
+				}
+			}
+		}
+		Self::new(children)
+	}
+
+	pub fn name(&self) -> String {
+		let mut s = String::new();
+		for node in &self.nodes {
+			s.push_str(node.tag_name().name());
+		}
+		s
+	}
+
 	pub fn attr(&self, name: &str) -> String {
 		let mut s = String::new();
 		for node in &self.nodes {
