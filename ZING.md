@@ -334,7 +334,7 @@ and no body, whose output is its first input.
 ### Note and global members
 
 Functions and modules marked `note` can read the note with `key()`, `velocity()` (0 to 127) and
-`gate()`, and can only be used by instruments and other `note` functions and modules. `adsr`
+(for modules) `gate()`, and can only be used by instruments and other `note` functions and modules. `adsr`
 and `release` are note modules.
 
 ```zing
@@ -694,7 +694,8 @@ key to `k`.
 | `samplerate()` | sample rate in Hz |
 | `gmdls(id, i)` | sample `i` of gm.dls sound `id`; looped sounds repeat their loop, others end in silence |
 | `length(b)` | number of elements of a buffer |
-| `key()`, `velocity()`, `gate()` | the note's key (0 to 127), velocity (0 to 127) and whether its key is held (note members only) |
+| `key()`, `velocity()` | the note's key (0 to 127) and velocity (0 to 127) (note members only) |
+| `gate()` | module: whether the note's key is held (note members only) |
 | `cell(next, init)` | module: `init`, then each sample the previous `next` |
 | `delay(next, length)` | module: `next` from `length` (static) samples ago |
 | `dyndelay(next, time, maxtime)` | module: `next` from `time` samples ago, at most `maxtime` (static) |

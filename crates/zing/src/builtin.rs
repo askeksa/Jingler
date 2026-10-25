@@ -89,7 +89,6 @@ pub static BUILTIN_FUNCTIONS: &[BuiltinFunction] = &[
 	("cursor",     U, sig!([generic buffer] [mono]),      code![BufferCursor]),
 	("exp2",       U, sig!([mono] [mono]),                code![Exp2]),
 	("floor",      U, sig!([generic] [generic]),          code![Floor]),
-	("gate",       N, sig!([] [mono bool]),               code![ReadNoteProperty(Gate)]),
 	("gmdls",      U, sig!([mono, mono] [mono]),          code![GmDlsSample, Constant(0x30000000), Mul]),
 	("key",        N, sig!([] [mono]),                    code![ReadNoteProperty(Key)]),
 	("left",       U, sig!([stereo] [mono]),              code![Left]),
@@ -113,6 +112,7 @@ pub static BUILTIN_MODULES: &[BuiltinModule] = &[
 	("cell",     U, sig!([dynamic generic typeless, static generic typeless] [dynamic generic typeless])),
 	("delay",    U, sig!([dynamic generic typeless, static mono number] [dynamic generic typeless])),
 	("dyndelay", U, sig!([dynamic generic typeless, dynamic mono number, static mono number] [dynamic generic typeless])),
+	("gate",     N, sig!([] [dynamic mono bool])),
 ];
 
 pub static PRECOMPILED_FUNCTIONS: &[PrecompiledMember] = &[

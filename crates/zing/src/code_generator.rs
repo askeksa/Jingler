@@ -928,11 +928,12 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 							(Module, BuiltIn { .. }) => {
 								// `cell`/`delay` update arg is dynamic; their initial value
 								// arg is static. `dyndelay` has dynamic update + dynamic
-								// offset, with a static initial value.
+								// offset, with a static initial value. `gate` has no args.
 								let static_args: &[usize] = match name.text.as_str() {
 									"cell"     => &[1],
 									"delay"    => &[1],
 									"dyndelay" => &[2],
+									"gate"     => &[],
 									_ => panic!("Unknown built-in module"),
 								};
 								for (i, arg) in args.iter().enumerate() {
@@ -1181,6 +1182,11 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 						use MemberKind::*;
 						use MemberDefinition::*;
 						match (kind, definition) {
+							(Module, BuiltIn { .. }) if name.text == "gate" => {
+								// Stateless, so it is read inline in the dynamic part,
+								// also in repetition bodies.
+								self.emit(code![ReadNoteProperty(Gate)]);
+							},
 							(Module, BuiltIn { .. }) => {
 								if self.repetition_depth > 0 {
 									self.unsupported(exp, "Built-in module in repetition body");

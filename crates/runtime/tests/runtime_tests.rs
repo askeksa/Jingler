@@ -9,6 +9,15 @@ fn compile(src: &str) -> ir::Program {
 		.unwrap_or_else(|mut e| panic!("Compilation failed:\n{}", e.next().unwrap_or_default()))
 }
 
+fn compile_errors(src: &str) -> String {
+	Compiler::new("test.zing".to_string(), src.to_string())
+		.compile()
+		.err()
+		.expect("Compilation succeeded, but errors were expected")
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
 fn make_runtime(src: &str) -> Box<dyn JinglerRuntimeHandle> {
 	let program = compile(src);
 	let (rt, mut handle) = default_jingler_runtime(Externals::new()).unwrap();
@@ -993,24 +1002,92 @@ fn instrument_gate_property() {
 		instrument tone() -> out: mono
 			out = gate() ? 1.0 : 0.0
 
-		instrument static_tone() -> out: mono
-			temp: static = gate()
-			out = temp ? 1.0 : 0.0
-
 		global module main () -> (out: stereo)
-			out = [1::tone(), 2::static_tone()]
+			out = 1::tone()
 	"#;
 	let mut rt = make_runtime(src);
 
 	rt.note_on(0, 60, 127).unwrap();
-	rt.note_on(1, 72, 127).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_sample(s, 1.0, 1.0);
+	assert_mono(s, 1.0);
 
 	rt.note_off(0, 60).unwrap();
-	rt.note_off(1, 72).unwrap();
 	let s = rt.next_sample().unwrap();
-	assert_sample(s, 0.0, 1.0);
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn instrument_gate_variable_follows_note_off() {
+	// gate() is dynamic, so an unannotated variable assigned from it is dynamic
+	// too, rather than defaulting to static and capturing the gate at note-on.
+	let src = r#"
+		instrument tone() -> out: mono
+			g = gate()
+			out = g ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 1.0);
+
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn instrument_gate_can_not_be_static() {
+	let src = r#"
+		instrument tone() -> out: mono
+			temp: static = gate()
+			out = temp ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let errors = compile_errors(src);
+	assert!(errors.contains("can't be assigned to 'temp'"), "unexpected errors:\n{errors}");
+}
+
+#[test]
+fn instrument_gate_in_repetition() {
+	let src = r#"
+		instrument tone() -> out: mono
+			out = for i to 3 add gate() ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let mut rt = make_runtime(src);
+
+	rt.note_on(0, 60, 127).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 3.0);
+
+	rt.note_off(0, 60).unwrap();
+	let s = rt.next_sample().unwrap();
+	assert_mono(s, 0.0);
+}
+
+#[test]
+fn note_function_can_not_use_gate() {
+	// gate() is a built-in note module, so functions can't call it.
+	let src = r#"
+		note function held() -> out: mono bool
+			out = gate()
+
+		instrument tone() -> out: mono
+			out = held() ? 1.0 : 0.0
+
+		global module main () -> (out: stereo)
+			out = 1::tone()
+	"#;
+	let errors = compile_errors(src);
+	assert!(errors.contains("Modules can't be called from functions."), "unexpected errors:\n{errors}");
 }
 
 // ============================================================
