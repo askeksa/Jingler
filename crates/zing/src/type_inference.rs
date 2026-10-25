@@ -295,9 +295,12 @@ impl<'comp, 'names> TypeInferrer<'comp, 'names> {
 					}).collect()
 				}).collect();
 
-			// Infer statements in program order
+			// Infer statements in evaluation order. Only references in the first argument of a
+			// cell or delay can be to statements not inferred yet.
 			let mut repeat = false;
-			for (body_index, Statement::Assign { node, exp }) in member.body.iter_mut().enumerate() {
+			let names = self.names;
+			for &body_index in names.statement_order(self.current_member_index) {
+				let Statement::Assign { node, exp } = &mut member.body[body_index];
 				let inferred_results = self.infer_statement(node, exp);
 
 				for ((PatternItem { item_type: source_type, .. }, node_type), inferred_type) in

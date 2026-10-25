@@ -453,6 +453,154 @@ fn cell_feedback() {
 }
 
 // ============================================================
+// Statement order
+// Each statement is evaluated after the statements it refers to.
+// The first argument of cell and delay is evaluated after the whole body.
+// ============================================================
+
+#[test]
+fn forward_static_chain() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			a = b + 1
+			b = c * 2
+			c = 5
+			out = [a, b]
+	"#;
+	assert_sample(run1(src), 11.0, 10.0);
+}
+
+#[test]
+fn forward_reference_to_single_use_static() {
+	// `c` is inlined at its use.
+	let src = r#"
+		global module main () -> (out: stereo)
+			a = c + 1
+			c = 5
+			out = a
+	"#;
+	assert_mono(run1(src), 6.0);
+}
+
+#[test]
+fn forward_reference_to_dynamic() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			a = b + 1
+			b = cell(b + 1, 0)
+			out = [a, b]
+	"#;
+	let samples = run(src, 3);
+	assert_sample(samples[0], 1.0, 0.0);
+	assert_sample(samples[1], 2.0, 1.0);
+	assert_sample(samples[2], 3.0, 2.0);
+}
+
+#[test]
+fn dynamic_forward_reference_to_static() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = cell(out + 1, 0) + s
+			s: static = 7
+	"#;
+	let samples = run(src, 3);
+	assert_mono(samples[0], 7.0);
+	assert_mono(samples[1], 15.0);
+	assert_mono(samples[2], 23.0);
+}
+
+#[test]
+fn forward_references_to_stereo_bool_and_buffer() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = c ? x * buf[1] : 0
+			x = [1, 2]
+			c = 1 < 2
+			buf = {3, 4}
+	"#;
+	assert_sample(run1(src), 4.0, 8.0);
+}
+
+#[test]
+fn forward_references_to_instruments() {
+	let src = r#"
+		instrument beep() -> out: mono
+			out = 1.0
+
+		instrument boop() -> out: mono
+			out = 2.0
+
+		global module main () -> (out: stereo)
+			out = [a, b]
+			b = 2::boop()
+			a = 1::beep()
+	"#;
+	let mut rt = make_runtime(src);
+	rt.note_on(0, 60, 127).unwrap();
+	assert_sample(rt.next_sample().unwrap(), 1.0, 0.0);
+	rt.note_on(1, 60, 127).unwrap();
+	assert_sample(rt.next_sample().unwrap(), 1.0, 2.0);
+}
+
+#[test]
+fn cell_init_refers_to_later_static() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = cell(out + 1, s)
+			s: static = 7
+	"#;
+	let samples = run(src, 3);
+	assert_mono(samples[0], 7.0);
+	assert_mono(samples[1], 8.0);
+	assert_mono(samples[2], 9.0);
+}
+
+#[test]
+fn cell_refers_to_later_variable() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			x = cell(y, 0)
+			y = x + 1
+			out = [x, y]
+	"#;
+	let samples = run(src, 3);
+	assert_sample(samples[0], 0.0, 1.0);
+	assert_sample(samples[1], 1.0, 2.0);
+	assert_sample(samples[2], 2.0, 3.0);
+}
+
+#[test]
+fn cell_refers_to_later_single_use_variable() {
+	// `y` is inlined into the cell update.
+	let src = r#"
+		global module main () -> (out: stereo)
+			x = cell(y, 0)
+			y = x + 1
+			out = x
+	"#;
+	let samples = run(src, 3);
+	assert_mono(samples[0], 0.0);
+	assert_mono(samples[1], 1.0);
+	assert_mono(samples[2], 2.0);
+}
+
+#[test]
+fn cell_refers_to_later_static_variables() {
+	// Like fastsine in base.zing: y[n+1] = k * y[n] - y[n-1], with y[0] = 1, y[-1] = prev.
+	let src = r#"
+		global module main () -> (out: stereo)
+			out = cell(out * k - cell(out, prev), 1)
+			k: static = 1.5
+			prev: static = 0.5
+	"#;
+	let samples = run(src, 4);
+	assert_mono(samples[0], 1.0);
+	assert_mono(samples[1], 1.0);
+	assert_mono(samples[2], 0.5);
+	assert_mono(samples[3], -0.25);
+}
+
+// ============================================================
 // State: delay
 // ============================================================
 

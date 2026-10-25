@@ -420,7 +420,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 					None,
 					&forbidden,
 				);
-				for statement in body {
+				for statement in self.statements_in_order(body) {
 					self.generate_code_for_statement(statement)?;
 				}
 				let stack_adjust = self.stack_adjust_from_outputs(outputs);
@@ -595,6 +595,13 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		self.assign_external_ids(program);
 	}
 
+	/// The statements of the current member in evaluation order (`Names::statement_order`).
+	fn statements_in_order(&self, body: &'ast [Statement]) -> Vec<&'ast Statement> {
+		self.names.statement_order(self.current_member_index).iter()
+			.map(|&body_index| &body[body_index])
+			.collect()
+	}
+
 	fn inlineable_item<'a>(&self, node: &'a Pattern) -> Option<&'a PatternItem> {
 		if let [item] = node.items.as_slice() && item.name.text != "_" {
 			Some(item)
@@ -704,8 +711,10 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		body: &'ast Vec<Statement>,
 		outputs: &'ast Pattern,
 	) -> Result<(), CompileError> {
+		// Left over from the dynamic body; static-phase code has no implicit cells.
+		self.static_var_position.clear();
 		self.inline_exp = self.compute_static_inlineable(body, outputs);
-		for statement in body {
+		for statement in self.statements_in_order(body) {
 			if statement_scope(statement) == Some(Scope::Static) {
 				self.generate_code_for_statement(statement)?;
 			}
@@ -774,7 +783,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 			.into_keys().collect();
 
 		// Compute static-phase positions for static-scope inputs and static-scope
-		// assignment LHSs in source order. Used during the dynamic walk to detect
+		// assignment LHSs in evaluation order. Used during the dynamic walk to detect
 		// implicit-cell references.
 		let mut pos = 0usize;
 		for item in &inputs.items {
@@ -787,7 +796,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 				pos += 1;
 			}
 		}
-		for Statement::Assign { node, .. } in body {
+		for Statement::Assign { node, .. } in self.statements_in_order(body) {
 			let stmt_scope = node.items.first().and_then(|item| item.item_type.scope);
 			if stmt_scope == Some(Scope::Static) {
 				if self.inlineable_item(node)
@@ -823,7 +832,7 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 		}
 
 		self.next_stack_index = self.stack_height;
-		for statement in body {
+		for statement in self.statements_in_order(body) {
 			if statement_scope(statement) == Some(Scope::Dynamic) {
 				self.generate_code_for_statement(statement)?;
 			}
@@ -1131,7 +1140,8 @@ impl<'ast, 'comp, 'names> CodeGenerator<'ast, 'comp, 'names> {
 									self.emit(code![Parameter(*index as u16)]);
 								},
 								Some(VariableRef::Node { .. }) => {
-									self.compiler.report_error(name, "Reference to a later variable is only allowed in a cell or delay.");
+									// Statements are generated in Names::statement_order, after the ones they refer to.
+									self.compiler.report_internal_error(name, format!("Variable '{}' is not available here.", name));
 									// Dummy push to keep stack height consistent
 									self.emit(code![Constant(0)]);
 								},

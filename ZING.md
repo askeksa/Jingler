@@ -86,8 +86,8 @@ minus belongs to the 6, so this is `db(-6)`.
 
 ### Variables
 
-Name intermediate results to keep long chains readable. A name is assigned once, and must be
-assigned before it's used:
+Name intermediate results to keep long chains readable. A name is assigned once, and can be
+used above its assignment too, as long as no value depends on itself:
 
 ```zing
 instrument bass() -> out: mono
@@ -408,15 +408,15 @@ module smooth(in: mono, speed: static mono) -> out: mono
 `counter` gives 0, 1, 2, … and `smooth` follows its input a little slower. This is also how
 `up` and `phase` in base.zing are made.
 
-Normally a name must be assigned before it's used. Inside the first argument of `cell` or
-`delay`, it may also refer to names assigned later, as `filter` in base.zing does. Anywhere else,
-that's an error:
+The first argument of `cell` or `delay` is the value for the next sample, worked out after the
+rest of the member, so it can depend on anything, as the outputs of `filter` in base.zing do.
+Anywhere else, a value that depends on itself is an error:
 
 ```zing error
 module broken() -> out: mono
-	# Error: Reference to a later variable is only allowed in a cell or delay.
+	# Error: 'a' depends on itself.
 	a = b + 1
-	b = 1.up
+	b = a * 2
 	out = a
 ```
 
@@ -636,7 +636,9 @@ external function | module name(inputs) -> outputs
 ```
 
 followed by statements `pattern = expression`, where a pattern is one or more names, separated
-by commas, each optionally with a type. One `global module main() -> out: stereo` is required.
+by commas, each optionally with a type. Statements can come in any order: each is evaluated after
+the statements it uses. Uses can't form a cycle, except through the first argument of `cell`,
+`delay` or `dyndelay`. One `global module main() -> out: stereo` is required.
 
 | Member | Can be used by |
 |---|---|

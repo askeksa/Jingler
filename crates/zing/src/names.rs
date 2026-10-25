@@ -1,5 +1,5 @@
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ir::Instruction;
 
@@ -14,6 +14,7 @@ pub struct Names {
 	members: HashMap<String, MemberRef>,
 	midi: Vec<HashMap<String, (usize, PosRange)>>,
 	variables: Vec<HashMap<String, VariableRef>>,
+	statement_order: Vec<Vec<usize>>,
 	combinators: HashMap<String, Combinator>,
 }
 
@@ -67,6 +68,7 @@ impl Names {
 			members: HashMap::new(),
 			midi: vec![HashMap::new(); program.members.len()],
 			variables: vec![HashMap::new(); program.members.len()],
+			statement_order: vec![vec![]; program.members.len()],
 			combinators: HashMap::new(),
 		};
 
@@ -141,6 +143,7 @@ impl Names {
 					}
 				});
 			}
+			names.statement_order[member_index] = names.find_statement_order(compiler, member_index, member);
 		}
 
 		compiler.if_no_errors(names)
@@ -197,6 +200,45 @@ impl Names {
 		}).or_insert(var_ref);
 	}
 
+	/// Order the statements of a member so that each comes after the statements it
+	/// refers to, keeping source order where possible. The first argument of a
+	/// built-in module (`cell`, `delay`, `dyndelay`) is the value for the next sample,
+	/// evaluated after the whole body, so it may refer to any statement. Other
+	/// references must not form a cycle.
+	fn find_statement_order(&self, compiler: &mut Compiler, member_index: usize, member: &Member) -> Vec<usize> {
+		// For each statement, the statements it refers to, with the referring names.
+		let references: Vec<Vec<(usize, &Id)>> = member.body.iter().map(|Statement::Assign { exp, .. }| {
+			let mut next_values: HashSet<*const Expression> = HashSet::new();
+			exp.traverse_pre(&mut |exp| {
+				if let Expression::Call { name, args, .. } = exp
+					&& let Some(MemberRef { kind: MemberKind::Module, definition: MemberDefinition::BuiltIn { .. }, .. })
+						= self.lookup_member(&name.text)
+					&& let Some(next) = args.first()
+				{
+					next.traverse_pre(&mut |exp| { next_values.insert(exp); });
+				}
+			});
+			let mut statement_references = vec![];
+			exp.traverse_pre(&mut |exp| {
+				if let Expression::Variable { name } = exp
+					&& !next_values.contains(&(exp as *const Expression))
+					&& let Some(&VariableRef::Node { body_index, .. }) = self.lookup_variable(member_index, &name.text)
+				{
+					statement_references.push((body_index, name));
+				}
+			});
+			statement_references
+		}).collect();
+
+		let mut visits = vec![Visit::New; member.body.len()];
+		let mut path = vec![];
+		let mut order = vec![];
+		for body_index in 0..member.body.len() {
+			visit_statement(compiler, &references, body_index, &mut visits, &mut path, &mut order);
+		}
+		order
+	}
+
 	/// Look up a module, function or instrument by name.
 	pub fn lookup_member(&self, name: &String) -> Option<&MemberRef> {
 		self.members.get(name)
@@ -213,6 +255,11 @@ impl Names {
 	/// Look up a MIDI input by name inside a specific member.
 	pub fn lookup_midi_input(&self, member_index: usize, name: &String) -> Option<usize> {
 		self.midi[member_index].get(name).map(|(index, _)| *index)
+	}
+
+	/// The indices of the statements of a member, in the order to evaluate them.
+	pub fn statement_order(&self, member_index: usize) -> &[usize] {
+		&self.statement_order[member_index]
 	}
 
 	/// Look up a variable by name inside a specific member.
@@ -245,4 +292,42 @@ impl Names {
 		};
 		&raw const *self.lookup_precompiled(&autokill_name).unwrap()
 	}
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Visit { New, Active, Done }
+
+/// Depth-first: put the statements that a statement refers to before it in `order`.
+/// `path` holds the statements being visited, each with its reference to the next.
+fn visit_statement<'ast>(
+		compiler: &mut Compiler,
+		references: &[Vec<(usize, &'ast Id)>],
+		body_index: usize,
+		visits: &mut [Visit],
+		path: &mut Vec<(usize, &'ast Id)>,
+		order: &mut Vec<usize>) {
+	if visits[body_index] != Visit::New { return; }
+	visits[body_index] = Visit::Active;
+	for &(target, name) in &references[body_index] {
+		match visits[target] {
+			Visit::New => {
+				path.push((body_index, name));
+				visit_statement(compiler, references, target, visits, path, order);
+				path.pop();
+			},
+			Visit::Active => {
+				// The references from `target` along the path, and back by `name`, form a cycle.
+				let start = path.iter().position(|&(index, _)| index == target).unwrap_or(path.len());
+				let cycle: Vec<&Id> = path[start..].iter().map(|&(_, name)| name).chain([name]).collect();
+				compiler.report_error(cycle[0], format!(
+					"'{}' depends on itself. A cycle must go through the first argument of a cell or delay.", name));
+				for pair in cycle.windows(2) {
+					compiler.report_context(pair[1], format!("'{}' depends on '{}' here.", pair[0], pair[1]));
+				}
+			},
+			Visit::Done => {},
+		}
+	}
+	visits[body_index] = Visit::Done;
+	order.push(body_index);
 }
