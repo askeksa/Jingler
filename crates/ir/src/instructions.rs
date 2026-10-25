@@ -93,7 +93,7 @@ pub enum Instruction {
 	BufferLoadWithOffset,
 	BufferLoadIndexed,
 	BufferStoreAndStep,
-	BufferIndex,
+	BufferCursor,
 	BufferLength,
 	BufferInitStart,
 	BufferInitEnd,
@@ -170,7 +170,7 @@ impl Instruction {
 			BufferLoadWithOffset => (2, 1),
 			BufferLoadIndexed => (2, 1),
 			BufferStoreAndStep => (2, 1),
-			BufferIndex | BufferLength => (1, 1),
+			BufferCursor | BufferLength => (1, 1),
 			BufferInitStart => (1, 1),
 			BufferInitEnd => (2, 1),
 

@@ -932,7 +932,7 @@ InoutCodes:
 	iinstr	expand_r, bs, 0x17 ; movhpd r -> m (m.x = r.y)
 	iinstr	pop, rb, 0x28 ; movapd m -> r
 	iinstr	popnext, rb, 0x29 ; movapd r -> m
-	iinstr	buffer_index_and_length, st, 0x2a ; cvtpi2pd
+	iinstr	buffer_cursor_and_length, st, 0x2a ; cvtpi2pd
 	iinstr	cmp, rr, 0x2e ; ucomisd
 	iinstr	sqrt, st, 0x51
 	iinstr	and, rt, 0x54

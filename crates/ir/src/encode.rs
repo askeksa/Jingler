@@ -101,7 +101,7 @@ enum EncodedImplicit {
 	ExpandR = 0x17,
 	Pop = 0x28,
 	PopNext = 0x29,
-	BufferIndexAndLength = 0x2A,
+	BufferCursorAndLength = 0x2A,
 	Cmp = 0x2E,
 	Sqrt = 0x51,
 	And = 0x54,
@@ -177,7 +177,7 @@ fn implicit_name(encoding: u16) -> &'static str {
 		e if e == implicit_encoding(ExpandR) => "expand_r",
 		e if e == implicit_encoding(Pop) => "pop",
 		e if e == implicit_encoding(PopNext) => "popnext",
-		e if e == implicit_encoding(BufferIndexAndLength) => "buffer_index_and_length",
+		e if e == implicit_encoding(BufferCursorAndLength) => "buffer_cursor_and_length",
 		e if e == implicit_encoding(Cmp) => "cmp",
 		e if e == implicit_encoding(Sqrt) => "sqrt",
 		e if e == implicit_encoding(And) => "and",
@@ -369,9 +369,9 @@ fn encode_bytecode(inst: Instruction, sample_rate: f32,
 		Instruction::Expand(_) => encode_implicit(ExpandL, encode),
 		Instruction::Pop => encode_implicit(Pop, encode),
 		Instruction::PopNext => encode_implicit(PopNext, encode),
-		Instruction::BufferIndex => encode_implicit(BufferIndexAndLength, encode),
+		Instruction::BufferCursor => encode_implicit(BufferCursorAndLength, encode),
 		Instruction::BufferLength => {
-			encode_implicit(BufferIndexAndLength, encode);
+			encode_implicit(BufferCursorAndLength, encode);
 			encode_implicit(ExpandR, encode);
 		},
 		Instruction::Sqrt => encode_implicit(Sqrt, encode),

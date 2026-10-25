@@ -517,6 +517,17 @@ fn buffer_length_fn() {
 	assert_mono(s, 5.0);
 }
 
+#[test]
+fn buffer_cursor_of_literal() {
+	let src = r#"
+		global module main () -> (out: stereo)
+			buf: mono buffer = {7.0, 8.0, 9.0}
+			out = cursor(buf)
+	"#;
+	let s = run1(src);
+	assert_mono(s, 0.0);
+}
+
 // ============================================================
 // Buffer initialization loops
 // ============================================================
@@ -530,6 +541,20 @@ fn buffer_init_length() {
 		global module main () -> (out: stereo)
 			buf: mono buffer = for 5 buffer gen()
 			out = length(buf)
+	"#;
+	let s = run1(src);
+	assert_mono(s, 5.0);
+}
+
+#[test]
+fn buffer_init_cursor() {
+	let src = r#"
+		module counter() -> out: mono
+			out = cell(out + 1.0, 0.0)
+
+		global module main () -> (out: stereo)
+			buf: mono buffer = for 5 buffer counter()
+			out = buf.cursor
 	"#;
 	let s = run1(src);
 	assert_mono(s, 5.0);

@@ -419,7 +419,7 @@ fn generate_folded_multiply_fn(module: &mut walrus::Module) -> FunctionId {
 ///   ptr = buffer_alloc_ptr
 ///   buffer_alloc_ptr += size * 16
 ///   ensure memory is large enough via memory.grow
-///   return v128 descriptor: [index=0, length=size, ptr, 0]
+///   return v128 descriptor: [cursor=0, length=size, ptr, 0]
 fn generate_buffer_alloc_fn(module: &mut walrus::Module, memory: MemoryId, buffer_alloc_ptr: GlobalId) -> FunctionId {
 	let params = [ValType::I32];
 	let results = [ValType::V128];
@@ -475,7 +475,7 @@ fn generate_buffer_alloc_fn(module: &mut walrus::Module, memory: MemoryId, buffe
 	// Start with zero vector
 	b.i32_const(0);
 	b.unop(UnaryOp::I32x4Splat);
-	// Lane 0 = 0 (index, already zero)
+	// Lane 0 = 0 (cursor, already zero)
 	// Lane 1 = size
 	b.local_get(args[0]);
 	b.binop(BinaryOp::I32x4ReplaceLane { idx: 1 });
@@ -1015,13 +1015,13 @@ impl<'ir> WasmGenerator<'ir> {
 				},
 
 				BufferLoad => {
-					// Pop descriptor (V128 with i32x4 layout: [index, length, ptr, 0])
+					// Pop descriptor (V128 with i32x4 layout: [cursor, length, ptr, 0])
 					let desc = stack.pop().unwrap();
-					// addr = ptr + index * 16
+					// addr = ptr + cursor * 16
 					b.local_get(desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
 					b.local_get(desc);
-					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // cursor
 					b.i32_const(4);
 					b.binop(BinaryOp::I32Shl);
 					b.binop(BinaryOp::I32Add);
@@ -1042,7 +1042,7 @@ impl<'ir> WasmGenerator<'ir> {
 					b.unop(UnaryOp::I32TruncSSatF64);
 					b.local_set(offset_i32);
 
-					// read_index = index - offset
+					// read_index = cursor - offset
 					let read_index = self.module().locals.add(ValType::I32);
 					b.local_get(desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 });
@@ -1126,29 +1126,29 @@ impl<'ir> WasmGenerator<'ir> {
 					let value = stack.pop().unwrap();
 					let desc = stack.pop().unwrap();
 
-					// Store value at ptr + index * 16
-					let index = self.module().locals.add(ValType::I32);
+					// Store value at ptr + cursor * 16
+					let cursor = self.module().locals.add(ValType::I32);
 					b.local_get(desc);
-					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
-					b.local_set(index);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // cursor
+					b.local_set(cursor);
 
 					b.local_get(desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
-					b.local_get(index);
+					b.local_get(cursor);
 					b.i32_const(4);
 					b.binop(BinaryOp::I32Shl);
 					b.binop(BinaryOp::I32Add);
 					b.local_get(value);
 					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 
-					// Increment index
-					b.local_get(index);
+					// Increment cursor
+					b.local_get(cursor);
 					b.i32_const(1);
 					b.binop(BinaryOp::I32Add);
-					b.local_set(index);
+					b.local_set(cursor);
 
-					// Wrap: if index >= length, index = 0
-					b.local_get(index);
+					// Wrap: if cursor >= length, cursor = 0
+					b.local_get(cursor);
 					b.local_get(desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
 					b.binop(BinaryOp::I32GeU);
@@ -1156,23 +1156,23 @@ impl<'ir> WasmGenerator<'ir> {
 						None,
 						|then| {
 							then.i32_const(0);
-							then.local_set(index);
+							then.local_set(cursor);
 						},
 						|_else| {},
 					);
 
-					// Update descriptor with new index
+					// Update descriptor with new cursor
 					b.local_get(desc);
-					b.local_get(index);
+					b.local_get(cursor);
 					b.binop(BinaryOp::I32x4ReplaceLane { idx: 0 });
 					push!();
 				},
 
-				BufferIndex => {
-					// Pop descriptor, push current index as f64x2
+				BufferCursor => {
+					// Pop descriptor, push current cursor as f64x2
 					let desc = stack.pop().unwrap();
 					b.local_get(desc);
-					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // cursor
 					b.unop(UnaryOp::F64ConvertSI32);
 					b.unop(UnaryOp::F64x2Splat);
 					push!();
@@ -1360,31 +1360,31 @@ impl<'ir> WasmGenerator<'ir> {
 					let value = stack.pop().unwrap();
 					let desc = stack.pop().unwrap();
 
-					// --- Store value at ptr + index * 16 ---
-					let index = self.module().locals.add(ValType::I32);
+					// --- Store value at ptr + cursor * 16 ---
+					let cursor = self.module().locals.add(ValType::I32);
 					b.local_get(desc);
-					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // index
-					b.local_set(index);
+					b.unop(UnaryOp::I32x4ExtractLane { idx: 0 }); // cursor
+					b.local_set(cursor);
 
 					b.local_get(desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 2 }); // ptr
-					b.local_get(index);
+					b.local_get(cursor);
 					b.i32_const(4);
 					b.binop(BinaryOp::I32Shl);
 					b.binop(BinaryOp::I32Add);
 					b.local_get(value);
 					b.store(self.memory, StoreKind::V128, MemArg { align: 16, offset: 0 });
 
-					// Increment index
-					b.local_get(index);
+					// Increment cursor
+					b.local_get(cursor);
 					b.i32_const(1);
 					b.binop(BinaryOp::I32Add);
-					b.local_set(index);
+					b.local_set(cursor);
 
-					// Update descriptor with new index
+					// Update descriptor with new cursor
 					let snapshot_desc = snapshot[snapshot.len() - 1];
 					b.local_get(desc);
-					b.local_get(index);
+					b.local_get(cursor);
 					b.binop(BinaryOp::I32x4ReplaceLane { idx: 0 });
 					b.local_set(snapshot_desc);
 
@@ -1397,14 +1397,14 @@ impl<'ir> WasmGenerator<'ir> {
 						}
 					}
 
-					// Compare index < length, branch back to loop start if true
-					b.local_get(index);
+					// Compare cursor < length, branch back to loop start if true
+					b.local_get(cursor);
 					b.local_get(snapshot_desc);
 					b.unop(UnaryOp::I32x4ExtractLane { idx: 1 }); // length
 					b.binop(BinaryOp::I32LtU);
 					b.br_if(b.id());
 
-					// After loop: restore stack to snapshot (descriptor with final index)
+					// After loop: restore stack to snapshot (descriptor with final cursor)
 					*stack = stack_snapshot;
 
 					*pc += 1;
