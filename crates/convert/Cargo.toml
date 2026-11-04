@@ -8,6 +8,6 @@ edition.workspace = true
 [dependencies]
 anyhow = "1.0"
 roxmltree = "0.21"
-zip = "8.2"
+zip = "9.0"
 
 ir = { path = "../ir" }
