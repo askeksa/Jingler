@@ -155,19 +155,7 @@ impl JinglerEditor {
 			self.assign_knobs(&setter, &program.parameters);
 		}
 
-		egui::Panel::bottom("status").show(ui, |ui| {
-			ui.add_space(4.0);
-			ui.horizontal(|ui| {
-				ui.label(received);
-				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-					ui.weak(format!("Plugin: {}", protocol::Versions::ours()));
-				});
-			});
-			if let Some(error) = &error {
-				ui.colored_label(ui.visuals().error_fg_color, error);
-			}
-			ui.add_space(4.0);
-		});
+		status_bar(ui, &received, error.as_deref());
 		let Some(program) = &program else {
 			egui::CentralPanel::default().show(ui, |_| {});
 			return;
@@ -182,6 +170,34 @@ impl JinglerEditor {
 				self.parameters_ui(ui, &setter, &program.parameters);
 			});
 		});
+	}
+}
+
+const STATUS_BAR: &str = "status";
+
+fn status_bar(ui: &mut egui::Ui, received: &str, error: Option<&str>) {
+	// A bottom panel is placed with the height it had in the previous pass,
+	// and its contents grow downwards from there. So when the status bar
+	// grows (an error appears), its new lines would be below the window
+	// until the next repaint, which may only come with a mouse move.
+	let id = egui::Id::new(STATUS_BAR);
+	let placed_height = egui::PanelState::load(ui.ctx(), id).map(|state| state.size().y);
+	let response = egui::Panel::bottom(id).show(ui, |ui| {
+		ui.add_space(4.0);
+		ui.horizontal(|ui| {
+			ui.label(received);
+			ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+				ui.weak(format!("Plugin: {}", protocol::Versions::ours()));
+			});
+		});
+		if let Some(error) = error {
+			ui.colored_label(ui.visuals().error_fg_color, error);
+		}
+		ui.add_space(4.0);
+	}).response;
+	// Lay the window out again with the new height before it is shown.
+	if placed_height.is_none_or(|height| (height - response.rect.height()).abs() > 0.5) {
+		ui.ctx().request_discard("status bar height changed");
 	}
 }
 
@@ -264,6 +280,20 @@ mod tests {
 		// Only cutoff is away from its default, and only once.
 		assert_eq!(*host.edits.lock().unwrap(), vec!["begin 0", "set 0.2 0", "end 0"]);
 		assert_eq!(*params.knob_assignment.lock().unwrap(), KnobAssignment::of(&program().parameters));
+	}
+
+	#[test]
+	fn a_status_bar_that_grows_stays_inside_the_window() {
+		let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(780.0, 480.0));
+		let input = || egui::RawInput { screen_rect: Some(window), ..Default::default() };
+		let ctx = egui::Context::default();
+		let error = "Protocol mismatch.\nUpdate the plugin.\nOr update zing-cmd.";
+		for error in [None, Some(error), None] {
+			// One repaint, as the status change requests.
+			ctx.run_ui(input(), |ui| status_bar(ui, "No program received.", error)).textures_delta.clear();
+			let status = egui::PanelState::load(&ctx, egui::Id::new(STATUS_BAR)).unwrap().outer_rect;
+			assert_eq!(status.max.y, window.max.y, "with error {error:?}");
+		}
 	}
 
 	#[test]
