@@ -1,5 +1,4 @@
-use std::io::Read;
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, TcpListener};
 use std::num::NonZeroU32;
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -9,6 +8,7 @@ use nice_plug::editor::dpi::LogicalSize;
 use nice_plug::midi::{Channel, Key};
 use nice_plug::prelude::*;
 use nice_plug_egui::{EguiEditor, EguiEditorState, EguiNiceSettings, RepaintNotifier, create_egui_editor};
+use protocol::{ReadError, Received};
 use runtime::{Externals, JinglerRuntime, JinglerRuntimeHandle, SubmitOutcome, default_jingler_runtime};
 
 use crate::editor::JinglerEditor;
@@ -19,10 +19,6 @@ mod editor;
 mod knobs;
 mod mappings;
 mod status;
-
-const LISTEN_ADDR: &str = "0.0.0.0:26127";
-/// Sanity cap on incoming serialised program size to prevent OOM from rogue senders.
-const MAX_PROGRAM_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
 // ─── Global runtime + listener state ─────────────────────────────────────────
 //
@@ -169,64 +165,53 @@ impl Drop for JinglerPlugin {
 // ─── Network listener thread ──────────────────────────────────────────────────
 
 fn listener_thread(runtime: Arc<GlobalRuntime>) {
-	let listener = match TcpListener::bind(LISTEN_ADDR) {
+	let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, protocol::PORT)) {
 		Ok(l) => l,
 		Err(e) => {
-			nice_error!("Jingler: failed to bind {}: {}", LISTEN_ADDR, e);
+			nice_error!("Jingler: failed to listen on port {}: {}", protocol::PORT, e);
 			return;
 		}
 	};
-	nice_log!("Jingler: listening for compiled programs on {}", LISTEN_ADDR);
+	nice_log!("Jingler: listening for compiled programs on port {}", protocol::PORT);
 
 	for stream in listener.incoming() {
-		match stream {
-			Ok(mut stream) => {
-				// Protocol: 4-byte LE u32 length, then that many bytes of
-				// bincode-serialised ir::Program.
-				let mut len_buf = [0u8; 4];
-				if stream.read_exact(&mut len_buf).is_err() {
-					nice_error!("Jingler: failed to read length prefix");
-					continue;
-				}
-				let len = u32::from_le_bytes(len_buf) as usize;
-				if len > MAX_PROGRAM_BYTES {
-					report_error(format!("Program too large ({} bytes, max {})", len, MAX_PROGRAM_BYTES));
-					continue;
-				}
-
-				let mut data = vec![0u8; len];
-				if stream.read_exact(&mut data).is_err() {
-					report_error(format!("Failed to read {} bytes of program data", len));
-					continue;
-				}
-
-				match bincode::deserialize::<ir::Program>(&data) {
-					Ok(program) => {
-						match runtime.listener.submit_program(&program) {
-							Ok(outcome) => {
-								match outcome {
-									SubmitOutcome::FreshCompile => {
-										nice_log!("Jingler: new program compiled ({} bytes)", len);
-									}
-									SubmitOutcome::ConstantUpdate { count } => {
-										nice_log!("Jingler: queued {} constant update(s)", count);
-									}
-									SubmitOutcome::NoChange => {
-										nice_log!("Jingler: program unchanged ({} bytes)", len);
-									}
-									_ => {}
-								}
-								shared().accept_program(program);
-							}
-							Err(e) => report_error(format!("Program rejected: {}", e)),
-						}
-					}
-					Err(e) => report_error(format!("Failed to deserialise program: {}", e)),
-				}
-			}
+		let mut stream = match stream {
+			Ok(stream) => stream,
 			Err(e) => {
 				report_error(format!("Failed to accept connection: {}", e));
-			},
+				continue;
+			}
+		};
+		// The protocol crate checks the sender's protocol version before
+		// reading the program.
+		let Received { program, versions, bytes } = match protocol::read_program(&mut stream) {
+			Ok(received) => received,
+			Err(e @ ReadError::Closed) => {
+				nice_error!("Jingler: {}", e);
+				continue;
+			}
+			Err(e) => {
+				report_error(e.to_string());
+				continue;
+			}
+		};
+		match runtime.listener.submit_program(&program) {
+			Ok(outcome) => {
+				match outcome {
+					SubmitOutcome::FreshCompile => {
+						nice_log!("Jingler: new program compiled ({} bytes)", bytes);
+					}
+					SubmitOutcome::ConstantUpdate { count } => {
+						nice_log!("Jingler: queued {} constant update(s)", count);
+					}
+					SubmitOutcome::NoChange => {
+						nice_log!("Jingler: program unchanged ({} bytes)", bytes);
+					}
+					_ => {}
+				}
+				shared().accept_program(program, versions);
+			}
+			Err(e) => report_error(format!("Program rejected: {}", e)),
 		}
 	}
 }

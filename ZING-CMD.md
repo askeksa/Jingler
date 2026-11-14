@@ -37,7 +37,8 @@ The plugin's window shows the program it plays:
   parameter's default. A parameter after the fifteenth has no knob and stays at its default. The
   DAW shows the knobs' values in their parameters' ranges too, but keeps calling them *Param 01*
   and so on.
-- **Status**: when the last program arrived, and the last error since then: a program the plugin
+- **Status**: when the last program arrived and which Jingler version and protocol version sent
+  it, the plugin's own versions on the right, and the last error since then: a program the plugin
   couldn't read or compile, or an error while playing.
 
 When a program brings a new parameter, its knob moves to the parameter's default; parameters that
@@ -45,6 +46,13 @@ were already there keep their values, also when they move to another knob or the
 The plugin can only move knobs while its window is open, so a new parameter keeps whatever value
 its knob had until you open the window. The plugin remembers which parameter each knob had in the
 DAW project.
+
+zing-cmd and the plugin must use the same *protocol version*, which changes whenever compiled
+programs change in a way the other side can't follow. `zing-cmd --version` prints it along with
+the Jingler version (`zing-cmd 0.8.1 (protocol 10)`), and the plugin shows both in its status
+bar. When they differ, the plugin rejects the program, keeps playing the one it had, and says
+which side is older: rebuild or reinstall that side. A plugin from before protocol versions
+reports the program as too large instead.
 
 Sounds from gm.dls (`gmdls`, `gmdls_linear`) need the gm.dls file: Windows provides it, and on
 other systems you copy it to `~/.jingler/gm.dls`. Without it they are silent.
@@ -78,3 +86,4 @@ zing-cmd mysong.zing -x mysong.xrns -w mysong.wav
 | `-j`, `--jingler-asm-path <JINGLER_ASM>` | Path to `jingler.asm`, for `-o` (default `jingler.asm`) |
 | `-q`, `--quantization-levels <N>` | Steps per parameter range in the intro, for `-o` (default 16) |
 | `-b`, `--byte-index` | Use a separate index byte for constants, for `-o` |
+| `-V`, `--version` | Print the Jingler version and protocol version |

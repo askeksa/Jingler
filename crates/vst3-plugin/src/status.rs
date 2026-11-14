@@ -10,10 +10,17 @@ use nice_plug_egui::RepaintNotifier;
 pub struct Status {
 	/// The last program the runtime accepted.
 	pub program: Option<Arc<ir::Program>>,
-	/// Local time the last program arrived.
-	pub received: Option<String>,
+	/// When and from whom the last program arrived.
+	pub received: Option<Arrival>,
 	/// The last error since then.
 	pub error: Option<String>,
+}
+
+pub struct Arrival {
+	/// Local time.
+	pub time: String,
+	/// The sender's versions.
+	pub sender: protocol::Versions,
 }
 
 #[derive(Default)]
@@ -39,12 +46,12 @@ impl Shared {
 		self.status().program.as_ref()?.parameters.get(index).cloned()
 	}
 
-	/// Record a program the runtime accepted.
-	pub fn accept_program(&self, program: ir::Program) {
+	/// Record a program the runtime accepted, with its sender's versions.
+	pub fn accept_program(&self, program: ir::Program, sender: protocol::Versions) {
 		{
 			let mut status = self.status();
 			status.program = Some(Arc::new(program));
-			status.received = Some(chrono::Local::now().format("%H:%M:%S").to_string());
+			status.received = Some(Arrival { time: chrono::Local::now().format("%H:%M:%S").to_string(), sender });
 			status.error = None;
 		}
 		self.repaint();

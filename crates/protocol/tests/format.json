@@ -1,0 +1,489 @@
+{
+  "note": "The serialized format of ir::Program at this protocol version, traced by `cargo test -p protocol`. The test rewrites this file when the protocol version changes, and fails when the format changes without it.",
+  "protocol_version": 10,
+  "format": {
+    "ExternalProcedure": {
+      "STRUCT": [
+        {
+          "name": "STR"
+        },
+        {
+          "kind": {
+            "TYPENAME": "ProcedureKind"
+          }
+        },
+        {
+          "inputs": {
+            "SEQ": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        {
+          "outputs": {
+            "SEQ": {
+              "TYPENAME": "Type"
+            }
+          }
+        }
+      ]
+    },
+    "Instruction": {
+      "ENUM": {
+        "0": {
+          "Constant": {
+            "NEWTYPE": "U32"
+          }
+        },
+        "1": {
+          "SampleRate": "UNIT"
+        },
+        "2": {
+          "Parameter": {
+            "NEWTYPE": "U16"
+          }
+        },
+        "3": {
+          "Add": "UNIT"
+        },
+        "4": {
+          "Sub": "UNIT"
+        },
+        "5": {
+          "AddSub": "UNIT"
+        },
+        "6": {
+          "Mul": "UNIT"
+        },
+        "7": {
+          "Div": "UNIT"
+        },
+        "8": {
+          "And": "UNIT"
+        },
+        "9": {
+          "AndNot": "UNIT"
+        },
+        "10": {
+          "Or": "UNIT"
+        },
+        "11": {
+          "Xor": "UNIT"
+        },
+        "12": {
+          "Min": "UNIT"
+        },
+        "13": {
+          "Max": "UNIT"
+        },
+        "14": {
+          "Eq": "UNIT"
+        },
+        "15": {
+          "Greater": "UNIT"
+        },
+        "16": {
+          "GreaterEq": "UNIT"
+        },
+        "17": {
+          "Less": "UNIT"
+        },
+        "18": {
+          "LessEq": "UNIT"
+        },
+        "19": {
+          "Neq": "UNIT"
+        },
+        "20": {
+          "Ceil": "UNIT"
+        },
+        "21": {
+          "Floor": "UNIT"
+        },
+        "22": {
+          "Round": "UNIT"
+        },
+        "23": {
+          "Trunc": "UNIT"
+        },
+        "24": {
+          "Atan2": "UNIT"
+        },
+        "25": {
+          "Cos": "UNIT"
+        },
+        "26": {
+          "Exp2": "UNIT"
+        },
+        "27": {
+          "Log2": "UNIT"
+        },
+        "28": {
+          "Pow": "UNIT"
+        },
+        "29": {
+          "Sin": "UNIT"
+        },
+        "30": {
+          "SinCos": "UNIT"
+        },
+        "31": {
+          "Sqrt": "UNIT"
+        },
+        "32": {
+          "Tan": "UNIT"
+        },
+        "33": {
+          "Left": "UNIT"
+        },
+        "34": {
+          "Right": "UNIT"
+        },
+        "35": {
+          "Expand": {
+            "NEWTYPE": {
+              "TYPENAME": "Width"
+            }
+          }
+        },
+        "36": {
+          "SplitRL": "UNIT"
+        },
+        "37": {
+          "MergeLR": "UNIT"
+        },
+        "38": {
+          "Pop": "UNIT"
+        },
+        "39": {
+          "PopNext": "UNIT"
+        },
+        "40": {
+          "StackLoad": {
+            "NEWTYPE": "U16"
+          }
+        },
+        "41": {
+          "StackStore": {
+            "NEWTYPE": "U16"
+          }
+        },
+        "42": {
+          "CellInit": {
+            "NEWTYPE": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        "43": {
+          "CellRead": {
+            "NEWTYPE": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        "44": {
+          "CellPush": {
+            "NEWTYPE": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        "45": {
+          "CellFetch": "UNIT"
+        },
+        "46": {
+          "CellPop": "UNIT"
+        },
+        "47": {
+          "StateEnter": "UNIT"
+        },
+        "48": {
+          "StateLeave": "UNIT"
+        },
+        "49": {
+          "BufferAlloc": {
+            "NEWTYPE": {
+              "TYPENAME": "Width"
+            }
+          }
+        },
+        "50": {
+          "BufferLoad": "UNIT"
+        },
+        "51": {
+          "BufferLoadWithOffset": "UNIT"
+        },
+        "52": {
+          "BufferLoadIndexed": "UNIT"
+        },
+        "53": {
+          "BufferStoreAndStep": "UNIT"
+        },
+        "54": {
+          "BufferCursor": "UNIT"
+        },
+        "55": {
+          "BufferLength": "UNIT"
+        },
+        "56": {
+          "BufferInitStart": "UNIT"
+        },
+        "57": {
+          "BufferInitEnd": "UNIT"
+        },
+        "58": {
+          "Call": {
+            "TUPLE": [
+              "U16",
+              {
+                "OPTION": {
+                  "TYPENAME": "Width"
+                }
+              }
+            ]
+          }
+        },
+        "59": {
+          "CallExternal": {
+            "NEWTYPE": "U16"
+          }
+        },
+        "60": {
+          "PlayInstrument": {
+            "TUPLE": [
+              "U16",
+              "U16"
+            ]
+          }
+        },
+        "61": {
+          "Kill": "UNIT"
+        },
+        "62": {
+          "ReadNoteProperty": {
+            "NEWTYPE": {
+              "TYPENAME": "NoteProperty"
+            }
+          }
+        },
+        "63": {
+          "RepeatInit": "UNIT"
+        },
+        "64": {
+          "RepeatStart": "UNIT"
+        },
+        "65": {
+          "RepeatEnd": "UNIT"
+        },
+        "66": {
+          "IfGreaterEq": "UNIT"
+        },
+        "67": {
+          "Else": "UNIT"
+        },
+        "68": {
+          "EndIf": "UNIT"
+        },
+        "69": {
+          "Random": "UNIT"
+        },
+        "70": {
+          "GmDlsSample": "UNIT"
+        }
+      }
+    },
+    "MidiMapping": {
+      "STRUCT": [
+        {
+          "channel": "U8"
+        },
+        {
+          "start": "U8"
+        },
+        {
+          "end": "U8"
+        },
+        {
+          "transpose_to": "U8"
+        }
+      ]
+    },
+    "NoteProperty": {
+      "ENUM": {
+        "0": {
+          "Gate": "UNIT"
+        },
+        "1": {
+          "Key": "UNIT"
+        },
+        "2": {
+          "Velocity": "UNIT"
+        }
+      }
+    },
+    "Parameter": {
+      "STRUCT": [
+        {
+          "name": "STR"
+        },
+        {
+          "min": "F32"
+        },
+        {
+          "max": "F32"
+        },
+        {
+          "default": "F32"
+        }
+      ]
+    },
+    "Procedure": {
+      "STRUCT": [
+        {
+          "name": "STR"
+        },
+        {
+          "kind": {
+            "TYPENAME": "ProcedureKind"
+          }
+        },
+        {
+          "inputs": {
+            "SEQ": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        {
+          "outputs": {
+            "SEQ": {
+              "TYPENAME": "Type"
+            }
+          }
+        },
+        {
+          "code": {
+            "SEQ": {
+              "TYPENAME": "Instruction"
+            }
+          }
+        }
+      ]
+    },
+    "ProcedureKind": {
+      "ENUM": {
+        "0": {
+          "Function": "UNIT"
+        },
+        "1": {
+          "Module": {
+            "STRUCT": [
+              {
+                "scope": {
+                  "TYPENAME": "Scope"
+                }
+              }
+            ]
+          }
+        },
+        "2": {
+          "Instrument": {
+            "STRUCT": [
+              {
+                "scope": {
+                  "TYPENAME": "Scope"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Program": {
+      "STRUCT": [
+        {
+          "parameters": {
+            "SEQ": {
+              "TYPENAME": "Parameter"
+            }
+          }
+        },
+        {
+          "procedures": {
+            "SEQ": {
+              "TYPENAME": "Procedure"
+            }
+          }
+        },
+        {
+          "externals": {
+            "SEQ": {
+              "TYPENAME": "ExternalProcedure"
+            }
+          }
+        },
+        {
+          "main_static_proc_id": "U64"
+        },
+        {
+          "main_dynamic_proc_id": "U64"
+        },
+        {
+          "track_order": {
+            "SEQ": {
+              "TYPENAME": "MidiMapping"
+            }
+          }
+        }
+      ]
+    },
+    "Scope": {
+      "ENUM": {
+        "0": {
+          "Static": "UNIT"
+        },
+        "1": {
+          "Dynamic": "UNIT"
+        }
+      }
+    },
+    "Type": {
+      "STRUCT": [
+        {
+          "width": {
+            "TYPENAME": "Width"
+          }
+        },
+        {
+          "value_type": {
+            "TYPENAME": "ValueType"
+          }
+        }
+      ]
+    },
+    "ValueType": {
+      "ENUM": {
+        "0": {
+          "Number": "UNIT"
+        },
+        "1": {
+          "Buffer": "UNIT"
+        }
+      }
+    },
+    "Width": {
+      "ENUM": {
+        "0": {
+          "Mono": "UNIT"
+        },
+        "1": {
+          "Stereo": "UNIT"
+        },
+        "2": {
+          "Generic": "UNIT"
+        }
+      }
+    }
+  }
+}

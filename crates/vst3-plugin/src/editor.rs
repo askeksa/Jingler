@@ -11,7 +11,7 @@ use nice_plug_egui::{Frame, NiceEguiApp};
 use crate::JinglerParams;
 use crate::knobs::{KnobAssignment, NUM_KNOBS, format_value, normalize};
 use crate::mappings::mapping_rows;
-use crate::status::shared;
+use crate::status::{Arrival, shared};
 
 pub struct JinglerEditor {
 	params: Arc<JinglerParams>,
@@ -149,7 +149,7 @@ impl JinglerEditor {
 		let setter = context.param_setter();
 		let (program, received, error) = {
 			let status = shared().status();
-			(status.program.clone(), status.received.clone(), status.error.clone())
+			(status.program.clone(), received_text(status.received.as_ref()), status.error.clone())
 		};
 		if let Some(program) = &program && self.dragging.is_none() {
 			self.assign_knobs(&setter, &program.parameters);
@@ -157,10 +157,12 @@ impl JinglerEditor {
 
 		egui::Panel::bottom("status").show(ui, |ui| {
 			ui.add_space(4.0);
-			match &received {
-				Some(time) => ui.label(format!("Program received {time}")),
-				None => ui.label("No program received. Run zing-cmd --connect to send one."),
-			};
+			ui.horizontal(|ui| {
+				ui.label(received);
+				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+					ui.weak(format!("Plugin: {}", protocol::Versions::ours()));
+				});
+			});
 			if let Some(error) = &error {
 				ui.colored_label(ui.visuals().error_fg_color, error);
 			}
@@ -180,6 +182,14 @@ impl JinglerEditor {
 				self.parameters_ui(ui, &setter, &program.parameters);
 			});
 		});
+	}
+}
+
+/// The status bar's text about the last program.
+fn received_text(received: Option<&Arrival>) -> String {
+	match received {
+		Some(Arrival { time, sender }) => format!("Program received {time} from {sender}"),
+		None => "No program received. Run zing-cmd --connect to send one.".to_string(),
 	}
 }
 
@@ -240,7 +250,7 @@ mod tests {
 
 	#[test]
 	fn the_open_editor_moves_new_parameters_to_their_defaults() {
-		shared().accept_program(program());
+		shared().accept_program(program(), protocol::Versions::ours());
 		let params = Arc::new(JinglerParams::default());
 		let host = Arc::new(Host { params: params.clone(), edits: Mutex::new(vec![]) });
 		let mut editor = JinglerEditor::new(params.clone());
@@ -254,5 +264,13 @@ mod tests {
 		// Only cutoff is away from its default, and only once.
 		assert_eq!(*host.edits.lock().unwrap(), vec!["begin 0", "set 0.2 0", "end 0"]);
 		assert_eq!(*params.knob_assignment.lock().unwrap(), KnobAssignment::of(&program().parameters));
+	}
+
+	#[test]
+	fn the_status_bar_names_the_senders_versions() {
+		let sender = protocol::Versions { protocol: 10, jingler: "0.8.2".to_string() };
+		let arrival = Arrival { time: "12:00:01".to_string(), sender };
+		assert_eq!(received_text(Some(&arrival)), "Program received 12:00:01 from Jingler 0.8.2 (protocol 10)");
+		assert_eq!(received_text(None), "No program received. Run zing-cmd --connect to send one.");
 	}
 }

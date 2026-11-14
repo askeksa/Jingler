@@ -2,6 +2,7 @@
 members = [
     "crates/convert",
     "crates/ir",
+    "crates/protocol",
     "crates/runtime",
     "crates/vst3-plugin",
     "crates/zing",

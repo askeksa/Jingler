@@ -5,10 +5,10 @@ use zing::compiler;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
-use std::io::Write;
 use std::net::TcpStream;
 use std::num::NonZero;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::sync::mpsc::channel;
 use std::time::{Duration};
 
@@ -21,10 +21,13 @@ use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use rodio::buffer::SamplesBuffer;
 use rodio::{DeviceSinkBuilder, Player};
 
-const DEFAULT_CONNECT_ADDR: &str = "127.0.0.1:26127";
+/// What `--version` prints after the program name.
+static VERSION: LazyLock<String> = LazyLock::new(|| {
+	format!("{} (protocol {})", protocol::JINGLER_VERSION, protocol::PROTOCOL_VERSION)
+});
 
 #[derive(Parser)]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = VERSION.as_str())]
 struct PlayOptions {
 	/// Zing file to convert/play.
 	zing_file: String,
@@ -66,7 +69,7 @@ struct PlayOptions {
 	write_wav: Option<String>,
 
 	/// Address and port to connect to.
-	#[arg(short, long, value_name = "ADDRESS", default_value = DEFAULT_CONNECT_ADDR, help_heading = "Network output options")]
+	#[arg(short, long, value_name = "ADDRESS", default_value_t = format!("127.0.0.1:{}", protocol::PORT), help_heading = "Network output options")]
 	address: String,
 
 	/// Path to jingler.asm file.
@@ -122,12 +125,9 @@ fn play_sound(sample_rate: f32, data: &[f32]) -> Result<(), String> {
 
 fn send_program(program: &ir::Program, address: &str) -> Result<(), Box<dyn Error>> {
 	let mut stream = TcpStream::connect(address)?;
-	let data = bincode::serialize(program)?;
-	let len = data.len() as u32;
-	stream.write_all(&len.to_le_bytes())?;
-	stream.write_all(&data)?;
-	stream.flush()?;
-	println!("Sent program to {} ({} bytes)", address, data.len());
+	let bytes = protocol::write_program(&mut stream, program)?;
+	println!("Sent program to {} ({} bytes, Jingler {}, protocol {})",
+		address, bytes, protocol::JINGLER_VERSION, protocol::PROTOCOL_VERSION);
 	Ok(())
 }
 
