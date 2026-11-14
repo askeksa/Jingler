@@ -1,6 +1,6 @@
 {
   "note": "The serialized format of ir::Program at this protocol version, traced by `cargo test -p protocol`. The test rewrites this file when the protocol version changes, and fails when the format changes without it.",
-  "protocol_version": 10,
+  "protocol_version": 11,
   "format": {
     "ExternalProcedure": {
       "STRUCT": [

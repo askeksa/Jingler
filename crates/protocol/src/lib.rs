@@ -24,7 +24,7 @@ use std::io::{self, Read, Write};
 /// instruction means, or a change to the body that follows the header. Then
 /// run `cargo test -p protocol`, which regenerates the format snapshot
 /// `tests/format.json`.
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// The Jingler version of this build (the workspace version, raised by hand).
 pub const JINGLER_VERSION: &str = env!("CARGO_PKG_VERSION");
