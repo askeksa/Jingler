@@ -638,7 +638,7 @@ dependencies = [
 
 [[package]]
 name = "convert"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ir",
@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3030,7 +3030,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "protocol"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "bincode",
  "ir",
@@ -3256,7 +3256,7 @@ checksum = "342e1478a6e1c839e7405033eabfdc954d4d5dabd39f34e83420a43a95acfb04"
 
 [[package]]
 name = "runtime"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ir",
@@ -4149,7 +4149,7 @@ dependencies = [
 
 [[package]]
 name = "vst3-plugin"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "egui",
@@ -5143,7 +5143,7 @@ checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zing"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "ir",
  "lalrpop",
@@ -5152,7 +5152,7 @@ dependencies = [
 
 [[package]]
 name = "zing-cmd"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "chrono",
  "clap",
